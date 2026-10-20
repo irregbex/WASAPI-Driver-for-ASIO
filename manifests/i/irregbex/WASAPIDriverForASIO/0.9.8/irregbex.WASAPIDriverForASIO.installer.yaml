@@ -1,0 +1,26 @@
+# WASAPI Driver for ASIO - winget manifest TEMPLATE (installer file).
+# SPDX-License-Identifier: GPL-3.0-or-later
+# InstallerSha256: the Setup line of SHA256SUMS.txt from the GitHub Release (upper or lower case both accepted).
+# The NSIS Setup installs the x64, ARM64 and x86 DLLs; silent mode (/S) registers the x64 DLL in the 64-bit view
+# also on ARM64 (the answer "x64 DAW" is the silent default), and the x86 DLL in the 32-bit view.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: irregbex.WASAPIDriverForASIO
+PackageVersion: 0.9.8
+MinimumOSVersion: 10.0.17763.0
+InstallerType: nullsoft
+Scope: machine
+ElevationRequirement: elevatesSelf
+UpgradeBehavior: install
+InstallModes:
+  - interactive
+  - silent
+ProductCode: WASAPI Driver for ASIO
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.8/WASAPI-Driver-for-ASIO-0.9.8-Setup.exe
+    InstallerSha256: <SHA256 OF THE SETUP>
+  - Architecture: arm64
+    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.8/WASAPI-Driver-for-ASIO-0.9.8-Setup.exe
+    InstallerSha256: <SHA256 OF THE SETUP>
+ManifestType: installer
+ManifestVersion: 1.6.0

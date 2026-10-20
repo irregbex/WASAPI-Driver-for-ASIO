@@ -1,0 +1,13 @@
+# WASAPI Driver for ASIO - winget manifest TEMPLATE (version file). See RELEASING.txt, step "winget".
+# SPDX-License-Identifier: GPL-3.0-or-later
+# winget-pkgs layout: manifests/<first letter of the identifier, lower case>/<Publisher id>/<Package>/<version>/
+# with files named <PackageIdentifier>[.installer|.locale.en-US].yaml. The publisher id is the GitHub account
+# name of the project (set together with the folder names by the owner-substitution step of RELEASING.txt).
+# Before submitting to https://github.com/microsoft/winget-pkgs, fill in InstallerSha256 (installer file).
+# Validate with: winget validate --manifest <folder>
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+PackageIdentifier: irregbex.WASAPIDriverForASIO
+PackageVersion: 0.9.8
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

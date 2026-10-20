@@ -1,0 +1,115 @@
+WASAPI Driver for ASIO(R) - Privacy
+===================================
+
+This document is provided for information only and is not legal advice.
+
+No network by default, no telemetry
+-----------------------------------
+The driver, the control panel, the Diagnostics tool and the Test tool
+contain no telemetry, analytics or crash-upload code, and the installer
+downloads nothing. The only network access is the optional update check
+(0.9.0), which is OFF by default and never runs on its own:
+  When:   only when you click "Check for updates now" (Interface tab), or,
+          if you turned on "Check automatically once a week", at most once
+          a week when you open the control panel.
+  What:   one HTTPS request to the GitHub Releases API of the project
+          (https://api.github.com/repos/irregbex/
+          WASAPI-Driver-for-ASIO/releases/latest), and, only if you click Download, the Setup and
+          SHA256SUMS.txt of that release (github.com and GitHub's file
+          servers). 0.9.1: a redirect to any other server is refused, a
+          check stops after 2 minutes and a download after 10 minutes, and
+          closing the panel cancels it.
+  Sent:   the request itself and the header "User-Agent:
+          WASAPI-Driver-for-ASIO/<version>". No identifier, no settings, no
+          device names, no usage data. As with any web request, GitHub sees
+          your IP address (see GitHub's privacy statement).
+  Stored: the time of the last check (UpdateLastCheck in config.ini) and
+          downloaded files in %LOCALAPPDATA%\WASAPI Driver for ASIO\updates
+          (delete them whenever you like).
+Nothing else leaves your computer unless you send it yourself.
+
+What is stored on your computer
+-------------------------------
+All files are in your user profile, readable only by you and administrators:
+  %APPDATA%\WASAPI Driver for ASIO\config.ini
+      Settings and profiles: mode, buffer, sample rate, the names (or name
+      fragments) of the selected audio devices, the loopback application's
+      executable name, routing. 0.8.0: [HostProfiles] holds the executable
+      file names (e.g. of your DAW, without folder) to which you assigned a
+      profile; only names you chose in the panel are stored. 0.9.0: Theme,
+      Language, UpdateCheck, UpdateRepo, UpdateLastCheck.
+  %APPDATA%\WASAPI Driver for ASIO\log.txt and log-previous.txt
+      Diagnostic log of the current and previous session (only while "Write
+      log.txt" is on): device names, formats, latencies, errors. User folder
+      paths, the user name and the computer name are masked; device Ids are
+      shown as short hashes. 0.8.0: when a program profile is applied, the
+      log names the program's executable file name (never its folder) and
+      the profile, with unusual characters replaced by "_".
+  WasapiDriver-diagnostics.txt and WasapiDriver-test.txt
+      Written only when you run the Diagnostics or Test tool: next to the
+      program, or in %APPDATA%\WASAPI Driver for ASIO, or in %TEMP%. They
+      contain Windows version, CPU, memory, driver registration, audio
+      device names and capabilities, settings and the end of the log. User
+      folder paths, the user name and the computer name are masked;
+      endpoint Ids and ContainerIds are replaced by short hashes (run
+      WasapiDriverDiag.exe --full-ids only if you need them for local
+      troubleshooting). Review a report before posting it publicly.
+  %APPDATA%\WasapiBridge\
+      Settings of the old name (0.5.x and earlier), if any. Never deleted
+      automatically; it can be deleted after upgrading.
+  %LOCALAPPDATA%\WASAPI Driver for ASIO\crash\
+      Written only if the driver itself crashes (0.7.0): crash-<date>.dmp
+      minidumps (at most 5 are kept) and crash-marker.txt. A minidump
+      contains part of the memory of the program that loaded the driver
+      (your DAW): it can include audio data, file and project names, plugin
+      data or other information that was in memory at the time. It never
+      leaves your computer unless you send it; review what you share and send
+      it privately, not in a public forum. Delete the folder to remove them.
+  The microphone privacy check (Diagnostics tool and panel) only reads the
+  Windows privacy settings from the registry; it never changes them.
+The program also writes its registration to the Windows registry
+(HKLM\SOFTWARE\ASIO and the COM class key), which contains no personal data.
+"Copy status" (panel or tray icon menu) puts the status text on the
+clipboard only when you press it; it is privacy-filtered like the reports.
+Diagnostic tracing (0.9.8): the driver can report what it does to Windows
+event tracing (ETW, TraceLogging provider "WASAPIDriverForASIO"). Nothing is
+recorded and nothing is written anywhere unless YOU start a trace on your
+computer ("Start trace.bat" / Windows Performance Recorder, administrator
+rights required; see TRACING.txt); when no trace runs the events are
+discarded at once. A trace is saved only as a local .etl file when you run
+"Stop trace.bat", and it leaves your computer only if you send it. The
+driver's events contain settings, device names (with the user and computer
+names masked), short hashes of device Ids, formats, latencies, error codes
+and counters; never audio data, levels, file paths, user names or computer
+names. The .etl file also contains what Windows itself and the Windows audio
+service record during the trace (for example the Windows version, process
+ids and program names of audio programs, audio device names); review it
+before posting it publicly, or send it privately.
+Tray icon (0.8.0): the notification-area icon and its tooltip are local
+Windows features; they show the driver state (mode, rate, buffer, DSP load,
+dropouts) and nothing is sent anywhere. Windows may remember the icon in its
+own notification-area settings, as for any program. TrayIcon=0 in
+config.ini (or the "Tray icon" option) turns it off.
+
+How to delete it
+----------------
+Uninstalling removes the program and its registry entries but keeps your
+settings. To delete everything: uninstall, then delete the folders
+%APPDATA%\WASAPI Driver for ASIO, %LOCALAPPDATA%\WASAPI Driver for ASIO and
+%APPDATA%\WasapiBridge (and %LOCALAPPDATA%\WASAPI Driver for ASIO\updates
+for downloaded updates; paste the path
+into the File Explorer address bar), and any report or trace (.etl) files
+you saved.
+
+Microphone and Windows privacy
+------------------------------
+The driver opens an input device only when the host (DAW) creates ASIO
+buffers and you selected that input; the audio goes only to the host, in
+memory, and is never stored by the driver. Windows controls microphone
+access for desktop programs: Settings > Privacy & security > Microphone >
+"Let desktop apps access your microphone". If that is off, Windows denies
+the input, the driver keeps playing without it, and the panel shows "Input
+blocked by Windows privacy settings". The Loopback inputs capture what other
+programs play; they too go only to the host. The application list of the
+"One application only" loopback is built from the current audio sessions
+and is not stored except for the executable name you choose.

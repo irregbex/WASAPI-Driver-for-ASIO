@@ -1,0 +1,94 @@
+WASAPI Driver for ASIO - Code signing options (maintainers)
+===========================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+This document is provided for information only. Prices and conditions change;
+check the provider's current offer. No provider is recommended over another.
+
+Why sign
+--------
+Windows SmartScreen and some antivirus products warn about unsigned
+downloads, and an ASIO driver is a DLL loaded into the DAW. An Authenticode
+signature identifies the publisher and shows that the files were not
+changed after signing. A user-mode ASIO driver needs NO Microsoft driver
+signature (it is not a kernel driver); a normal code signing certificate is
+enough. What is signed by the release workflow: the three driver DLLs,
+WasapiDriverDiag.exe, WasapiDriverTest.exe, the Setup and the uninstaller
+inside it (NSIS !uninstfinalize), and the experimental ARM64X DLL (option A
+only).
+
+Timestamping
+------------
+Every signature is timestamped (RFC 3161, SHA-256). A timestamped signature
+stays valid after the certificate expires, as long as it was valid when the
+file was signed. Without a timestamp the files would show as "not valid" on
+the day the certificate expires. The default timestamp server of
+scripts/sign.sh is http://timestamp.digicert.com; any RFC 3161 server can be
+set with the variable WB_SIGN_TIMESTAMP (most certificate authorities run a
+free one). Trusted Signing uses http://timestamp.acs.microsoft.com.
+
+Option A - Certificate file (PFX) and osslsigncode (Linux job)
+--------------------------------------------------------------
+A code signing certificate from a certificate authority, exported as .pfx
+together with its private key.
+- Since mid-2023 the CA/Browser Forum requires that new code signing keys
+  are generated and kept on a hardware token or an HSM, so a plain .pfx is
+  only possible with a cloud key service that can export to the signing
+  machine, or with an older certificate. Many CAs now offer cloud signing
+  instead; their tools usually run on Windows (then use the approach of
+  option B with the CA's signtool integration).
+- Typical cost: individual / organization validation (OV) certificates are
+  sold per year, often in the range of about 100 to 400 USD per year;
+  extended validation (EV) certificates cost more. Open-source programs can
+  sometimes get free or discounted certificates from community programs;
+  check their conditions.
+- Configuration (repository secrets / variables):
+    secrets.WB_SIGN_PFX_BASE64    base64 of the .pfx  (base64 -w0 cert.pfx)
+    secrets.WB_SIGN_PFX_PASSWORD  its password
+    vars.WB_SIGN_TIMESTAMP        optional timestamp URL
+    vars.WB_SIGN_URL              optional project URL shown by Windows
+- Local use: WB_SIGN_PFX_BASE64=... WB_SIGN_PFX_PASSWORD=... sh
+  scripts/sign.sh <files>; Setup: makensis -DVERSION=<v>
+  "-DSIGN_CMD=sh <repo>/scripts/sign.sh" installer/WasapiDriver.nsi (from
+  the staging folder, see BUILDING.txt).
+
+Option B - Azure Trusted Signing (Windows job)
+----------------------------------------------
+A Microsoft cloud signing service: Microsoft validates the identity and
+keeps the keys; signing runs through signtool with the Trusted Signing
+"dlib". Availability depends on the country and on the type of applicant
+(organization or individual); check the current eligibility rules. Typical
+cost: a monthly subscription (the basic tier has been around 10 USD per
+month with a monthly signature quota). Short-lived certificates are renewed
+by the service; timestamping keeps old signatures valid.
+- Set up: a Trusted Signing account and certificate profile in Azure, an
+  app registration (service principal) with the "Trusted Signing
+  Certificate Profile Signer" role on that profile.
+- Configuration:
+    vars.WB_SIGNING = trusted
+    vars.WB_TS_ENDPOINT   e.g. https://<region>.codesigning.azure.net
+    vars.WB_TS_ACCOUNT    account name
+    vars.WB_TS_PROFILE    certificate profile name
+    secrets.AZURE_TENANT_ID, secrets.AZURE_CLIENT_ID,
+    secrets.AZURE_CLIENT_SECRET
+- The "package-trusted" job of release.yml installs NSIS and the Trusted
+  Signing client, signs the binaries, rebuilds the Setup with
+  -DSIGN_CMD="signtool sign ... /dlib ... /dmdf metadata.json" (so the
+  uninstaller is signed too) and replaces the files of the Linux job.
+  Microsoft also provides a GitHub action for Trusted Signing that can sign
+  files directly; it cannot run inside the NSIS build, which is why this
+  job uses signtool + dlib. The client package, action names and versions
+  change from time to time: check them before the first signed release.
+
+Option C - No signature
+-----------------------
+The release works unsigned (current state). Users see a SmartScreen warning
+("Windows protected your PC" > More info > Run anyway) until the file has
+built enough reputation; publish SHA256SUMS.txt so downloads can be checked.
+
+Checking a signature
+--------------------
+Windows: file Properties > Digital Signatures, or
+  signtool verify /pa /v <file>
+Linux: osslsigncode verify -in <file>

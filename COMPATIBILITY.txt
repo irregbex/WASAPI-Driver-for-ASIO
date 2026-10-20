@@ -1,0 +1,66 @@
+WASAPI Driver for ASIO(R) 0.9.8 - Compatibility table
+=====================================================
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Which hosts (DAWs) and devices have been tested with this version, and how.
+Status values:
+  tested OK     TEST-GUIDE.txt blocks H (automatic test) and the manual
+                blocks for that host passed; no crash, no dropout at the
+                listed buffer.
+  issues        works with the limitations in the Notes column.
+  fails         does not work; see the Notes column and the report.
+  untested      nobody has reported it yet.
+
+Hosts x devices (0.9.5, also valid for 0.9.6, which only fixes the items of KNOWN-ISSUES.txt, for 0.9.7,
+which changes no driver behaviour, and for 0.9.8, which only hardens the driver against invalid calls and data
+(valid calls behave as before; see VERSION.txt);
+the 0.9.1 results stand for 0.9.2 and 0.9.3, which change only the interface; 0.9.4 results: automatic test PASSED with IAudioClient3 period 480 at 48 kHz and the
+internal 96k->48k sinc conversion, more than 2 hours of real use; 0.9.5 only changes which sample
+rate an instance starts with)
+-----------------------
+Host                 Device                    Mode / buffer        Status     Notes
+-------------------  ------------------------  -------------------  ---------  -------------------------------
+Cubase 15 (x64)      Bluetooth earbuds (A2DP)  (see reports)        tested OK  10 ms minimum period
+Cubase 15 (x64)      HDMI monitor audio        (see reports)        tested OK
+Cubase 15 (x64)      USB audio interface       (see reports)        tested OK
+Cubase 15 (x64)      BT headphones -> speakers Shared (0.9.4)       tested OK  BT removed: output moved to the
+                                                                               speakers without stopping and came
+                                                                               back; sleep/resume OK. Found the
+                                                                               rate bug fixed in 0.9.5
+DaVinci Resolve      (see reports)             (see reports)        tested OK  (0.9.4)
+Ableton Live 12      any                       -                    untested
+REAPER 7             any                       -                    untested
+FL Studio 2024       any                       -                    untested
+Studio One 6/7       any                       -                    untested
+Bitwig Studio 5      any                       -                    untested
+Cubase 15            Windows on ARM (ARM64)    -                    untested
+Any 32-bit host      any                       -                    untested
+
+Product names are trademarks of their owners; they are listed only to say
+what was tested. Inclusion means nothing more than "it was tried".
+
+Change in 0.9.6 that affects the results above (re-test when you can)
+  - With Low latency on and a DAW rate below the Windows rate (e.g. 44.1 kHz
+    project, 48 kHz device), the internal up-conversion now uses sinc by
+    default instead of Hermite (KNOWN-ISSUES.txt KI-5). Output latency grows
+    by about 64 input frames (about 1.45 ms at 44.1 kHz); the driver reports
+    it to the host, so recordings stay aligned. CPU use of the conversion is
+    higher (about 12 M multiply-adds per second for stereo, several times
+    Hermite), still small on current CPUs. All converters of one session
+    share a budget of 150 M multiply-adds per second.
+
+How to add your result
+----------------------
+1. Run the Automatic test (Start menu) with the DAW closed, then the
+   manual blocks of TEST-GUIDE.txt that apply (at least H, N and R), and
+   if you can the Soak test (60 min) with one unplug/replug.
+2. Copy one row per host and device into your report, in the same format:
+     Host (version, 32/64-bit) | Device (brand, model, connection) |
+     Mode / buffer | Status | Notes (sample rate, Windows version, what
+     failed, the test number)
+3. Attach WasapiDriver-test.txt, WasapiDriver-soak.txt (if run),
+   WasapiDriver-diagnostics.txt and "Copy status" (FAQ.txt question 9).
+   They mask your user name, computer name and folders.
+4. Do not include personal data in the Notes column.
+Maintainers merge the reported rows into this table for the next version;
+a row becomes "tested OK" only with the test reports attached.

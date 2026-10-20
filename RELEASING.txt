@@ -1,0 +1,178 @@
+WASAPI Driver for ASIO - Release procedure (maintainers)
+========================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Everything below is prepared in the repository; nothing is published
+automatically. Repository: https://github.com/irregbex/WASAPI-Driver-for-ASIO
+(repository name WASAPI-Driver-for-ASIO). Documents and install.bat /
+uninstall.bat are at the repository root in the published source tree
+(pkg2/ in the development tree); the workflows accept both layouts.
+
+0. First publication (0.9.7, once)
+----------------------------------
+0.1 Owner name. Until the GitHub account is known, the source tree uses the
+    owner token "GHUSER_" + "PLACEHOLDER" (written here in two parts so the
+    substitution below leaves this text alone) in src/common.h
+    (WB_UPDATE_REPO, the update source), the documents (Releases page,
+    issues, security links), .github/ISSUE_TEMPLATE/config.yml and the
+    winget manifests, whose folder is
+    manifests/<first letter, lower case>/<owner>/WASAPIDriverForASIO/<version>/.
+    The maintainers' helper set_owner.sh (kept outside the repository)
+    replaces the token in every text file (line endings, BOMs and UTF-16
+    files preserved) and renames the manifest folders:
+      sh set_owner.sh <github-user> [folder ...]
+    Then REBUILD everything (the DLLs embed the update source, the Setup
+    embeds the documents) before publishing binaries. While the token is
+    still present, builds are safe: the update check reports "Update
+    source not configured yet" and contacts nobody, and the release
+    workflow refuses to run for a tag.
+0.2 Create the repository on github.com (web interface, no git command
+    line needed): "+" > New repository > owner = your account, name
+    WASAPI-Driver-for-ASIO, Public, WITHOUT a README, .gitignore or
+    license (the tree already has them) > Create repository.
+0.3 Upload the source tree (the contents of the repository folder, not the
+    folder itself). Two ways:
+    a) Web upload: "uploading an existing file" link (or Add file > Upload
+       files), drag the files and folders in, commit to main. Limits: at
+       most 100 files per upload (the tree has more: upload it in several
+       commits, for example first the root files, then src/, then tests/,
+       installer/, scripts/, third_party/, manifests/ and .github/), each
+       file at most 25 MB through the browser, and empty folders are not
+       kept (the tree has none). Folders whose name starts with a dot
+       (.github) and files such as .gitignore / .gitattributes may be
+       hidden by the file manager: show hidden files before dragging, and
+       check after the upload that .github/workflows/build.yml,
+       .gitattributes and .gitignore are in the repository.
+    b) GitHub Desktop (recommended for more than one upload, no command
+       line): File > Add local repository (or clone the new empty
+       repository and copy the tree into it), check the file list, write a
+       summary, "Commit to main", then "Publish repository" / "Push
+       origin". It keeps every file, including dot files, in one commit.
+    .gitattributes keeps the line endings of the tree: Windows (CRLF) text
+    files stay CRLF, *.sh / *.yml / *.yaml / *.py stay LF (the GitHub
+    Actions runners execute the shell scripts with sh, which needs LF).
+0.4 Settings > General: Features: Issues on. Settings > Code security:
+    "Private vulnerability reporting" > Enable (SECURITY.txt points to it).
+    Settings > Actions > General: allow actions; workflow permissions
+    "Read repository contents" (the release job asks for write itself).
+0.5 Actions tab: the "build" workflow runs on the first push; it must be
+    green (3 DLLs, both tools, all offline tests, Setup).
+0.6 First release, two ways:
+    a) With a tag (normal path, steps 3 and 4): GitHub Desktop > History >
+       right-click the newest commit > Create Tag... > v<version>, then
+       "Push origin" (or git push origin v<version>). The "release"
+       workflow builds everything and creates a DRAFT release with the
+       files; review it, tick "Set as a pre-release" (beta), Publish.
+    b) Web only: Actions > release > "Run workflow" (branch main). When it
+       is green, download the "release-files" artifact (a zip) from the
+       run page and unpack it. Releases > "Draft a new release" > Choose a
+       tag > type v<version> > "Create new tag: v<version> on publish"
+       (target main) > title "WASAPI Driver for ASIO <version>" > paste
+       the <version> block of VERSION.txt as notes > attach the unpacked
+       files (Setup, bin.zip, src.zip, SHA256SUMS.txt) > "Set as a
+       pre-release" > Publish release. Publishing creates the tag, which
+       starts the release workflow once more; its last step ("Draft
+       release") then fails because the release already exists. That
+       failure is expected and changes nothing.
+
+1. Before the release
+---------------------
+1.1 Version: set WB_VERSION_STR / WB_VERSION_W / WB_VERSION_NUM in
+    src/common.h, FILEVERSION / PRODUCTVERSION and the two version strings
+    in src/WasapiDriver.rc, the titles of install.bat and
+    uninstall.bat, and the version lines of README.txt (including the
+    RELEASE FOLDER LAYOUT block), VERSION.txt, TEST-GUIDE.txt,
+    BUILDING.txt, ROADMAP.txt, COPYRIGHT.txt, SECURITY.txt and
+    THIRD-PARTY-NOTICES.txt, the version lines of src/tools.rc, and the
+    winget manifests folder (manifests/<letter>/<owner>/
+    WASAPIDriverForASIO/<version>: folder name, PackageVersion and URLs).
+1.2 Changelog: add a block "<version> (changes from <previous>)" at the top
+    of the Changelog in VERSION.txt. The release workflow copies that
+    block into the release notes.
+1.3 Local check (Linux): sh build.sh; sh build-x86.sh; sh build-arm64.sh;
+    sh build-diag.sh; sh build-test.sh -> 0 warnings. Run ALL offline tests:
+    sh tests/run_all.sh -> "RESULT: ALL PASSED" (0.9.8: mandatory; the
+    release workflow refuses to build when any test fails, including the
+    fuzz, ASIO argument validation and trace encoder tests).
+1.4 Real hardware: TEST-GUIDE.txt blocks H (automatic test) and the blocks
+    of the new features. Record the result in VERSION.txt.
+1.5 Privacy: no personal names, user names, machine names or local paths
+    in sources, documents or binaries (strings -a / strings -el on the
+    binaries).
+1.7 Workflow pins (0.9.1): every third-party action is pinned to a full
+    commit SHA with the tag in a comment ("uses: owner/action@<40 hex> #
+    vX.Y.Z"). To update one: git ls-remote --tags
+    https://github.com/<owner>/<action> and take the commit of the wanted
+    tag (for an annotated tag, the line ending in "^{}"); review the
+    action's changes between the two commits before changing the pin.
+    Never use a branch or a tag alone.
+1.8 Release folder (0.9.1): Setup and README.txt at the top; Docs\
+    (QUICK-START, FAQ, COMPATIBILITY, VERSION, TEST-GUIDE, ROADMAP,
+    TRACING since 0.9.8); Legal\
+    (LICENSE, COPYRIGHT, THIRD-PARTY-NOTICES, TRADEMARKS, DISCLAIMER,
+    PRIVACY, SECURITY, CONTRIBUTING); Portable-Install\ (3 DLLs,
+    install.bat, uninstall.bat); Tools\ (WasapiDriverDiag.exe,
+    WasapiDriverTest.exe; 0.9.8: WasapiDriver.wprp, Start trace.bat, Stop
+    trace.bat, TRACING.txt); Source-Code\. Text files with CRLF.
+1.6 Language rule (0.9.0): Spanish text is allowed only in the translation
+    tables (src/strings_es.h, and Portuguese words shared with Spanish in
+    src/strings_pt.h), in installer/lang_es.nsh and in the legacy migration
+    literals ("Perfil:", "Estudio", old 0.5.x file names); every other
+    source, document and binary string must be English (in the DLLs every
+    Spanish-looking string must be an entry of those tables).
+
+2. Signing (optional)
+---------------------
+Configure one of the options of SIGNING.txt in the repository settings
+(Settings > Secrets and variables > Actions). Without any configuration the
+release is built unsigned; the workflow log then says "files left unsigned".
+
+3. Tag and build
+----------------
+3.1 Commit everything, then create and push the tag (the tag must be "v"
+    followed by exactly WB_VERSION_STR, otherwise the workflow stops):
+      git tag -a v<version> -m "WASAPI Driver for ASIO <version>"
+      git push origin v<version>
+3.2 GitHub > Actions > "release": wait for the jobs. "build" must succeed;
+    "arm64x" is experimental and may fail without blocking the release;
+    "package-trusted" runs only with Trusted Signing configured.
+3.3 A dry run without a tag: Actions > release > "Run workflow" builds
+    everything and keeps the files as workflow artifacts (no release).
+
+4. Publish
+----------
+4.1 GitHub > Releases: a DRAFT release "WASAPI Driver for ASIO <version>"
+    contains:
+      WASAPI-Driver-for-ASIO-<version>-Setup.exe
+      WASAPI-Driver-for-ASIO-<version>-bin.zip   (portable files)
+      WASAPI-Driver-for-ASIO-<version>-src.zip   (git archive of the tag)
+      WasapiDriverARM64X-<version>-experimental-unsigned.dll  (only if
+      arm64x passed; never signed: it comes from a continue-on-error job)
+      SHA256SUMS.txt
+4.2 Download the Setup, check it against SHA256SUMS.txt
+    (PowerShell: Get-FileHash <file> -Algorithm SHA256), install it on a
+    test machine, run TEST-GUIDE.txt H1.
+4.3 Edit the notes if needed (mark "beta" / known limitations), mark the
+    release as pre-release while the project is in beta, then "Publish
+    release".
+
+5. winget (optional)
+--------------------
+5.1 Copy the version folder of manifests/ (path
+    manifests/<first letter of the owner, lower case>/<owner>/
+    WASAPIDriverForASIO/<version>/, the winget-pkgs layout) to the same
+    path in a fork of https://github.com/microsoft/winget-pkgs. The files
+    are named <owner>.WASAPIDriverForASIO[.installer|.locale.en-US].yaml.
+5.2 Fill in InstallerSha256 (both entries) with the Setup's line of
+    SHA256SUMS.txt. Publisher stays "WASAPI Driver for ASIO contributors"
+    (the name the Setup writes to Settings > Apps). For a new version
+    also change the folder name, PackageVersion and the URLs.
+5.3 Validate on Windows: winget validate --manifest <folder>, and test with
+    winget install --manifest <folder> (administrator console).
+5.4 Open a pull request to winget-pkgs and follow its review.
+
+6. After the release
+--------------------
+- Start the next version block in VERSION.txt and ROADMAP.txt.
+- Never move or re-use a published tag; publish a new version instead.

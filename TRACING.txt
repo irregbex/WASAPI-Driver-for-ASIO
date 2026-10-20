@@ -1,0 +1,120 @@
+WASAPI Driver for ASIO(R) 0.9.8 - Diagnostic tracing (ETW / Windows Performance Recorder)
+=========================================================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Since 0.9.8 the driver reports what it does to Windows event tracing (ETW) as
+a TraceLogging provider. Nothing is recorded unless you start a trace
+yourself, on your own computer. A trace is the best thing to attach to a
+problem report when the log (log.txt) and the Diagnostics tool are not
+enough, for example for dropouts, resets or a driver that stops responding.
+
+1. Record a trace (the simple way)
+----------------------------------
+Installed with the Setup: Start menu > WASAPI Driver for ASIO >
+"... Start trace" and "... Stop trace" (folder: C:\Program Files\WASAPI
+Driver for ASIO\Tracing). Portable / zip: the Tools folder.
+
+  1. Run "Start trace.bat" (it asks for administrator rights; Windows
+     requires them for tracing). A blue window confirms "Tracing started".
+  2. Reproduce the problem in your DAW (start playback, change the buffer,
+     plug the device out and in, whatever triggers it).
+  3. Run "Stop trace.bat" soon afterwards (a yellow window). It saves
+     WasapiDriver-<date>-<time>.etl on your Desktop (or in your user folder).
+  4. Zip the .etl file and attach it to your GitHub issue (Issues > New issue
+     > Problem report), together with the steps you did. GitHub accepts
+     attachments up to 25 MB; a zipped trace of a few minutes is usually far
+     smaller. Read section 4 (privacy) first.
+
+The trace uses circular memory buffers: it keeps the most recent minutes, so
+it can run for a long time while you wait for a rare problem; stop it right
+after the problem happens.
+
+2. Record a trace by hand (wpr.exe, part of Windows 10 and 11)
+--------------------------------------------------------------
+In an elevated Command Prompt, in the folder that contains WasapiDriver.wprp:
+  wpr -start "WasapiDriver.wprp!WasapiDriver"
+        circular memory buffers (what "Start trace.bat" does)
+  wpr -start "WasapiDriver.wprp!WasapiDriver" -filemode
+        writes everything from start to stop to disk (for long captures where
+        the beginning matters; the file grows while it runs)
+  wpr -stop "%USERPROFILE%\Desktop\WasapiDriver.etl"
+        stops and saves
+  wpr -cancel
+        stops without saving (use it if "Start trace.bat" says a trace is
+        already running)
+  wpr -status
+        shows whether a trace is running
+
+The profile records exactly two providers, each in its own buffer budget so
+one can never push the other's events out:
+  WASAPIDriverForASIO      this driver, every level (1-5)
+  Microsoft-Windows-Audio  the Windows audio service, Information level (4)
+                           only (its verbose level is very chatty)
+No kernel, CPU, disk, network or process tracing is enabled.
+
+3. What the driver records
+--------------------------
+Provider name: WASAPIDriverForASIO
+Provider GUID: {52b9f111-957d-5973-b76d-97bdf8f813df}
+  The GUID is derived from the name with the standard TraceLogging /
+  EventSource rule; to check it on Windows (PowerShell):
+    [System.Diagnostics.Tracing.EventSource]::new("WASAPIDriverForASIO").Guid
+  It is this project's own provider; it is not a Microsoft provider.
+
+Events (all on non-real-time threads; the audio thread never writes one):
+  Driver life cycle   DriverLoaded / DriverUnloaded (version, architecture),
+                      DriverCreated / DriverDestroyed, AsioInit (result, host
+                      program file name, mode, buffer, rate, safe mode)
+  ASIO calls          AsioCall: every call of the host (method name and
+                      result code), AsioBuffers (channels, buffer size, what
+                      the host supports)
+  Devices             DevicesResolved (device names with user and computer
+                      names masked, device Ids only as a short hash, channel
+                      counts, fallback to the Windows default, Bluetooth),
+                      DeviceNotification (Windows device changes and whether
+                      they caused a reset)
+  Streams             OutputOpen (engine, Shared / Exclusive / low latency,
+                      ASIO and device rates, period, buffer, sample format,
+                      rate conversion), InputOpen, LoopbackOpen,
+                      ExtraOutputOpen, StreamsClosed, ExclusiveFormatRefused,
+                      CaptureOpenFailed (HRESULT, privacy block)
+  Resets and errors   ResetRequest / ResetPending (reason), DriverError
+                      (message, HRESULT), AudioThreadEnded (HRESULT),
+                      AudioThreadStuck, ExceptionContained (where)
+  Statistics          Stats, every 10 s while the stream runs and once at
+                      stop: callbacks, output glitches, wait timeouts, input
+                      underruns / drops / glitches, extra-device counters, DSP
+                      load, input drift (counters only)
+  Crash protection    CrashProtectionInstalled, SafeMode, CrashMarkerCleared,
+                      CrashDump (exception code and offset only)
+  Panel and updates   PanelOpen / PanelClose / PanelApply, UpdateCheck /
+                      UpdateDownload (error code and release tag only)
+Levels: 1 critical, 2 error, 3 warning, 4 information, 5 verbose.
+Keywords (to record only part of it with other tools): 0x1 life cycle,
+0x2 ASIO calls, 0x4 devices, 0x8 streams, 0x10 resets, 0x20 errors,
+0x40 statistics, 0x80 crash protection, 0x100 panel, 0x200 update check.
+When no trace is running each event costs one memory read: the driver checks
+whether anybody listens before it prepares anything.
+
+4. Privacy (please read before sharing a trace)
+-----------------------------------------------
+The driver's own events NEVER contain audio samples or anything computed from
+the audio (levels, meters), file or folder paths, your user name, your
+computer name, network addresses or window titles. Device names pass through
+the same filter as log.txt (user and computer names masked); device Ids
+appear only as short hashes.
+An .etl file also contains what Windows records about the trace itself and
+what the Windows audio service reports: for example the Windows version and
+build, process ids and the names of programs that use audio, and audio
+device names. Tracing is local and starts only when you start it; the file
+leaves your computer only if you send it. If you prefer not to post it
+publicly, say so in the issue and ask for a private way to send it (see
+SECURITY.txt for private contact through GitHub). See also PRIVACY.txt.
+
+5. Looking at a trace yourself
+------------------------------
+Windows Performance Analyzer (WPA, free in the Microsoft Store or the
+Windows ADK): open the .etl, then Generic Events, filter on the provider
+WASAPIDriverForASIO. Text dump with the built-in tool:
+  tracerpt WasapiDriver.etl -o WasapiDriver.xml -of XML

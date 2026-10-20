@@ -1,0 +1,24 @@
+# WASAPI Driver for ASIO - line-ending and diff rules for git (0.9.7)
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Every file is stored and checked out exactly as committed ("-text": no end-of-line conversion, whatever the
+# client's core.autocrlf says). The Windows text files (*.txt, *.cpp, *.h, *.rc, *.bat, *.nsi, ...) are CRLF in
+# the tree and stay CRLF; the files read by Linux tools stay LF. Diffs still work for text files.
+*                 -text
+
+# LF only, also if a Windows client tries to commit CRLF: sh on the GitHub Actions Linux runners (build.yml and
+# release.yml run "sh build.sh" etc.) fails on CRLF, and YAML / Python / git config files are LF by convention.
+*.sh              text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.py              text eol=lf
+.gitignore        text eol=lf
+.gitattributes    text eol=lf
+src/strings_ids.inc text eol=lf
+
+# Binary files (never diffed or merged as text).
+*.png             binary
+*.ico             binary
+*.bmp             binary
+*.dll             binary
+*.exe             binary

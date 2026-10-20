@@ -1,0 +1,136 @@
+WASAPI Driver for ASIO(R) 0.9.8 - Frequently asked questions
+============================================================
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+See also QUICK-START.txt and README.txt (section numbers below).
+
+1. My input / microphone records silence, or the panel says "Input blocked
+   by Windows privacy settings".
+   Windows denies microphone access to desktop programs. Settings > Privacy
+   & security > Microphone: turn on "Microphone access" and "Let desktop
+   apps access your microphone", then restart the DAW's audio engine. If you
+   do not need inputs, choose Input device = "(None - no inputs)" (the
+   "Set to None" button does it). README section 18.
+
+2. Bluetooth: why is there so much delay, and why are my recordings late?
+   Bluetooth adds 100-250 ms that Windows does not report, so the DAW cannot
+   compensate by itself. Use buffer 512 or more ("Use recommended"), and set
+   Advanced > Latency offsets > Output to about +150 ms, then fine-tune
+   until a recorded click lines up. Bluetooth is for listening and mixing,
+   not for playing live through the computer. Keep "Protect A2DP" on, or the
+   headset drops to telephone quality. README section 26.
+
+3. 44.1 kHz or 48 kHz? What is the "low-latency path"?
+   Since 0.9.4 low latency works at any rate. In Shared mode Windows mixes
+   at the rate set in Sound settings > device > Format (usually 48 kHz).
+   With "Low latency in Shared" on, the driver always opens the device at
+   that rate with its shortest engine period (IAudioClient3); if the
+   project uses another rate (e.g. 44.1 kHz), the driver converts
+   internally with an exact fixed ratio (sinc quality, no drift, latency
+   included in what the DAW is told). So keep your project at 44.1 kHz if
+   you like; 48 kHz on both sides only saves the conversion (a little CPU,
+   about 1.5 ms less latency). Status shows "Engine: ... internal rate
+   conversion 44100->48000 Hz (sinc)" or "no conversion". How low it goes
+   depends on the device: WasapiDriverDiag.exe tells whether it offers a
+   period below the default 10 ms. Exclusive mode uses the project rate
+   directly if the device supports it. README sections 10, 29 and 41.
+
+4. No sound after changing a setting or switching driver in the DAW.
+   Many DAWs reset their output routing when the driver restarts. Check the
+   DAW's routing: Cubase Studio > Audio Connections (F4) outputs; Live
+   Preferences > Audio > Output Config; REAPER track/master outputs; FL
+   Studio Mixer > master output. Also check Status tab > Output and that
+   the Windows device is not muted.
+
+5. The driver is not listed in my DAW.
+   Make sure the Setup finished (or install.bat ran as administrator). Both
+   64-bit and 32-bit drivers are registered: a 32-bit DAW sees the 32-bit
+   one. On Windows on ARM only one 64-bit kind is registered: run the
+   Setup again and answer Yes for a native ARM64 DAW, No for an x64 DAW.
+   Then run Diagnostics: it shows the registration of both views.
+
+6. Exclusive mode says "busy" or the Status tab shows Shared.
+   Another program holds the device exclusively, or exclusive control is
+   not allowed. Close other audio programs; in Sound settings > device >
+   Advanced (or Control Panel > Sound > device > Properties > Advanced)
+   enable "Allow applications to take exclusive control of this device".
+   If Exclusive cannot open, the driver falls back to Shared by itself.
+
+7. The DAW crashed. What is safe mode?
+   If the driver itself crashes, it writes a crash report and starts the
+   next session in safe mode (Shared, default output, no input, buffer
+   512); the panel shows a banner and "Use my settings again". If the DAW
+   keeps crashing, choose Shared mode and a larger buffer, and send a
+   report (question 9). README section 25.
+
+8. Crackles or dropouts.
+   Raise the buffer one step (256, then 512); try Exclusive; close heavy
+   programs; check "DSP load" and "Output glitches" in the panel. LatencyMon
+   shows system drivers that block the CPU. README section 18.
+
+9. How do I send a useful report?
+   (a) Panel > Status > "Copy status" and paste it; (b) Start menu >
+   Diagnostics: attach WasapiDriver-diagnostics.txt; (c) log.txt and
+   log-previous.txt (Status > "Open log"); (d) for stability problems, the
+   soak test report WasapiDriver-soak.txt (Start menu > Soak test); (e) your
+   line of COMPATIBILITY.txt. These reports mask your user name, computer
+   name and user folders, but still contain device names. A crash minidump
+   (.dmp) contains process memory: send it only privately. PRIVACY.txt.
+
+10. Does the driver connect to the internet? What does the update check
+    send?
+    Nothing by default. Only if you click Interface > "Check for updates
+    now", or turn on the weekly check, does it make one HTTPS request to
+    GitHub (api.github.com) with the header "User-Agent:
+    WASAPI-Driver-for-ASIO/<version>": no identifier, no settings, no
+    device names, no usage data. Downloads happen only when you click
+    Download, come only from GitHub's servers, and are checked (SHA-256,
+    digital signature if present) before you can install them; nothing is
+    installed without your confirmation. PRIVACY.txt, README section 35.
+    The project and its releases are at
+    https://github.com/irregbex/WASAPI-Driver-for-ASIO.
+
+11. Which features are stable and which are beta?
+    README section 36 (also on the panel's About tab). Beta: extra devices,
+    "Follow Windows" sample rate, the ARM64X DLL, the update check.
+
+12. Can I use it with a screen reader or without a mouse?
+    Yes: README section 37 (Narrator, keyboard shortcuts, high contrast).
+
+13. What does this setting do? Can I turn the help tips off?
+    Rest the mouse on it, or select it with Tab and press F1: a tip
+    explains it and says whether it applies live or makes the DAW restart
+    the driver. Interface tab > "Show help tips" turns the hover tips off
+    (F1 still works). README section 39.
+
+14. Windows audio (YouTube, screen recording) stops when DaVinci Resolve
+    starts.
+    Resolve probes other ASIO drivers at startup. An exclusive-mode driver
+    (e.g. "Generic Low Latency ASIO Driver") takes the device and Windows
+    invalidates every shared stream on it. Uninstall that driver if you do
+    not need it and select WASAPI Driver for ASIO in Resolve > Preferences >
+    System > Audio I/O. KNOWN-ISSUES.txt KI-1.
+
+15. Cubase runs, the transport moves, but there is no sound and the
+    driver's meters do not move.
+    After switching ASIO drivers Cubase can leave the outputs "Not
+    Connected". Studio > Audio Connections (F4) > Outputs > Stereo Out >
+    Device Port: choose "Out L" / "Out R". KNOWN-ISSUES.txt KI-7.
+
+16. Setup (or the uninstaller) says a file is in use and asks me to close my
+    audio programs.
+    A program still has the driver loaded, so Windows does not let Setup
+    replace the DLL (since 0.9.6 Setup checks this first instead of failing
+    halfway). Close Cubase, DaVinci Resolve, Ableton Live and any other
+    audio program, then click Retry. If it keeps saying so, a closed
+    program may still be running in the background: Task Manager > select
+    it > End task, then Retry. Cancel stops Setup without changing the
+    installed version. KNOWN-ISSUES.txt KI-2.
+
+17. The developers asked me for a "trace". What is it and is it safe?
+    A recording of what the driver did (0.9.8), made with a tool built into
+    Windows. Run "Start trace" (Start menu > WASAPI Driver for ASIO, or
+    Tools in the release folder), reproduce the problem, run "Stop trace",
+    and attach the zipped .etl file from your Desktop to your issue. It
+    contains no audio and no file paths; user and computer names are masked
+    in the driver's events. Nothing is recorded unless you start it.
+    TRACING.txt explains what is in it.

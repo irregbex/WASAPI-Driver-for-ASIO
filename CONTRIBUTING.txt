@@ -1,0 +1,79 @@
+WASAPI Driver for ASIO(R) - Contributing
+========================================
+
+Thank you for helping. This document is provided for information only and
+is not legal advice.
+
+Repository: https://github.com/irregbex/WASAPI-Driver-for-ASIO
+Problem reports and ideas: Issues > New issue (the forms ask for the
+version, Windows, the DAW and the "Copy status" text). Changes: a pull
+request against the default branch. Security problems: privately, see
+SECURITY.txt.
+
+License: inbound = outbound
+---------------------------
+The project is licensed under the GNU General Public License version 3 or
+(at your option) any later version (GPL-3.0-or-later). By contributing you
+agree that your contribution is licensed under the same terms. Do not
+contribute code you cannot license this way (for example code from the
+proprietary ASIO SDK license, from other drivers, or generated from sources
+under incompatible licenses). Third-party code needs an entry in
+THIRD-PARTY-NOTICES.txt.
+
+Developer Certificate of Origin (DCO)
+-------------------------------------
+Every commit must carry a sign-off line certifying the Developer Certificate
+of Origin 1.1 (https://developercertificate.org/):
+    Signed-off-by: Your Name or Handle <contact address>
+(git commit -s adds it). The sign-off states that you wrote the change or
+otherwise have the right to submit it under the project's license. You may
+use a pseudonym or handle; do not put other people's personal data into the
+repository.
+
+Language and style
+------------------
+- Everything in English: code, identifiers, comments, user interface,
+  log messages, documentation. The only exceptions are the legacy Spanish
+  literals needed to migrate files of 0.5.x and earlier, each with an
+  English comment.
+- Documentation is plain .txt.
+- Every source file starts with the standard header (purpose,
+  responsibilities, threading, GPLv3 notice); public functions and
+  non-trivial private functions have a doc comment saying what they do,
+  their parameters and result, which thread may call them and whether
+  they are real-time safe.
+- C++17, Win32 API only, no new runtime dependencies. Builds must produce
+  0 warnings (-Wall -Wextra) on x64, x86 and ARM64.
+- Never print or log user folder paths, the user name, the computer name
+  or device Ids in clear: use SanitizeText() and ShortHash() (src/privacy.h).
+
+Threading rules (ARCHITECTURE.txt section 3) - mandatory
+--------------------------------------------------------
+H = host thread (the one that called init()), A = audio thread,
+N = Windows notification threads.
+1. Only H calls asioMessage() on the host and only H changes configuration,
+   devices, streams and buffers.
+2. A takes no locks, allocates no memory, writes no log, does no file I/O
+   and never calls asioMessage. It publishes to H with atomics and
+   PostMessage to the hidden message window. Every buffer A uses is
+   preallocated by H before the thread starts.
+3. N only queues events and posts messages (exception: the volume callback
+   under the shared SRWLOCK described in ARCHITECTURE.txt).
+4. A call that may destroy the driver (a reset request) is the last thing a
+   function does.
+5-7. Meters, counters, dither, sinc table and extra-device state follow
+   the ownership rules of ARCHITECTURE.txt section 3: state owned by A is
+   initialized by H only before the thread is created.
+Changes to the audio path must keep the offline tests (tests/) passing and
+should come with a test where possible.
+
+Before sending a change
+-----------------------
+- Build all targets (BUILDING.txt) with 0 warnings and run all offline
+  tests: sh tests/run_all.sh (BUILDING.txt, "Offline tests"; the release
+  workflow refuses to build unless all of them pass).
+- Code called by the host or by Windows must not let an exception escape
+  and must validate what it receives (ARCHITECTURE.txt section 58); a new
+  parser of outside data goes into a pure header and into tests/fuzz_test.cpp.
+- Update VERSION.txt (changelog) and the affected documents.
+- Describe what you tested on real hardware (TEST-GUIDE.txt).

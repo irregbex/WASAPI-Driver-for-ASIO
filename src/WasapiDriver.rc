@@ -1,0 +1,48 @@
+// WASAPI Driver for ASIO - resources (Steinberg ASIO Compatible logo and version information)
+// Copyright (C) 2026 The WASAPI Driver for ASIO contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// This program is free software: you can redistribute it and/or modify it under the terms of the GNU General
+// Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+// option) any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License (LICENSE.txt) for more details.
+//
+// ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+//
+// Compiled with windres (x86/x64) and zig rc (ARM64) into each driver DLL.
+#include <winver.h>
+// ASIO Compatible logo (white, transparent background), exactly as provided by Steinberg. Decoded with WIC by the panel
+// (RCDATA 101, see LoadLogo in panel.cpp).
+#ifndef WB_SHOW_ASIO_LOGO
+#define WB_SHOW_ASIO_LOGO 1
+#endif
+// 0.9.3: application icon (original artwork, scripts/make_icon.py), used by the panel, its dialogs, the monitor
+// window and the tray icon (panel.cpp, kIdiApp).
+100 ICON "res/app.ico"
+#if WB_SHOW_ASIO_LOGO
+101 RCDATA "res/asio-compatible-logo-white.png"
+#endif
+
+1 VERSIONINFO
+FILEVERSION 0,9,8,0
+PRODUCTVERSION 0,9,8,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_DLL
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "WASAPI Driver for ASIO\0"
+      VALUE "ProductName", "WASAPI Driver for ASIO\0"
+      VALUE "FileVersion", "0.9.8\0"
+      VALUE "ProductVersion", "0.9.8\0"
+      VALUE "LegalCopyright", "GPL-3.0-or-later. ASIO is a registered trademark of Steinberg Media Technologies GmbH.\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

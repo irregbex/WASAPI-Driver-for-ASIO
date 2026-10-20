@@ -1,0 +1,1103 @@
+WASAPI Driver for ASIO 0.9.8 - Code review
+==========================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Method: three independent review passes over the whole code base (driver,
+panel, configuration, COM) against the ASIO specification (asio.h of SDK
+2.3.4) and the WASAPI documentation. First pass on 0.2.1: 22 defects. Second
+pass on the fixes: 10 new defects introduced by the rewrite. Third pass: 2
+more defects in the destruction path. Total fixed: 34. Every later version
+had its own independent review (below). Severity: C = crash/corruption,
+G = audio dropout, E = specification violation, M = minor.
+
+First pass (on 0.2.1)
+---------------------
+ 1 C  stop() from the audio thread, or after a timeout, released WASAPI
+      objects still in use -> the thread used null pointers.
+      Fix: stop() from A only signals; dispose/create refuse to run from A;
+      the thread uses its own references; timeout -> threadStuck (leak).
+ 2 C  The panel pumps the host's messages; if the host released the driver
+      with the panel open, the timer used freed memory.
+      Fix: AddRef/Release in controlPanel; apply only if hostHoldsRef().
+ 3 C  WM_QUIT with the panel open left the window alive pointing to stack
+      memory and swallowed the WM_QUIT.
+      Fix: destroy the panel and re-post WM_QUIT; clear GWLP_USERDATA.
+ 4 G  Exclusive: stale auto-reset event + GetBuffer BUFFER_TOO_LARGE treated
+      as fatal -> reset on every stop/start.
+      Fix: ResetEvent in start; BUFFER_TOO_LARGE = continue.
+ 5 C  Process loopback activation: write into a freed stack frame if it took
+      > 5 s; DLL unload with the thread alive; client leak.
+      Fix: reference-counted ActCtx on the heap; DLL reference +
+      FreeLibraryAndExitThread; ActHandler counted in g_objects.
+ 6 C  Reset and device events executed on the notification thread: deadlock
+      when unregistering from the callback; races with the configuration.
+      Fix: queue + PostMessage to a hidden window; everything on the host
+      thread.
+ 7 E  If the audio thread died because of an error, the driver kept
+      "running".  Fix: running = false; start() collects the dead thread.
+ 8 E  Timestamps jumping by one WASAPI period with 15.6 ms resolution;
+      inconsistent position/time pair.
+      Fix: continuous time t0 + pos/rate, seqlock, timeBeginPeriod(1).
+ 9 E  False "overload" when the WASAPI buffer = 1 period (Cubase indicator
+      always red).
+      Fix: count only with buffer >= 1.5 periods; notify from the host
+      thread.
+10 G  Polled Exclusive capture with a single-period buffer (overruns).
+      Fix: duration 4x the period (and correct alignment, see N4).
+11 G  Drift control depending on the buffer size (slow with 4096, unstable
+      with 32).
+      Fix: time-normalized constants; validated with 64, 256 and 2048.
+12 M  Auto always enabled resampling (capture and render Ids always
+      differ).  Fix: compare ContainerId.
+13 E  Device change lost if it happened without buffers; hosts that only
+      recreate buffers did not see the new device.
+      Fix: devicesDirty + re-resolution in createBuffers.
+14 G  Float > 1.0 sent unclipped in Exclusive mode.  Fix: DevFmt.clamp.
+15 M  Direct monitoring played stale audio when re-enabled.
+      Fix: clear monFifo.
+16 E  kAsioCanReportOverload not declared; monitoring on loopback returned
+      an error and the host could disable the selector.  Fix: SUCCESS for
+      both.
+17 M  Log (lock + fflush) from the audio thread.  Fix: removed.
+18 M  Race when closing the volume callback.
+      Fix: owner = null first; SRWLOCK around epVol.
+19 M  The DAW ended up behind other windows when the panel closed.
+      Fix: EnableWindow(owner) before DestroyWindow.
+20 M  The panel changed a non-standard buffer, overwrote the host's sample
+      rate and did not apply the log option.  Fix: all three fixed.
+21 E  No kAsioLatenciesChanged after changing the sample rate.  Fix: sent.
+22 M  Needless 5 s reactivation after the last loopback format.
+      Fix: loop without a final reactivation.
+
+Second pass (defects introduced by the rewrite)
+-----------------------------------------------
+N1 C  The device event loop read the object after the host destroyed it in
+      asioMessage.  Fix: AddRef/Release in MsgWndProc.
+N2 C  Stuck-thread path: the thread woke up on null capture clients, null
+      callbacks or a second audio thread.
+      Fix: local references to capture clients, cbRun, stopEvent checked
+      after every callback, createBuffers/start blocked while the stuck
+      thread is alive, object leaked instead of freed.
+N3 M  Capture error published ~100 times per second.  Fix: once per cycle.
+N4 G  The alignment retry put the capture buffer back to one period.
+      Fix: align only the duration; periodicity = want.
+N5 G  The common ContainerId of built-in devices disabled the correction
+      between an onboard codec and HDMI.  Fix: treat it as unknown.
+N6 C  The last Release on the audio thread destroyed the object under the
+      thread.  Fix: defer to WM_APP+4 on the host thread.
+N7 M  Message window: destruction from another thread, possible duplicate.
+      Fix: WM_CLOSE from another thread, g_objects until WM_NCDESTROY,
+      single creation. (Open: warning if the init thread does not pump
+      messages.)
+N8 E  The seqlock reader could return (0, 0).  Fix: last consistent pair.
+N9 M  timeBeginPeriod without its timeEndPeriod on some paths.
+      Fix: timerRaised.
+N10 M Correction of the time anchor depending on the buffer and noisy in
+      bursts.  Fix: once per wake-up, tau 10 s.
+
+Third pass
+----------
+T1 C  Stuck thread detected only at destruction -> delete with the thread
+      alive.  Fix: teardown(): stop(); if the stuck thread is alive, leak.
+T2 C  After the last Release on the audio thread, the thread kept calling
+      the already released host until the message was processed.
+      Fix: SetEvent(stopEvent) before deferring the destruction.
+
+Verified correct by the review
+------------------------------
+Hermite coefficients; resampler bounds; sign of the PI controller; FIFO
+index arithmetic; 24-bit packing; alignment formula; Exclusive pre-fill;
+channel mapping and mono; monitoring gain and pan scaling; QueryInterface
+with the CLSID; IAgileObject; kAsioSupportsTimeInfo detection; double-buffer
+index sequence; ActCtx reference count; seqlock memory ordering; absence of
+deadlocks (only PostMessage and events between threads).
+
+Checks run at build time
+------------------------
+- x64 (GCC), x86 (GCC i686) and ARM64 (Zig/clang) builds: 0 errors,
+  0 warnings in the project code.
+- COM exports (4) and imports (system DLLs only) per binary.
+- Drift loop simulation: see ARCHITECTURE.txt section 9.
+- Search for personal data and local paths in binaries and texts.
+Open: TEST-GUIDE.txt on real Windows hardware.
+
+Review 0.3.0 (meters, DSP load, Exclusive glitches, diagnostics)
+----------------------------------------------------------------
+Independent review of the new features. No crash defects.
+R1 M  diag: P() did not check the result of vswprintf; config.ini and
+      log.txt lines went through a fixed format buffer (long text or text
+      containing % could be lost or truncated badly).
+      Fix: n < 0 -> buf[4095] = 0; file lines are appended verbatim to the
+      report, limited to 2000 characters.
+R2 G  Exclusive: the late wake-up criterion (1.5 periods) counted inaudible
+      glitches even with IAudioClock available.
+      Fix: with IAudioClock only played >= written; without a clock, a
+      late wake-up fallback with threshold max(2 periods - 1 ms, period +
+      1 ms).
+R3 M  Panel: position from SPI_GETWORKAREA (primary monitor) and the system
+      DPI; on short screens the buttons could end up off screen.
+      Fix: rcWork of the host's monitor (MonitorFromWindow +
+      GetMonitorInfoW), DPI from GetDpiForWindow (dynamic, with a
+      fallback), and meters that shrink (minimum 80 px) if the window does
+      not fit.
+R4 E  start() after a stop() requested from the audio thread could find the
+      previous thread's handle still exiting.
+      Fix: if !running and there is a thread, WaitForSingleObject(INFINITE)
+      + CloseHandle before reinitializing (balanced timeEndPeriod).
+R5 M  diag: the installed version was looked up only in the 64-bit view.
+      Fix: fallback to KEY_WOW64_32KEY.
+
+Verified correct in 0.3.0
+- Meters: peaks with a relaxed CAS maximum (A) and exchange(0) (H); clip by
+  fetch_or; no locks or allocation on A.
+- Load: internal state owned by A only, initialized by H in start() before
+  the thread is created; published with relaxed stores.
+- resetReq: H only does fetch_or with a live thread; A consumes it with
+  exchange; without a thread, H clears only atomics.
+- IAudioClock: obtained on H when opening, own AddRef/Release in run(),
+  released in closeStreams and leaked with a stuck thread.
+- GDI: brushes, bitmap and memory DC released on every WM_PAINT; fonts
+  released when the panel closes; timers stopped in WM_DESTROY.
+- diag: read-only, no network, files opened with FILE_SHARE_WRITE, reads
+  limited to 64 MB, output with folder fallback.
+- x64, x86, ARM64 and diag builds: 0 errors, 0 warnings in src/; exports
+  (4) and system-only imports.
+
+Review 0.4.0 (profiles, application loopback, dither, sinc, CI)
+---------------------------------------------------------------
+Independent review of the new features. No crash defects.
+S1 M  Application loopback: the first process with that name was used (in
+      browsers and multi-process programs it could be a child without
+      audio) and the DAW itself was not excluded.
+      Fix: one snapshot, every match {pid, parent}, the own PID skipped;
+      single root of the tree, else the match with an active audio session
+      (ListAudioSessionPids, shared with the panel), else the first
+      root/match. PID and reason in the log.
+S2 G  Dither: fixed 16/24-bit scale; with 20 valid bits (in 24 or 32) the
+      dither and the rounding were below the real LSB.
+      Fix: q = 2^(valid-1) - 1, clip to [-q-1, q], shift by
+      (container - valid).
+S3 M  Panel: a profile with a non-standard BufferSize selected 256 and
+      Apply lost it.  Fix: FillControls adds or relabels item 8 with that
+      value and sets extraBuf.
+S4 M  CI: ziglang without a fixed version and default token permissions.
+      Fix: ziglang==0.16.0 (same as the local build);
+      permissions: contents: read.
+
+Verified correct in 0.4.0
+- Sinc: read bounds (need = pos + buf*ratio + 17, lowest index k - 15 >= 0,
+  posBase 15) verified by simulation in tests/resampler_test.cpp with
+  ratios 0.997 / 1.0 / 1.003.
+- Kaiser beta 8 and normalization of every phase to unity DC gain; a
+  257-phase table for the linear interpolation without reading out of
+  bounds.
+- TPDF dither: triangular density from the difference of two 16-bit
+  uniforms; exact 0 without dither; without dither, the 0.3.x path intact.
+- Name dialog: loop with IsDialogMessage, panel re-enabled before
+  destroying, WM_QUIT re-posted to the panel loop.
+- Session enumeration: Release of every IAudioSessionControl/2,
+  enumerator, manager, device and collection; OpenProcess/CloseHandle.
+- Config migration: new keys get defaults if missing; factory profiles only
+  once (ProfilesInit).
+- ActCtx: pid and mode written by the host before the activation thread is
+  created; reference count and FreeLibraryAndExitThread unchanged.
+- x64, x86, ARM64, diag and test builds: 0 errors, 0 warnings in src/;
+  exports (4) and system-only imports.
+
+Review 0.5.0 (extra devices, routing; beta)
+-------------------------------------------
+Independent review. No crash defects.
+U1 E  Extra outputs and inputs misaligned with the main device (15-40 ms)
+      and only the main device's latency reported.
+      Fix: AlignDevices (default 1): estimated latency per path, fixed
+      delay of the main output (preallocated line), sp of faster sinks and
+      target of faster inputs raised; getLatencies reports the common
+      latency. The status shows per-device latencies.
+U2 M  The routing dialog numbered channels with the open layout even if the
+      panel had extra devices not applied yet.  Fix: PendingOutLayout with
+      what is selected on screen, and a note if it changes.
+U3 M  kAsioSetInputMonitor could target channels of an extra device (not
+      audible).  Fix: destination >= nOutPrim -> channel 0; documented.
+U4 G  Integer Exclusive extra outputs without dither.  Fix: dither state
+      per sink and PutSampleDither (exact 0 without dither).
+U5 M  FindDeviceSub returned the main device or an already chosen extra
+      device when the name matched several; it was then dropped without
+      looking for another.  Fix: list of Ids to skip, continue with the next
+      match.
+U6 E  With alignment, direct monitoring went through the main output's
+      delay line (monitoring latency = that of the slowest device).
+      Fix: monitoring is accumulated separately and added after the delay,
+      with the same routing.
+
+Verified correct in 0.5.0
+- Sinks: read bounds (need = pos + w*ratio + 3/17), priming with excess
+  drop, overflow and underflow; FIFOs preallocated on H.
+- Sink PI: common PiUpdate (same constants as the inputs); fill with
+  interpolated IAudioClock; tests/sink_test.cpp with +-300 ppm, 10 min:
+  0 underflows / 0 overflows.
+- Thread ownership (rule 7): configuration and streams on H, sink state on
+  A, atomic counters, volume under volLock.
+- Own COM references in run() for clients, render, clock and capture of
+  extra devices; released on exit; leaked with a stuck thread.
+- Device following: extra devices disappearing and missing ones appearing;
+  a sink failure on A = one reset per cycle.
+- Routing: OutputMap validated on H; identity identical to the previous
+  path (including mono (L+R)/2).
+- Alignment delay line: capacity delay + buffer + 16, pushes and pops one
+  frame per frame, no allocation.
+- x64, x86, ARM64, diag and test builds: 0 errors, 0 warnings in src/;
+  exports (4) and system-only imports; offline tests OK.
+
+0.5.1 - defect reported in real use
+-----------------------------------
+R1 C  (Cubase 15, Windows 11 Insider build) The panel is opened from Studio
+      Setup, but its owner was Cubase's main window (the init() one). After
+      switching applications and coming back, Studio Setup came to the
+      front and the panel (without a taskbar button) stayed behind with no
+      way to bring it back; the main window remained disabled.
+      Fix: owner = GetActiveWindow() of the calling thread (else the
+      foreground window of this process, else hostWnd), top level; that
+      owner is disabled and re-enabled; WS_EX_APPWINDOW + icon (taskbar and
+      Alt+Tab); WM_ACTIVATEAPP brings it to the front. The name and routing
+      dialogs were already owned by the panel.
+R2 M  E_ACCESSDENIED from the microphone privacy settings only appeared as
+      an HRESULT in the log.  Fix: a message with the Settings path and a
+      line in the status; the driver continues without that input.
+R3 M  User request: "Copy status" button (clipboard; the HGLOBAL is freed
+      if SetClipboardData fails).
+
+Review 0.6.0 (new name, dark panel, profiles, installer)
+--------------------------------------------------------
+Independent review of the 0.6.0 changes; 11 defects, all fixed. No crash
+defects in the audio path.
+V1 M  install.bat echoed %DLL% / %~dp0 unquoted inside ( ) blocks: an
+      installation folder containing ")" (e.g. "C:\Program Files (x86)\...")
+      closed the block early and broke the script.
+      Fix: the ARM64 choice, the file check and the 32-bit registration use
+      goto labels; paths are only echoed outside blocks and in quotes. The
+      same structure is used in uninstall.bat. Both files use CRLF line
+      endings (goto label lookup is unreliable with LF-only batch files).
+V2 E  Config migration ProfilesV2 cleaned any section named like a factory
+      profile, even a user's profile with the same name that stored
+      devices.  Fix: a factory-named section is only migrated if
+      OutputDevice, InputDevice, ExtraOutputs and ExtraInputs are all
+      absent or empty (LooksFactory); otherwise it is left untouched. The
+      ProfilesV2 step was folded into MigrateProfiles (see V12).
+V3 M  Installer RemoveOldInstall assumed %ProgramFiles%\WasapiBridge and
+      deleted the old uninstall entry before removing the folder (an
+      aborted upgrade left files without an uninstaller), only in the
+      64-bit view.  Fix: the folder comes from InstallLocation of the old
+      uninstall entry (64-bit view, then 32-bit view), falling back to
+      $PROGRAMFILES64\WasapiBridge; the uninstall entry is deleted only
+      after the folder, in both views. install.bat does not touch uninstall
+      data.
+V4 M  Panel: a fast second click on a button or toggle arrived as
+      BN_DOUBLECLICKED and was ignored (toggles did not flip back).
+      Fix: BN_DOUBLECLICKED handled like BN_CLICKED in PanelProc and
+      DlgCommon, for toggles and push buttons.
+V5 M  Panel: switching tabs could leave the keyboard focus on a hidden
+      control; no keyboard shortcut to change tabs.
+      Fix: ShowTab moves the focus to the first visible tab stop of the new
+      tab (or OK); Ctrl+Tab / Ctrl+Shift+Tab handled in the message loop
+      before IsDialogMessage.
+V6 M  Saving over an existing profile that included devices with "Include
+      devices" unchecked silently removed its devices.
+      Fix: the option is preset from ProfileHasDevices(existing name), and
+      the overwrite prompt warns when the devices would be removed.
+V7 M  DllRegisterServer / DllUnregisterServer deleted the old
+      SOFTWARE\ASIO\WasapiBridge key only in the 64-bit view.
+      Fix: DeleteOldAsioKey deletes it in KEY_WOW64_64KEY and
+      KEY_WOW64_32KEY, in both functions; only that key.
+V8 M  PickOwner accepted any foreground window of the process (it could be
+      a window of another host thread).  Fix: only if it belongs to the
+      calling thread; otherwise hostWnd.
+V9 M  WM_DPICHANGED was not handled: moving the panel to a monitor with a
+      different scaling left fonts, logo and layout at the old size.
+      Fix: SetWindowPos to the suggested rectangle and rebuild of fonts,
+      logos and controls keeping what is on screen; the window size uses
+      AdjustWindowRectExForDpi (loaded at runtime) when available.
+V10 M Meter drawing: with very many channels in a narrow card the per-bar
+      slot could become 0 pixels (division by zero in the label spacing).
+      Fix: if (slot < 1) slot = 1.
+V11 M Settings migration checked that the new folder was missing (not the
+      new config.ini) and ignored the SHGetFolderPath result.
+      Fix: copy only when the new config.ini is missing, create the folder
+      if needed, skip the migration if SHGetFolderPathW fails.
+English release (same version)
+V12 -  The profile section prefix changed from the Spanish "Perfil:" to
+      "Profile:". MigrateProfiles moves every old section to the new prefix
+      with the same contents, never overwriting an existing section (a
+      " (2)" suffix is added if needed, and the old section is kept if the
+      new one cannot be written), renames the factory profiles to Studio,
+      Laptop and Streaming only when they still look factory (rule of V2),
+      and updates ActiveProfile. User profiles keep their names.
+V13 -  Every user-visible text translated to English (panel, dialogs,
+      status report, installer, tools, log). Renamed outputs:
+      log-previous.txt, WasapiDriver-diagnostics.txt, WasapiDriver-test.txt,
+      Uninstall.exe, --latency. The translation of comments and strings was
+      checked with a token comparison of each source file against its
+      previous version (identical code except the intended renames and the
+      migration code), so behavior is unchanged.
+
+Checks for 0.6.0
+- x64, x86, ARM64, diag and test builds: 0 errors, 0 warnings in src/;
+  exports (4) and system-only imports per DLL; RCDATA 101 present.
+- Offline tests (resampler, sink) unchanged results.
+- Threading rules (ARCHITECTURE section 3): the panel only uses
+  readMeters, getStatus and resetCounters on the host thread; no new
+  audio-thread code.
+- No Spanish text left in sources, documents or binaries except the old
+  profile prefix and factory profile names needed by the migration, and the
+  file names of the released 0.5.x packages that the installer deletes.
+- Search for personal data and local paths in binaries and texts.
+
+0.6.1 - real-hardware feedback and release preparation
+------------------------------------------------------
+W1 M  A config.ini migrated from 0.5.x kept its Spanish comment lines (the
+      private-profile API never rewrites comments).  Fix: RewriteConfigFile
+      regenerates the comments in English on every load/save, keeping all
+      keys and sections verbatim, through a temporary file and an atomic
+      replace (ARCHITECTURE section 27).
+W2 M  Reports, log and "Copy status" printed expanded user paths, and the
+      Diagnostics report printed endpoint Ids and ContainerIds that
+      identify the machine.  Fix: SanitizeText / ShortHash (src/privacy.h)
+      on every printed text; --full-ids for local troubleshooting.
+W3 M  Build paths could be embedded by the compiler.  Fix:
+      -ffile-prefix-map / -fmacro-prefix-map, stripped binaries; verified
+      with strings on every binary.
+
+0.7.0 - live settings, monitor window, offsets, direct monitoring, crash
+protection (self-review of the new code)
+------------------------------------------------------------------------
+X1 E  writeOut and serviceSink read cfg (gain, loopback) on the audio thread
+      while the panel could rewrite cfg on the host thread (formally a data
+      race once settings change live).  Fix: the audio thread reads only
+      its LiveParams copy (seqlock) and H-state fixed at open (lbFirst).
+X2 G  The old direct-monitoring path fed the monitor FIFO from raw capture
+      packets even when the input was drift corrected: on a different
+      device it drifted and was trimmed periodically (clicks).  Fix:
+      drift-corrected inputs feed the monitor after resampling.
+X3 M  Monitor gains changed in steps (clicks) and switching off cut the
+      signal.  Fix: 5 ms ramps (dmix::Ramp) that also fade out; the ramp
+      snaps to its target when float precision stalls (found by
+      tests/dmix_test.cpp: a 0 -> 1 ramp stopped at 0.99998).
+X4 E  Applying RESET settings while the panel is open must not send
+      kAsioResetRequest from inside the panel's WM_COMMAND (the host may
+      destroy the driver synchronously).  Fix: deferred through postReset /
+      the hidden window; the panel keeps its own reference.
+X5 M  Two meter readers (panel, monitor window) would steal each other's
+      peaks with exchange(0).  Fix: per-consumer accumulators on H.
+X6 M  Host-provided arguments were not all validated (null pointers,
+      duplicate channels in createBuffers, missing callbacks, out-of-range
+      monitor indices).  Fix: validated everywhere (F8 hardening).
+Verified by design
+- No new locks, allocation, logging or UI calls on the audio thread
+  (LiveParams copy, ramps, preallocated monScratch / monFifo).
+- dbghelp.dll is loaded with LoadLibraryEx from System32 only; it is not in
+  any import table (checked with pefile).
+- The crash handler never swallows a fault; it acts only on fatal codes
+  inside the DLL's address range, once, and lets the host handle it.
+- Offline tests: dmix_test and live_test pass (plus the existing ones).
+
+0.7.0 - independent review (10 defects, all fixed, version unchanged)
+---------------------------------------------------------------------
+Y1 C  Monitor window lifetime: it could be created or destroyed on a thread
+      other than the one owning the hidden window, and a timer could still
+      reach a driver being destroyed.  Fix: created only on msgThread
+      (WM_WB_MONCREATE posted), destroyed only there (WM_WB_MONDESTROY sent
+      synchronously from other threads, no AddRef because it can come from
+      the destructor); DestroyMonitorWindow clears MonState::drv and
+      GWLP_USERDATA first, every handler and the timer check for null; the
+      window counts in g_objects.
+Y2 E  The panel's base configuration mixed the open settings and the saved
+      ones (safe-mode values could reach config.ini).  Fix: uiCfg = saved
+      configuration (config(), panel, monitor window, Apply/Save); cfg = what
+      is open. RESET-class Apply updates uiCfg at once; leaveSafeMode reloads
+      uiCfg in every branch; safe values are never saved.
+Y3 M  The crash marker was written after the minidump: a dump that hangs or
+      faults left no marker.  Fix: marker "dump pending" first, rewritten
+      with the result after MiniDumpWriteDump.
+Y4 M  Safe mode followed any marker, even when the host survived the fault
+      and exited cleanly.  Fix: session-<pid>.txt is written at init and
+      deleted by the last clean driver destruction; safe mode needs a marker
+      AND a session file of a process that no longer runs (a marker alone is
+      cleared). The faulting thread waits at most 5 s.
+Y5 M  The handler waited only on the "done" event.  Fix: the dump thread
+      handle stays open until uninstall; the handler waits on
+      {done, thread} (5 s).
+Y6 M  CrashInstall / CrashUninstall reference counting was unsynchronized.
+      Fix: SRWLOCK.
+Y7 M  After the last Release on the audio thread, a queued message could
+      AddRef the object back to life before WM_WB_DELETE.  Fix: "dying" flag;
+      MsgWndProc ignores every message except the deferred delete.
+Y8 M  The panel could take the monitor window (which the driver may destroy)
+      as its owner.  Fix: never the monitor window; the root owner of
+      hostWnd instead.
+Y9 M  A panel left open across a host reload kept applying to a driver
+      whose streams had been replaced.  Fix: the panel compares the
+      driver's stream generation (incremented by disposeBuffers) and
+      hostHoldsRef(); when stale it shows "The driver was reloaded by the
+      DAW - reopen the panel" and disables Apply.
+Y10 M T8 offset: computed from a reported latency that may have been clamped
+      to the buffer size.  Fix: offsets in use are removed from the reported
+      values (reported - lround(offset * rate / 1000)); if a side was clamped
+      by a negative offset the save is skipped with an explanation.
+
+0.7.1 - real use (Cubase 15, Windows 11 Insider build)
+------------------------------------------------------
+Z1 C  The panel still disappeared behind Cubase / Studio Setup (owner-based
+      z-order is not reliable when the host window is on another thread or a
+      Qt window).  Fix: topmost policy while the host process is in front,
+      owner detach on hide/minimize/destroy, taskbar button (ARCHITECTURE 33).
+Z2 E  After a RESET-class Apply the DAW reloads the driver and 0.7.0 asked
+      the user to reopen the panel.  Fix: rebind to the new instance through
+      a host-thread instance registry; the panel owns its reference.
+Z3 M  The user could not find how to disable inputs.  Fix: "(None - no
+      inputs)" first in "Input device", privacy warning with "Set to None",
+      clearer labels and tab name.
+Z4 M  The bottom bar could be cut off on small screens at high scaling.
+      Fix: layout scale reduced until the panel fits the work area.
+Z5 C  The panel was destroyed together with its owner when the user closed
+      Cubase's Studio Setup.  Fix: unowned top-level panel, no host window
+      disabled; the message loop is kept (keyboard navigation, hosts expect
+      controlPanel to return on close).
+
+
+0.8.0 - self-review while building (no real-hardware run yet)
+--------------------------------------------------------------
+AA1 M  Limiter release: gain += (1 - gain) * rel stalled about 2e-4 below
+       1.0 in float (the increment fell under half an ulp), so the output
+       stayed 0.002 dB low forever after a single peak.  Found by
+       tests/limiter_test.cpp.  Fix: the release runs on the deficit
+       (1 - gain), which decays with full precision and snaps to 0.
+AA2 M  SampleRate=Auto: when the stream-invalidation reset reopened the
+       output first, the later format event compared against the new
+       open-time rate and did nothing (the host was never told).  Fix:
+       autoRateSeen = last Windows rate followed; one reaction per real
+       change.
+AA3 M  applyAutoRate ran before resolveDevices in the reload paths (old
+       output device) and overrode a rate the host had set.  Fix: called
+       after resolveDevices; skipped once the host called setSampleRate.
+AA4 M  A program profile re-applied at every reload would undo what the
+       user had just saved in the panel.  Fix: loadSaved() re-applies it,
+       applyPanelChanges ends it for the session.
+AA5 L  The monitor window's Close (and the new tray toggle) saved the whole
+       uiCfg, which could write program-profile values to [General].  Fix:
+       SaveGeneralFlag writes only MonitorWindow.
+AA6 M  Tray menu: TrackPopupMenu and the About box are nested loops during
+       which the host may destroy the driver and the tray window.  Fix:
+       g_objects held around them, state looked up again afterwards,
+       commands that may destroy the driver are the last statement.
+AA7 L  ProtectA2dp covered only the main input; the same microphone chosen
+       as an extra input would still switch the headset to hands-free.
+       Fix: extra inputs of the same ContainerId are not opened either.
+AA8 L  Silent install (/S, needed by winget) could stop at the ARM64
+       question.  Fix: /SD defaults on both message boxes.
+AA9 L  CI copied the documents from pkg2/, which does not exist in the
+       published source tree.  Fix: the workflows accept both layouts.
+
+0.8.1 - self-review of the panel visuals
+----------------------------------------
+AB1 L  Scroller: at intensity 0 the text was still drawn (a fixed brightness
+       offset).  Found by tests/visuals_test.cpp.  Fix: no offset when the
+       intensity is 0.
+AB2 L  Scroller: a large glyph scale with a steep per-column sine sheared the
+       letters until they were unreadable.  Fix: scale limited to 1..3, wave
+       amplitude to a quarter of the strip and a lower spatial frequency.
+AB3 M  WM_PAINT allocated a full-size back-buffer bitmap per paint; at 30
+       fps that is a GDI allocation per frame on the DAW's UI thread.  Fix:
+       the back buffer is cached and recreated only on size change; drawing
+       is clipped to the update region.
+AB4 L  A low-resolution buffer computed only at creation would be stretched
+       wrongly after a DPI change (the window is resized after the controls
+       are rebuilt).  Fix: VisResize also on WM_SIZE.
+AB5 L  Writing Visuals=Plasma on every save would mark it as chosen and
+       defeat the remote-session default.  Fix: the key is written only once
+       the user changed the effect.
+
+0.8.2 - real use of 0.8.1 (visuals barely animated)
+---------------------------------------------------
+AC1 E  The 4 ms throttle timed the whole WM_PAINT (all cards, text and the
+       copy to the screen), so it fired on normal panels: 15 fps, then a
+       paused static frame.  Fix: only render + blit of the background is
+       timed, over 2 s windows, limit 6 ms, 60 <-> 30 fps, no pause.
+AC2 M  33 ms SetTimer on a 15.6 ms system tick = ~47 ms, and GetTickCount
+       time in 15.6 ms steps: low and uneven frame rate.  Fix: 15 ms timer,
+       QueryPerformanceCounter time.
+AC3 M  Star movement had a per-frame term (+1 per frame) and the first frame
+       assumed 16.7 ms, so motion depended on the frame rate.  Found by the
+       new offline check.  Fix: exact time-based travel, first frame = 0.
+AC4 L  Default speeds too slow to read as animation.  Fix: about 3 x, plus
+       a Speed slider.
+
+0.8.3 - real automatic test of 0.8.2 (T7: 870 invalid ASIOTime fields)
+-----------------------------------------------------------------------
+AD1 M  Test host: one global expected rate; after T5 (48000) the fresh T6
+       instances correctly ran at the config.ini rate (44100) and every T6
+       callback was counted as "bad sampleRate" (10 x ~87 = 870); the count
+       was printed only in T2 (0) and as a T7 total, so the failing phase was
+       invisible.  Fix: per-phase expected rate from the instance, per-kind
+       counters, an ASIOTime line and a failure in every test, the first 8
+       invalid callbacks in T7.  Offline reproduction: timeinfo_test.
+AD2 L  Driver: the audio thread read `rate`, which onFormatChanged
+       (SampleRate=Auto) writes on the host thread while the old stream may
+       still run: a data race, and callbacks of the old stream could report
+       the new rate.  Fix: rateRun, set in start().
+
+0.9.0 - self-review of themes, effects, updates and languages
+-------------------------------------------------------------
+AE1 M  Translating in place left static arrays initialized with T(...)
+       (tab names, effect names): they would keep the language of the first
+       call forever.  Fix: computed each time (TabName, VisStatusLine).
+AE2 M  StatusText was one swprintf with a concatenated format: impossible to
+       translate safely.  Fix: one translated format per line (FmtW) and an
+       offline placeholder check for every language.
+AE3 M  Fixed About-tab line heights clipped longer translations.  Fix:
+       DT_CALCRECT per block; LayoutAudit for labels and buttons.
+AE4 M  update.h: the JSON reader accepted wrong types (e.g. a numeric asset
+       name).  Found by tests/update_test.cpp.  Fix: expected types enforced.
+AE5 L  Metaballs too small to merge at the panel's buffer sizes (preview).
+       Fix: larger radius and falloff.
+AE6 L  Windows defines S_OK: a string id named S_OK broke the build.  Fix:
+       S_BTN_OK.
+AE7 L  The update worker must not let the DLL unload under it.  Design: own
+       module reference + FreeLibraryAndExitThread; reference-counted job.
+
+0.9.1 - independent review of 0.9.0 (3 high, 4 medium, 5 low; no critical)
+-------------------------------------------------------------------------
+AF1 H  Updater TOCTOU: the Setup lived in a folder the user can write to; it
+       was hashed (open, read, close) and then started by path, so another
+       process could swap it in between and the user would approve UAC for
+       a file the panel had called "verified". The same gap existed between
+       closing the .part file, the rename and the signature check.  Fix:
+       LaunchVerified opens the file GENERIC_READ + FILE_SHARE_READ only,
+       hashes it and runs WinVerifyTrust (WTD_CHOICE_FILE with hFile) on
+       that handle, starts it with ShellExecuteExW (SEE_MASK_NOCLOSEPROCESS)
+       and closes the handle only after the process exists (WaitForInputIdle
+       3 s; a mapped image cannot be opened for writing). The worker keeps
+       the .part open with share 0 (read + write + delete) from the first
+       byte to the signature check and renames it through the same handle
+       (SetFileInformationByHandle FileRenameInfo); failures delete it
+       through the handle (FileDispositionInfo). A file that was signed when
+       downloaded must still be signed at launch.
+AF2 H  Updater: the worker took its DLL reference only once running; between
+       CreateThread and that instruction the DLL could be unloaded.  Fix:
+       Start() takes it (GetModuleHandleEx FROM_ADDRESS) before
+       CreateThread, passes it in the job, FreeLibrary if CreateThread
+       fails; the worker ends with FreeLibraryAndExitThread; ++/--g_objects
+       per job.
+AF3 H  Instance registry: a plain vector, documented host-only, but the
+       destructor runs on whatever thread drops the last reference and the
+       panel timer iterated it; FindNewerInstance returned a raw pointer
+       that was AddRef'ed only afterwards (use-after-free if it was being
+       destroyed).  Fix: src/registry.h (SRWLOCK), FindNewerInstance takes
+       the reference under the lock with tryAddRef (a compare-exchange that
+       succeeds only while the count is above zero and the object is not
+       dying); the destructor unregisters first. tests/registry_test.cpp:
+       rules + a 6-thread stress (clean under ThreadSanitizer).
+AF4 M  Updater: no cancel and only per-call timeouts (a slow server could
+       keep a 50 MB download alive indefinitely, pinning the DLL).  Fix:
+       cancel flag + the open request handle published in the job (closed
+       once, by whoever exchanges it; Cancel holds its own winhttp.dll
+       reference meanwhile); WM_DESTROY of the panel cancels; total
+       deadlines 120 s (check) and 10 min (download), new error "it took
+       too long".
+AF5 M  Updater: redirect targets were not restricted (only no
+       HTTPS -> HTTP).  Fix: WINHTTP_OPTION_URL after ReceiveResponse;
+       AllowedFinalHost: api.github.com for the check; github.com,
+       objects.githubusercontent.com, release-assets.githubusercontent.com
+       for downloads; exact names, any case; the starting host is checked
+       too. Tested offline.
+AF6 M  SampleRate=Auto called sampleRateDidChange and then requested a
+       reset: hosts that restart on the first signal restarted twice, and
+       between the calls getSampleRate disagreed with the running stream.
+       Fix: only kAsioResetRequest; the new rate waits in pendingAutoRate
+       and becomes the ASIO rate in disposeBuffers (setSampleRate by the
+       host clears it).
+AF7 M  The panel timer runs inside nested dialog and MessageBox loops; a
+       rebind there could release the instance a dialog was using.  Fix:
+       modalDepth around DlgLoop and every panel message box
+       (PanelMsgBox); CheckDriverInstance waits until it is 0.
+AF8 L  Pre-release tags compared as text ("beta.10" < "beta.2").  Fix:
+       ComparePre per SemVer 2.0.0 section 11 (numeric identifiers by
+       value without overflow, numeric < alphanumeric, shorter set lower);
+       empty identifiers rejected. Tested with the specification's list.
+AF9 L  AnsiFit: WideCharToMultiByte returns 0 when the 255-byte buffer is
+       too small; 0 was taken as "fits", so very long names became empty.
+       MakeUnique cut bytes and could split a double-byte character.  Fix:
+       chn::FitConverted (0 for a non-empty text = too long; surrogate
+       pairs removed whole) and chn::CutBytes with a lead-byte predicate
+       (IsDBCSLeadByteEx(CP_ACP)) walking from the start, used by Fit and
+       MakeUnique. Tested with a Shift-JIS-like model.
+AF10 L sign.sh passed the PFX password with -pass (visible in the process
+       list).  Fix: 0600 file + -readpass.
+AF11 L Release supply chain: unpinned actions; the ARM64X DLL built by a
+       continue-on-error job was signed with the project certificate.
+       Fix: every third-party action pinned to a full commit SHA (tag in a
+       comment); the ARM64X DLL is published as
+       WasapiDriverARM64X-<version>-experimental-unsigned.dll and the
+       release job has no signing secrets.
+AF12 L A previewed theme could stay on the floating monitor window after
+       the panel closed without Apply.  Verified: the saved theme and
+       language are restored after the panel loop on every exit path
+       (Close, X, Esc, WM_QUIT, destroyed from outside). Hardened: the
+       monitor windows of every thread of the process are re-themed
+       (EnumWindows; posted to other threads).
+Self-review of the release polish:
+AF13 M Enter on a focused toggle or button pressed the default button
+       (Apply) through IsDialogMessage.  Fix: EnterOnButton in the panel and
+       dialog loops.
+AF14 L The white ASIO Compatible logo was invisible on the Light theme.
+       Fix: dark plate behind it on light backgrounds (no change to the
+       artwork).
+AF15 L The focus ring of the accent button used the accent color on an
+       accent background (invisible).  Fix: own focus color; inner ring in
+       the on-accent color.
+
+0.9.2 - self-review of the help tips
+------------------------------------
+AG1 M  The panel's WM_TIMER treated every unknown timer id as the status
+       timer: a new timer would have refreshed the status at 10 Hz.  Fix:
+       ID_TIPTIMER handled first, explicitly.
+AG2 M  While a dialog runs the panel is disabled but still receives
+       WM_SETCURSOR: tips of hidden-behind panel controls could appear.  Fix:
+       no tracking for a disabled top-level window.
+AG3 L  Labels are transparent to the mouse (WM_NCHITTEST), so the mouse over
+       a label reaches the panel itself.  Design: the panel resolves the
+       child under the cursor and a label without an id shows the tip of the
+       control it introduces.
+AG4 L  An open combo box list is a separate top-level window: the item
+       under it must not get a tip.  Fix: hits outside the window tree are
+       ignored.
+AG5 L  Lifetime: the tip window is owned by the panel or monitor window,
+       counted in g_objects until WM_NCDESTROY, destroyed explicitly in
+       WM_DESTROY / DestroyMonitorWindow (and with its owner otherwise); its
+       state pointer is cleared in WM_NCDESTROY.
+
+0.9.3 - real test of 0.9.2 and self-review of the icons
+-------------------------------------------------------
+AH1 M  The panel's title bar had no icon: WS_EX_DLGMODALFRAME hides the
+       caption icon, and the icon set was the generic IDI_APPLICATION.
+       Fix: own icon; the panel and its dialogs use a normal caption.
+AH2 L  The tray dot carried no identity and stayed red until "Reset
+       counters", hiding whether a dropout was recent.  Fix: application
+       icon + dot, red for 10 s after the last increase of the dropout
+       counters.
+AH3 L  Tray icon lifetime: a new set must not be destroyed while the shell
+       still shows the old one.  Design: the old set is destroyed only after
+       NIM_MODIFY with the new one; all four are destroyed with the window.
+AH4 L  Window icons are assigned with WM_SETICON and must outlive the
+       windows: kept in a bounded cache (12 sizes) for the life of the DLL,
+       released in DllMain only on FreeLibrary (not at process exit).
+AH5 L  A message box shows no caption icon in Windows; the icon is applied
+       through a thread-local CBT hook for the taskbar and Alt+Tab only
+       (documented rather than drawn).
+
+0.9.4 - low-latency engine at any rate (suggested by Microsoft's Windows
+music team); self-review of the conversion and scheduling
+------------------------------------------------------------------------
+AI1 G  First latency model: the "measured" output latency came from the
+       block timestamps and left out the ASIO block, so the model and the
+       formula disagreed by B frames.  Fix: the model measures the physical
+       round trip (impulse out -> loop-back -> input), like T8, and a
+       converted input on the output's clock is delivered with a fixed delay
+       (sched::InDelay): measured = reported within 0.5 frames, all cases.
+AI2 G  Aligned input after an output dropout: the device plays silence, the
+       capture keeps running, so the fixed delay would grow by the dropout
+       for the rest of the session (and the FIFO with it).  Fix: readSource
+       checks the frames ready beyond each block (2-3 periods in steady
+       state, checked by the model); outside [0, exHi] it re-aligns to exMid
+       and counts an underrun or a drop. The reported latency stays the
+       nominal one; after a re-alignment the round trip is within one period
+       of it (TEST-GUIDE U5/U6).
+AI3 M  Deviation from the request: extra outputs keep the standard Shared
+       stream at the ASIO rate (AUTOCONVERTPCM). They are written on the
+       master's wake-ups and need a buffer of several master periods; an
+       IAudioClient3 stream's buffer is one period, so it would starve.
+       Extra inputs do use IAudioClient3 / the mix rate.
+AI4 G  Direct monitoring with a converted output: writeOut runs at the
+       device rate; delivered blocks (ASIO rate) or capture packets at
+       another rate would drift and be trimmed (clicks).  Fix: monPath
+       chosen at open (packets / blocks / none, logged).
+AI5 L  The main limiter's release and the monitor ramps were computed for
+       the ASIO rate while writeOut runs at the device rate (8 % longer
+       release at 44.1 -> 48 kHz).  Fix: limRelMain and monK use outDevRate.
+AI6 M  Low-latency output keeps two engine periods queued (or one period +
+       one block) instead of the whole buffer: lower latency, but a host
+       callback longer than one period now causes a dropout where the
+       whole-buffer fill would have hidden it. Glitch detection (padding 0)
+       stays on; TEST-GUIDE U6/U7 checks small buffers.
+AI7 L  Thread rules re-checked: the converters, BlockClock and the aligned
+       input path do no allocation, locking or logging on the audio thread
+       (rings sized in configure(), host thread; produce() uses a stack
+       array of 32 accumulators). The engine line is built on the
+       host thread; the private ASIOFuture selector only copies it.
+AI8 L  WasapiDriverTest T5 left the driver at 48 kHz, so --latency (T8)
+       never measured a converted stream.  Fix: T5 restores the start rate.
+
+0.9.4 - external review of the release candidate (7 defects, all fixed in 0.9.4)
+-------------------------------------------------------------------------------
+AJ1 G  Input latency over-reported by one ASIO block for a converted input
+       aligned to the output clock: getLatencies added bufSize to a target
+       (InDelay - bufSize - look-ahead) that already is the whole input side,
+       so in + out = round trip + bufSize.  Fix: sched::ReportLatencies (one
+       function for the driver and the model) does not add the block for
+       such an input; fixedratio_test checks in + out from that function
+       against the simulated round trip (all 144 cases) and the impulse
+       measurement (within 0.5 frames). Such an input may now report less
+       than one block (no clamp at bufSize). Alignment compares it on the
+       same basis (estLat - bufSize).
+AJ2 M  Converted output silenced OutputMap routes whose source is an
+       extra-device ASIO channel (only the main output's channels were
+       converted).  Fix: every ASIO output channel goes through the converter
+       (routing stays live; counted in the CPU budget of AJ4).
+AJ3 M  kAsioCanInputMonitor answered "present" when the open streams cannot
+       monitor (monPath 0).  Fix: ASE_NotPresent then (before an open: the
+       availability of the last open); a change between two opens posts a
+       reset request (from the message window, never inside createBuffers);
+       the panel's direct-monitoring note says why (new string, 5
+       languages).
+AJ4 M  No CPU bound: sinc cost = taps x channels x output rate, e.g. 32
+       channels at 44.1 -> 48 kHz = 197 M MAC/s.  Fix: fr::Choose at open with
+       a 150 M MAC/s budget: above it Hermite when the rate goes up, Windows
+       converts (AUTOCONVERTPCM at the ASIO rate) when it goes down; the
+       choice and the cost are logged. The sinc inner loop now reads a
+       contiguous, mirrored window (no per-tap masking or row table; same
+       summation order, bit-exact): 2.4x faster (44.1 -> 48 kHz stereo 4.4
+       instead of 9.9 ms of CPU per second).
+AJ5 L  The input probe used Hermite while the stream was configured with the
+       chosen quality, and a failed configure left the input silent.  Fix:
+       the quality is chosen first (AJ4/AJ7) with the real channel count; a
+       failed configure re-activates the device and opens it with Windows
+       conversion.
+AJ6 L  When one period plus one ASIO block exceeded the IAudioClient3 buffer,
+       the fill target was capped at the buffer and a long block could not
+       be absorbed.  Fix: the next multiples of the fundamental period (up to
+       16, below the default), then the default period, then standard
+       Shared at the mix rate, until the buffer holds period + block.
+AJ7 L  ResamplerQuality=Hermite also applied when the rate goes down
+       (aliasing).  Fix: the fixed-ratio converter always uses sinc when
+       decimating (Hermite only when the rate goes up).
+
+0.9.5 - real use of 0.9.4 (Cubase, Bluetooth device removed) and self-review
+---------------------------------------------------------------------------
+AK1 E  The rate the host set was lost when the host re-created the driver
+       after a driver-initiated reset: the new instance started at
+       config.ini SampleRate (96000) while the project ran at 44100, and
+       Cubase reported a changed ASIO rate. hostSetRate only protected the
+       same instance.  Fix: ratepolicy.h precedence; the host rate is kept
+       per process (named memory block, survives a DLL unload) and in
+       config.ini LastHostRate; chooseRate() replaces the four places that
+       reloaded cfg.sampleRate.
+AK2 M  An explicit Sample rate change in the panel must still win over the
+       remembered host rate.  Design: applyPanelChanges compares the saved
+       SampleRate / Auto with the previous one and clears both remembered
+       values; other RESET-class changes keep the host rate.
+AK3 M  SampleRate=Auto: a change of the Windows rate asks for a reset that
+       must follow Windows even if the host had set a rate.  Design: the
+       process value is cleared before the reset; LastHostRate is never used
+       with Auto (a new process follows Windows).
+AK4 L  Safe mode after a crash: LastHostRate is ignored (the crash may have
+       come from that configuration); a rate the host sets in the safe
+       session survives its resets like in any other session.
+AK5 L  Per-process memory block: "Local\WasapiDriverForAsio.HostRate.<pid>",
+       8 bytes, handle and view kept until the process ends (one handle per
+       process, on purpose). Another process of the same session could write
+       it; a value is only used if it is a standard rate (ratepolicy Valid),
+       so the worst case is a wrong initial rate that the host corrects.
+AK6 L  LastHostRate is shared by every host: a host that never calls
+       setSampleRate starts at the rate the previous host used, not at the
+       panel's. Accepted (documented in README section 29); choosing a rate in
+       the panel resets it.
+
+Documentation pass (0.9.5 source, comments only)
+------------------------------------------------
+Every source file was commented in depth (purpose, threading, invariants,
+pitfalls). Code tokens were verified unchanged (comment-stripped token stream
+identical before/after). Findings noted while reading, to fix in 0.9.6:
+D1  M  crash.h says the handler waits up to 15 s; crash.cpp waits 5 s.
+D2  M  CrashInstall: events leak if the dump thread cannot start.
+D3  M  CrashUncleanExitFound: OpenProcess denied -> process treated as dead;
+       a reused PID hides a stale session file.
+D4  M  config.cpp ReadSection: "nan" for SampleRate/Gain passes the range
+       checks (NaN comparisons are false).
+D5  M  Applying a [Profile:x] section resets updateLastCheck to 0.
+D6  M  ConfigDir: AppData not found -> folder at the root of the current
+       drive.
+D7  M  update.cpp LaunchVerified: WaitForInputIdle can block the panel up
+       to 3 s.
+D8  M  diag.cpp header says apartment-threaded; wmain uses
+       COINIT_MULTITHREADED. A comment above ReportMicPrivacy describes
+       ReportFiles.
+D9  M  hosttest.cpp CbSwitch comment says it forwards to CbTimeInfo; it
+       calls RecordBlock directly (plain bufferSwitch blocks are counted,
+       their ASIOTime is not checked).
+D10 M  diag reads at most 64 MB of a file: "last 200 lines" of a larger log
+       are not the real end.
+D11 M  T6 "DLL unloaded" uses the 64-bit registry view path: meaningful only
+       when tool and DLL have the same bitness.
+D12 M  T8 checks the Loopback input with strncmp "Loopback"; with extra
+       devices the name may carry a "1:" prefix (to verify).
+
+0.9.6 - fixes of the documentation-pass notes (all M, all FIXED in 0.9.6)
+-------------------------------------------------------------------------
+D1  FIXED  crash.h now says 5 s, like the handler (comment only).
+D2  FIXED  CrashInstall closes the three events (CloseEvents) when the module
+           reference or the dump thread cannot be obtained.
+D3  FIXED  Session files store the process creation time; OpenProcess denied
+           (ERROR_ACCESS_DENIED) = alive; same pid with another creation time
+           = stale. Files of 0.9.5 (no time) use the pid check as before.
+D4  FIXED  SampleRate and Gain range checks written as !(inside range), so NaN
+           gets the default; ReadLastHostRate returns 0 unless finite and > 0.
+D5  FIXED  UpdateLastCheck defaults to the current value when a section does
+           not contain it, so applying a profile keeps it.
+D6  FIXED  ConfigDir falls back to %LOCALAPPDATA%, then the user's temp folder
+           (never the drive root); the diagnostics skip an unknown AppData.
+D7  FIXED  LaunchVerified no longer calls WaitForInputIdle: the Setup's image
+           is mapped once ShellExecuteExW returns its process handle.
+D8  FIXED  diag.cpp comments: COINIT_MULTITHREADED stated; the misplaced
+           ReportFiles comment above ReportMicPrivacy removed (comments only).
+D9  FIXED  hosttest.cpp CbSwitch comment: it calls RecordBlock directly
+           (comment only).
+D10 FIXED  ReadFileBytes reads the LAST n bytes of a larger file (BOM kept);
+           the log section reads the last 4 MB and drops the partial first
+           line.
+D11 FIXED  T6 reads InprocServer32 from the registry view of the tool's own
+           bitness (the view CoCreateInstance used).
+D12 FIXED  Verified: the driver never prefixes the Loopback names ("1:" only
+           applies to device channels), so no "1:Loopback" exists. T8 now
+           compares input 1 with "Loopback L" exactly, so a recording device
+           whose name starts with "Loopback" is not skipped by mistake.
+
+0.9.7 - public beta packaging review
+------------------------------------
+P1 M FIXED  The update source default "OWNER/..." would have been replaced by
+            the real account only by hand; with the new owner token a build
+            made before the substitution must still never contact GitHub.
+            IsPlaceholderRepo now also matches an owner containing
+            "PLACEHOLDER" (any case, owner part only); update_test checks
+            it, building the token from two literals so the substitution
+            cannot rewrite the test.
+P2 M FIXED  Documents, comments and tests named the developer's own
+            devices and Windows build; replaced by generic descriptions and
+            fictional channel-name examples that exercise the same rules.
+P3 M FIXED  winget manifests were in manifests/w/PUBLISHER/... although the
+            winget-pkgs path uses the first letter of the identifier; now
+            manifests/<letter>/<owner>/WASAPIDriverForASIO/<version>/.
+P4 L FIXED  SPDX header missing in the workflows, issue forms, manifests,
+            .gitignore, strings_ids.inc and WasapiBridge.def.
+P5 L FIXED  No .gitattributes: a Windows git client with autocrlf could have
+            committed CRLF shell scripts that fail under sh on the Linux
+            runners; .gitattributes now pins the line endings.
+
+Independent review of 0.9.6 (0 HIGH, 1 MED, 6 LOW; all FIXED in 0.9.6)
+----------------------------------------------------------------------
+R1 MED FIXED  update.cpp LaunchVerified (D7) closed the FILE_SHARE_READ handle
+              right after ShellExecuteExW: a same-user process could rename the
+              verified Setup and drop another file before NSIS reopened
+              $EXEPATH. Now a detached HoldThread (own DLL reference,
+              FreeLibraryAndExitThread) keeps the file and process handles
+              until WaitForInputIdle (10 s max); if it cannot start, both are
+              closed at once. The panel never waits.
+R2 LOW FIXED  The 150 M MAC/s budget was per converter (output + up to 4
+              inputs could each take it). One budget per stream open
+              (convBudgetLeft), output first; fr::Cost; Choose stays pure and
+              receives the remaining budget; test added.
+R3 LOW FIXED  DumpThread copied g_req / g_done / g_quit after it started (race
+              with a quick Uninstall / Install cycle). The handles and the
+              module reference now come in a DumpArgs block; the thread owns
+              and closes them.
+R4 LOW FIXED  OpenProcess denied: PROCESS_QUERY_LIMITED_INFORMATION alone is
+              tried (exit code + creation time) before assuming "alive".
+R5 LOW FIXED  Installer: a read-only installed file gave a permanent false
+              "in use"; SetFileAttributes NORMAL before the check (both
+              Setup and uninstaller).
+R6 LOW FIXED  The direct-monitoring note lagged up to ~4 s after Set to None
+              or an input change; refreshed in those handlers.
+R7 LOW FIXED  Docs / code mismatches: (a) the diagnostics microphone verdict
+              now reads InputDevice / ExtraInputs from config.ini and follows
+              the KI-4 rule; (b) COMPATIBILITY.txt notes the sinc latency
+              (~1.45 ms at 44.1 kHz, reported) and CPU; (c) ARCHITECTURE.txt
+              LaunchVerified text; (d) diag uses the driver's settings-folder
+              fallback (src/appdir.h WbSettingsBase, shared with ConfigDir).
+
+0.9.8 hardening review (external request: untrusted host and dependency data)
+-----------------------------------------------------------------------------
+Scope: every entry point reachable from the host or from Windows, every value
+the driver reads from the host, from audio devices, from config.ini and from
+the GitHub API; exceptions, use after free, TOCTOU, lock order (ABBA), buffer
+overruns, integer overflow and every wait. Method: line-by-line review of
+dll.cpp, driver.cpp, config.cpp, crash.cpp, update.cpp, panel.cpp (entry
+points), a grep of every WaitFor* / Sleep / SendMessage, a link with
+--gc-sections and -Wunused for dead code, and the new offline tests
+(fuzz_test, asiocheck_test, trace_test; ASan + UBSan) plus test T11 of the
+test tool. Severity: HIGH, MED, LOW; INFO = examined, kept on purpose.
+Design and details: ARCHITECTURE.txt section 58.
+H1  HIGH FIXED  No exception barrier: a std::bad_alloc / std::length_error
+                from any IASIO method, COM method, window procedure, hook,
+                notification callback, thread procedure or the destructor
+                would cross a C / COM / Win32 boundary (undefined; with mingw
+                std::terminate inside the host). Now every boundary catches
+                (AsioCall, GuardedWndProc, GuardedEnumProc, forward(), thread
+                procedures, exports, factory, destructor, panel loop), Log()
+                and CrashInstall / CrashUninstall are noexcept.
+H2  HIGH FIXED  Use after free: DeviceNotifier / VolumeCallback loaded their
+                owner pointer without a lock; the host thread could clear it,
+                unregister and delete the driver while a callback that had
+                already loaded the pointer was about to call it. Now an SRW
+                lock per callback object: shared during the call, exclusive
+                in detach() before anything is released.
+H3  MED  FIXED  TOCTOU on host memory: createBuffers validated
+                infos[i].channelNum and read it again to index the buffer
+                tables (a host changing the array in between -> out-of-bounds
+                write); the host's ASIOCallbacks pointer was kept and followed
+                by the audio thread; getChannelInfo and kAsioSetInputMonitor
+                read their structures more than once. Now each host field is
+                read once into a copy (asiochk::CopyInfos, cbStore, locals).
+H4  MED  FIXED  Overrun: the private future() selector WB_FUTURE_ENGINE_INFO
+                wrote 256 bytes into `opt` for any caller using that value. Now
+                it needs an EngineInfo header (magic + size).
+H5  MED  FIXED  Overrun from device data: a mix format claiming IEEE float
+                with 16-bit samples made PutSample write 4 bytes into a 2-byte
+                slot (past the last frame of the render buffer). Formats are
+                checked (DevFmtUsable) before the driver writes in them.
+H6  MED  FIXED  Undefined behavior: device periods / latencies converted with
+                (UINT32)(rate * t / 1e7 + 0.5) for any REFERENCE_TIME, also
+                huge or negative ones. Now RefTimeFrames (clamped).
+H7  MED  FIXED  Integer overflow: FIFO sizes are sums of device buffer sizes;
+                on the 32-bit build an absurd size wrapped size_t, giving a
+                small vector and out-of-range ring writes. Device buffers of 0
+                or > 2^20 frames are refused, MultiFifo::init clamps.
+H8  MED  FIXED  Infinite wait: start() waited INFINITE for an audio thread
+                that was still exiting (it may be blocked in a host callback
+                or in a device call). Now 10 s, then the thread is handled as
+                stuck like in stop().
+H9  MED  FIXED  Device stall: the audio thread waited for the render event in
+                2 s slices forever when a device stopped signaling without a
+                notification (driver "running", no callbacks); WAIT_FAILED was
+                handled like a render event (busy loop). Now 5 timeouts in a
+                row end the thread with ERROR_TIMEOUT and request a reset, and
+                WAIT_FAILED ends it at once.
+H10 LOW  FIXED  pullSource looped while GetNextPacketSize reported packets; a
+                device that never reports 0 held the audio thread. Now at most
+                256 packets per wake-up.
+H11 MED  FIXED  Undefined behavior from config.ini: DirectMonitorInput /
+                DirectMonitorOutput = -2147483648 (or less) overflowed an int
+                in "value - 1" (confirmed with UBSan). parse.h computes in
+                64 bits and clamps every integer key (ToIntClamped).
+H12 LOW  FIXED  OutputMap used swscanf("%ld"), undefined on numeric
+                overflow; now a bounded hand-written parser (parse.h).
+H13 LOW  FIXED  Wrong error codes / unsafe order: start() before init returned
+                ASE_InvalidMode (now ASE_NotPresent); disposeBuffers without
+                buffers returned ASE_OK (now ASE_InvalidMode, asio.h);
+                getSamplePosition before init: ASE_NotPresent; createBuffers
+                disposed the running buffers BEFORE checking its arguments;
+                setSampleRate / controlPanel from the audio thread would wait
+                for that thread or run a modal loop on it (now
+                ASE_InvalidMode); canSampleRate / setSampleRate with NaN or
+                infinity documented and tested (ASE_NoClock).
+H14 LOW  FIXED  QueryInterface / DllGetClassObject / CreateInstance with a
+                null out pointer crashed (driver, class factory, callbacks,
+                activation handler). Now E_POINTER.
+H15 LOW  FIXED  A second init() after a failed one created another
+                IMMDeviceEnumerator (the first reference leaked) and could
+                register a second notification client.
+H16 LOW  FIXED  Unbalanced LockServer(FALSE) took the lock count below zero
+                (DllCanUnloadNow never S_OK again, or too early after a later
+                LockServer(TRUE)).
+H17 LOW  FIXED  DllRegisterServer registered a silently truncated DLL path
+                when it did not fit MAX_PATH. Now SELFREG_E_CLASS.
+H18 LOW  FIXED  Data races: lastP / lastT (getSamplePosition is called from
+                any host thread), cntSwitches (written by the audio thread,
+                read by the host for statistics) and `initialized` were plain
+                variables. Now atomics.
+H19 LOW  FIXED  Release() on a thread other than the audio thread did not set
+                `dying`, so the hidden window could still dispatch to an
+                object that was being destroyed by another host thread.
+H20 LOW  FIXED  freeBuffers (also run by the destructor) allocated the leak
+                holder for a stuck thread with a throwing new. Now nothrow.
+H21 LOW  FIXED  ShowControlPanel: an exception in the update check or the
+                loop would have left g_openPanel and the window's data
+                pointing into a dead stack frame. Now caught in the frame.
+H22 LOW  FIXED  Thread procedures that could throw: update worker (response
+                buffers), loopback activation (new ActHandler) and the host
+                side of the activation (new ActCtx with a module reference
+                held). Now caught / nothrow.
+H23 LOW  FIXED  RewriteConfigFile used a temporary name with the process id
+                only; two driver instances on two host threads could write the
+                same temporary file. Now process id + thread id. The lost
+                update between two processes saving at the same moment remains
+                (last writer wins; documented since 0.6.1).
+H24 LOW  FIXED  config.ini UTF-16 text was read by casting the std::string
+                buffer to wchar_t (alignment / aliasing); now decoded byte
+                pair by byte pair (cfgp::DecodeUtf16Le).
+H25 LOW  FIXED  Double-NUL lists of the profile API (SectionNames,
+                ListHostProfiles) were walked with std::wstring(&buf[i]),
+                which relies on a terminator inside the buffer; now bounded by
+                the count the API returned (cfgp::ParseMultiSz).
+H26 INFO        SendMessageW to the hidden window from another thread (monitor
+                and tray destruction in disposeBuffers / the destructor) waits
+                for the host's UI thread. A timeout would let a window outlive
+                the driver (use after free). Kept; it only happens when a host
+                releases the driver on a thread other than the one that
+                called init().
+H27 INFO        IAudioClient / IMMDevice calls have no timeout parameter; a
+                Windows audio driver that hangs blocks the calling thread
+                inside Windows. The audio thread is covered by the 10 s bound
+                of stop() / start() (thread treated as stuck, resources kept);
+                the host thread cannot be protected.
+H28 INFO        The crash dump thread waits INFINITE for its request or quit
+                event: no device IO, quit always signaled by the last
+                CrashUninstall, the faulting thread's own wait is 5 s.
+H29 INFO        Lock order audited (ARCHITECTURE.txt 58.6): no ABBA pair; no
+                lock is held while calling the host or the WASAPI
+                (un)registration functions; the audio thread takes no lock.
+H30 INFO        getBufferSize reports granularity -1 (powers of two) while any
+                size from 32 to 4096 is accepted: the preferred size comes from
+                config.ini and may be any value, and the engine handles any
+                size. Kept (refusing other sizes could break hosts that work).
+H31 INFO        swprintf truncation: verified that the x64 / x86 (mingw ANSI
+                stdio) and ARM64 (UCRT) builds always terminate the buffer.
+H32 INFO        Dead code removed (from -Wunused, a --gc-sections link and a
+                cross-reference of every identifier): string ids S_ABOUT and
+                S_STATUS_TITLE (5 languages), WasapiBridge::recommendedBuffer,
+                the never-read member monWas, the duplicated null check in
+                getClockSources, KnownRate (replaced by asiochk::StandardRate)
+                and the swscanf loop of buildRoute (replaced by
+                cfgp::ParseOutputMap). The duplicated helpers JoinList,
+                SplitList, LbStr, DriftStr, ValidProfileName, ValidExeKey and
+                SafeLogName now exist once, in parse.h.
+
+Independent review of 0.9.8 (0 HIGH, 0 MED, 7 LOW; all FIXED in 0.9.8)
+----------------------------------------------------------------------
+R1 LOW FIXED  getErrorMessage copied the whole 124-byte errMsg array; it copies
+              only the message and its terminator again (strnlen + 1, as 0.9.7),
+              so a host buffer sized for the message is never written past.
+R2 LOW FIXED  H13 made disposeBuffers without buffers return ASE_InvalidMode
+              (ASE_NotPresent before init) and setClockSource before init
+              ASE_NotPresent. Hosts that dispose defensively could treat that
+              as fatal: both are lenient again (ASE_OK, as 0.9.7; asiocheck.h
+              Allowed); T11 and asiocheck_test expect ASE_OK, KI-8 updated.
+R3 LOW FIXED  "Start trace.bat" / "Stop trace.bat" tested "if errorlevel 1",
+              which misses the negative HRESULTs wpr returns; the exit code is
+              captured right after the call and anything but 0 is a failure.
+R4 LOW FIXED  Elevation check: "net session" needs the Server service; now
+              "fltmc" in install.bat, uninstall.bat and both trace helpers. The
+              elevated copy receives the marker argument "elevated" and stops
+              with an error instead of relaunching again. "Stop trace.bat"
+              chooses the output folder (the signed-in user's Desktop) before
+              elevation, passes it to the elevated copy and prints the full
+              path of the saved file. Single quotes in paths are doubled for
+              PowerShell.
+R5 LOW FIXED  H9 ended the stream after 5 render-event timeouts even if the
+              device was still moving (e.g. events lagging after a resume from
+              Modern Standby). At each timeout the IAudioClock position
+              (Exclusive) or the Shared padding is sampled; if it moved since
+              the count started, the count restarts instead.
+R6 LOW FIXED  update.cpp Worker: the UpdateCheck trace event (SafeAscii
+              allocates) was after the try block; it is inside it now.
+R7 LOW FIXED  Comments: common.h still described the private selector's opt
+              as char[256] (now asiochk::EngineInfo); hosttest.cpp described a
+              0.9.7 driver as rejecting the new request (it writes over the
+              header; the line shows without its first 8 characters).

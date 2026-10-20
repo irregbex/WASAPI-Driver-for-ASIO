@@ -1,0 +1,185 @@
+WASAPI Driver for ASIO(R) 0.9.8 - Third-party notices
+=====================================================
+
+This file lists every third-party component that is part of, linked into, or
+used to build the released binaries, and the license each one is used
+under. The linking information below was checked on the 0.9.8 binaries with
+pefile (import tables) and by inspecting the embedded runtime strings.
+
+This document is provided for information only and is not legal advice.
+
+1. Steinberg ASIO SDK 2.3.4 (interface headers)
+-----------------------------------------------
+Files used: asio.h, asiosys.h, iasiodrv.h (third_party/asiosdk/, unmodified,
+from the SDK release dated 16.10.2025). Only these headers are used; no SDK
+source file (.cpp) is compiled into the program. The SDK is not distributed
+in binary form beyond what the compiler takes from these headers (type,
+constant and interface declarations).
+Copyright: (c) 2025, Steinberg Media Technologies GmbH, All Rights Reserved.
+License used: the GNU General Public License version 3 option of the SDK's
+dual license (option "b" below). The proprietary Steinberg ASIO License
+(option "a") is NOT used, and no Steinberg license agreement was signed for
+this project. As a consequence the whole program is distributed under the
+GPL (version 3 or later, which is compatible with the GPL version 3 option),
+with its complete source code.
+Required notice (third_party/asiosdk/LICENSE.txt, quoted verbatim; each
+header says: "This file is part of a Steinberg SDK. It is subject to the
+license terms in the LICENSE file found in the top-level directory of this
+distribution"):
+
+    //-----------------------------------------------------------------------------
+    // LICENSE
+    // (c) 2025, Steinberg Media Technologies GmbH, All Rights Reserved
+    //-----------------------------------------------------------------------------
+    This license applies only to files referencing this license,
+    for other files of the Software Development Kit the respective embedded license text
+    is applicable.
+    
+    This Software Development Kit is licensed under the terms of the Steinberg ASIO License,
+    or alternatively under the terms of the General Public License (GPL) Version 3.
+    You may use the Software Development Kit according to either of these licenses as it is
+    most appropriate for your project on a case-by-case basis (commercial or not).
+    
+    a) Proprietary Steinberg ASIO License
+    The Software Development Kit may not be distributed in parts or its entirety
+    without prior written agreement by Steinberg Media Technologies GmbH.
+    The SDK must not be used to re-engineer or manipulate any technology used
+    in any Steinberg or Third-party application or software module,
+    unless permitted by law.
+    Neither the name of the Steinberg Media Technologies GmbH nor the names of its
+    contributors may be used to endorse or promote products derived from this
+    software without specific prior written permission.
+    Before publishing a software under the proprietary license, you need to obtain a copy
+    of the License Agreement signed by Steinberg Media Technologies GmbH.
+    The Steinberg ASIO SDK License Agreement can be found at:
+    www.steinberg.net/en/company/developers.html
+    
+    THE SDK IS PROVIDED BY STEINBERG MEDIA TECHNOLOGIES GMBH "AS IS" AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+    IN NO EVENT SHALL STEINBERG MEDIA TECHNOLOGIES GMBH BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+    BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+    OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+    OF THE POSSIBILITY OF SUCH DAMAGE.
+    
+    b) General Public License (GPL) Version 3
+    Details of these licenses can be found at: www.gnu.org/licenses/gpl-3.0.html
+    
+    Best Practice recommendation:
+    Please refer to the Steinberg ASIO usage guidelines for the use of ASIO, ASIO logo and ASIO 
+    compatible logos.
+    //----------------------------------------------------------------------------------
+
+The Steinberg ASIO Compatible logo (src/res/asio-compatible-logo-white.png,
+from the SDK folder "Steinberg ASIO Logo Artwork", unmodified) is a
+trademark artwork, not code; its use is governed by the Steinberg ASIO Usage
+Guidelines, see TRADEMARKS.txt.
+
+2. mingw-w64 GCC runtime (x64 and x86 DLLs, WasapiDriverDiag.exe,
+   WasapiDriverTest.exe)
+------------------------------------------------------------------
+Toolchain: mingw-w64 GCC 13 ("win32" thread model), linked with -static
+-static-libgcc -static-libstdc++.
+- libstdc++ and libgcc (GCC runtime libraries): STATICALLY linked. Copyright
+  Free Software Foundation, Inc. License: GNU GPL version 3 with the GCC
+  Runtime Library Exception, version 3.1. The exception allows the
+  resulting binaries to be distributed under terms of our choice; we
+  distribute them under the GPL anyway.
+- mingw-w64 CRT startup and support code: STATICALLY linked. Copyright the
+  mingw-w64 project contributors. License: mostly public domain, with some
+  files under the Zope Public License 2.1 or permissive MIT/BSD-style
+  licenses, as stated in the mingw-w64 COPYING file. No winpthreads library
+  is linked (win32 thread model).
+- Microsoft C runtime (msvcrt.dll): DYNAMICALLY linked; it is part of
+  Windows and is not distributed with this program.
+- Windows system DLLs (kernel32, user32, gdi32, advapi32, ole32, shell32,
+  avrt, winmm): DYNAMICALLY linked operating system components, not
+  distributed.
+- dbghelp.dll (Windows): loaded at runtime from System32 with LoadLibraryEx
+  only when the crash handler is installed (0.7.0); not linked, not
+  distributed.
+
+3. Zig 0.16.0 / LLVM runtime (ARM64 DLL only)
+---------------------------------------------
+Toolchain: Zig 0.16.0 (clang), target aarch64-windows-gnu.
+- LLVM libc++ and libc++abi: STATICALLY linked. License: Apache License
+  2.0 with LLVM Exceptions (the exception removes the attribution
+  requirement for binary redistribution of runtime code compiled into a
+  program).
+- LLVM compiler-rt builtins: STATICALLY linked where the compiler needs
+  them. License: Apache License 2.0 with LLVM Exceptions.
+- mingw-w64 CRT (bundled with Zig): STATICALLY linked; license as in
+  section 2.
+- Universal C Runtime (api-ms-win-crt-*.dll, ucrtbase): DYNAMICALLY
+  linked; part of Windows 10/11, not distributed.
+- Windows system DLLs: as in section 2.
+
+4. Windows API headers
+----------------------
+The program is compiled against the Windows API headers and import
+libraries shipped with mingw-w64 (and with Zig), not against the Microsoft
+Windows SDK. Those headers are in the public domain or under the
+permissive licenses listed in the mingw-w64 COPYING file. Interface
+definitions such as WASAPI, MMDevice, WIC and DWM are Windows APIs; Windows
+and WASAPI are trademarks of Microsoft (see TRADEMARKS.txt).
+0.9.8: the TraceLogging (ETW) event encoder (src/tlg.h) is this project's own
+code, written from Microsoft's public documentation of the TraceLogging
+event format; no Microsoft source code is included. Microsoft's
+TraceLoggingDynamic.h (MIT License) was evaluated and is not used. The ETW
+functions are imported from advapi32.dll (a Windows system DLL, section 2).
+The Windows Performance Recorder profile (trace/WasapiDriver.wprp) is this
+project's own file; it names the Windows provider Microsoft-Windows-Audio
+only by its public name and GUID.
+
+5. NSIS (installer only; 0.9.0: Modern UI 2 and its English and Spanish
+language files, part of NSIS, same license)
+------------------------
+WASAPI-Driver-for-ASIO-0.9.8-Setup.exe is built with NSIS 3.09 (Nullsoft
+Scriptable Install System); the installer contains the NSIS stub and the
+LZMA decompressor. Copyright Nullsoft and the NSIS contributors. License:
+zlib/libpng license. The LZMA code (from the 7-Zip LZMA SDK, Igor Pavlov)
+is distributed by NSIS under the Common Public License with a special
+exception that allows its use in installers created with NSIS. NSIS places
+no restriction on the license of the installed program.
+
+6. Build-only tools (not distributed)
+-------------------------------------
+GNU binutils (windres), GCC, Zig, Python and the GitHub Actions runner are
+used only to build the program; nothing from them is distributed except the
+runtime parts listed above.
+0.8.0 release tooling, also build-only: osslsigncode (GPL-3.0-or-later) and,
+optionally, Microsoft signtool with the Azure Trusted Signing client (dlib)
+add an Authenticode signature to the files; a signature is data, no code of
+these tools is included in the program. The release workflow uses the
+GitHub actions actions/checkout, actions/upload-artifact,
+actions/download-artifact and ilammy/msvc-dev-cmd (MIT licenses), and the
+GitHub CLI (MIT). The experimental ARM64X DLL is compiled with Microsoft
+Visual C++ (static runtime, /MT): if that file is distributed, the Visual
+C++ runtime parts linked into it are covered by the Visual Studio license
+terms for redistributable code; it is not part of the Setup.
+The tray icon images are drawn by the program at runtime (no image files).
+0.9.0: themes, translations and the four new effects are original work
+of the project; the optional update check uses only Windows components
+(WinHTTP, BCrypt, WinVerifyTrust), loaded at run time.
+0.9.3: the application icon (src/res/app.ico, src/res/icon-256.png) and the
+tray status icons are original work of the project, drawn by
+scripts/make_icon.py and src/trayicon.h; they are covered by the project
+license (GPL-3.0-or-later) and contain no third-party logo or artwork.
+scripts/make_icon.py uses Pillow (HPND license) at build time only; nothing
+of Pillow is distributed.
+0.9.2: the help tips (texts and their window) are original work of the
+project; no tooltip library is used.
+0.9.1: accessibility uses only Windows components (oleacc, oleaut32: Active
+Accessibility, loaded at run time); the installer header and welcome images
+are the ASIO Compatible logo (Steinberg, see TRADEMARKS.txt) on a plain
+background; the release workflow pins the GitHub actions listed above to
+commit SHAs.
+0.8.1: the panel visuals (effects, palettes, the 5x7 dot font of the
+scroller) are original and generated by the program at runtime; no third-
+party code, image, font or music is included.
+
+No other third-party code, library, font or image is included. The program
+does not download anything and contains no telemetry library.

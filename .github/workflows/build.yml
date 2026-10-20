@@ -1,0 +1,59 @@
+# WASAPI Driver for ASIO - automatic build (3 DLLs, tools and installer)
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: build
+
+permissions:
+  contents: read
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64 g++-mingw-w64-i686 nsis
+          # win32 thread model of mingw (the Ubuntu default), same as the local build
+          # same Zig version as the local build (0.16.0)
+          python3 -m pip install --user ziglang==0.16.0 || python3 -m pip install --user --break-system-packages ziglang==0.16.0
+
+      - name: Build
+        run: |
+          sh build.sh
+          sh build-x86.sh
+          sh build-arm64.sh
+          sh build-diag.sh
+          sh build-test.sh
+
+      - name: Offline tests (all 18, including the 0.9.8 fuzz / ASIO argument validation / trace encoder tests under sanitizers)
+        run: sh tests/run_all.sh
+
+      - name: Installer
+        run: |
+          # src/common.h has CRLF line endings: take only the text between the quotes, never the trailing CR (0.9.7)
+          VERSION=$(sed -n 's/^#define WB_VERSION_STR "\([^"]*\)".*/\1/p' src/common.h)
+          mkdir -p stage/installer
+          cp WasapiDriver64.dll WasapiDriver32.dll WasapiDriverARM64.dll WasapiDriverDiag.exe WasapiDriverTest.exe LICENSE.txt stage/
+          # documents: pkg2/ in the development tree, the repository root in the published source tree
+          DOC=pkg2; [ -d pkg2 ] || DOC=.
+          for f in README QUICK-START FAQ COMPATIBILITY TEST-GUIDE COPYRIGHT THIRD-PARTY-NOTICES TRADEMARKS DISCLAIMER PRIVACY SECURITY CONTRIBUTING TRACING; do cp $DOC/$f.txt stage/; done
+          mkdir -p stage/trace && cp trace/WasapiDriver.wprp "trace/Start trace.bat" "trace/Stop trace.bat" stage/trace/   # 0.9.8
+          cp installer/WasapiDriver.nsi installer/NOTICES.txt installer/lang_en.nsh installer/lang_es.nsh installer/header.bmp installer/welcome.bmp src/res/app.ico stage/installer/
+          cd stage/installer && makensis -DVERSION=$VERSION WasapiDriver.nsi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WASAPI-Driver-for-ASIO
+          path: |
+            WasapiDriver64.dll
+            WasapiDriver32.dll
+            WasapiDriverARM64.dll
+            WasapiDriverDiag.exe
+            WasapiDriverTest.exe
+            stage/*-Setup.exe

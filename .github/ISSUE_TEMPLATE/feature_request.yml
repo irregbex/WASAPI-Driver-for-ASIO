@@ -1,0 +1,27 @@
+# WASAPI Driver for ASIO - issue form: idea or feature request (0.8.0, G7)
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Idea or feature request
+description: Suggest an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do that is not possible or hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+  - type: input
+    id: version
+    attributes:
+      label: Driver version you use
+      placeholder: "0.8.0"
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Roadmap
+      options:
+        - label: I looked at ROADMAP.txt and this is not already planned.

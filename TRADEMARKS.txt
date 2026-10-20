@@ -1,0 +1,94 @@
+WASAPI Driver for ASIO(R) - Trademarks
+======================================
+
+This document is provided for information only and is not legal advice.
+
+1. ASIO (Steinberg)
+-------------------
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+The name "WASAPI Driver for ASIO" uses "ASIO" only in plain text to denote
+compatibility, in the "<product> for ASIO" form that section 6 of the
+Steinberg ASIO Usage Guidelines (SDK 2.3.4, 16.10.2025) allows. "ASIO" is
+not stylized, not merged into a logo or brand, and no derived term (such as
+"ASIOx") is used. "ASIO" is never used in a company name, a company logo or
+a domain name by this project.
+
+Attribution (Usage Guidelines section 15): the first use of "ASIO" in every
+product-related material carries the (R) symbol, and the sentence "ASIO is
+a registered trademark of Steinberg Media Technologies GmbH." appears in the
+control panel (About tab), the installer (Notices page, branding line and
+details), the Diagnostics and Test reports, and every document.
+
+2. ASIO Compatible logo
+-----------------------
+The program shows the Steinberg ASIO Compatible logo (white on transparent,
+"(R)" version), exactly as supplied in the SDK folder "Steinberg ASIO Logo
+Artwork", without modification (no recoloring, cropping or distortion; it is
+only scaled proportionally).
+
+What the Steinberg ASIO Usage Guidelines require when the logo or the
+trademark is used (summary of sections 1 to 6 and 14 to 15):
+- The logo must be used unaltered, as provided by Steinberg.
+- Product UI: the logo should appear in the About box or an equivalent
+  element. For software distributed digitally in which ASIO is activated
+  manually by the user (the case of this driver: the user selects it in the
+  host), the logo must appear in every dialog that enables or configures
+  ASIO. This program shows it in the header of the control panel (always
+  visible, on every tab) and in the About tab. 0.9.1: the installer shows it too (page
+  header and welcome page, next to the product name, with the attribution
+  sentence), scaled proportionally on a plain dark background; on light
+  backgrounds of the panel (Light theme, Windows high contrast) it is drawn
+  on a dark plate so it stays legible, the artwork itself unchanged.
+- Documentation and manuals: the logo must be included; where space or
+  format does not allow it, the copyright attribution referencing
+  Steinberg must be included instead. The plain-text documents of this
+  project use the text attribution.
+- Websites: the logo must be visible on every web page that references or
+  promotes the product (a site-wide footer or imprint alone is not
+  enough), and on legal or imprint pages that reference ASIO.
+- Marketing and advertising material: the logo, or the attribution where
+  space does not allow it.
+- Compatibility claims ("for ASIO", "ASIO compatible") are allowed only for
+  products that really are compatible and were developed with the ASIO
+  SDK, with the logo shown near the claim.
+- Videos, social media, URLs and categories: allowed only with the logo
+  shown in the same context (sections 8 to 12).
+
+Is a signed license or a registration with Steinberg required for the logo?
+According to the SDK documentation (README "Trademark and Logo Usage" and
+FAQ), under the GPLv3 option the use of the ASIO name and logo is optional
+and allowed without a separate agreement, provided the Usage Guidelines are
+followed ("Can I use the ASIO logo under GPLv3? Yes, but only if you comply
+with the trademark rules"). A signed Steinberg license agreement is
+required only for the proprietary license, which this project does not use.
+Non-compliance with the guidelines does not affect the GPLv3 rights to the
+code, but may be a trademark violation.
+
+Disabling the logo at build time: build with WB_FLAGS="-DWB_SHOW_ASIO_LOGO=0"
+(see BUILDING.txt). The logo is then neither embedded in the DLL nor shown;
+the text attribution remains. Anyone redistributing the program in a form
+or place where the guidelines cannot be met (for example a web page where
+the logo cannot be shown) should consider this option or contact Steinberg.
+
+3. Other trademarks
+-------------------
+- Microsoft, Windows and WASAPI (Windows Audio Session API) are trademarks
+  of the Microsoft group of companies.
+- Steinberg, Cubase and Nuendo are trademarks of Steinberg Media
+  Technologies GmbH.
+- Ableton and Ableton Live are trademarks of Ableton AG.
+- REAPER is a trademark of Cockos Incorporated.
+- Studio One, FL Studio and Bitwig Studio are trademarks of their
+  respective owners.
+- Spotify is a trademark of Spotify AB; YouTube is a trademark of Google
+  LLC; Discord is a trademark of Discord Inc.; Bluetooth is a trademark of
+  Bluetooth SIG, Inc.; LatencyMon is a trademark of its owner.
+All other names are the property of their respective owners. They are
+mentioned only to describe compatibility or typical use.
+
+4. No affiliation
+-----------------
+This project is independent. It is not affiliated with, sponsored by or
+endorsed by Steinberg Media Technologies GmbH, Microsoft, or any other
+company named in this file.

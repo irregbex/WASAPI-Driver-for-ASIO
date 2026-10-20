@@ -1,0 +1,31 @@
+# WASAPI Driver for ASIO - winget manifest TEMPLATE (default locale file).
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Publisher is the name the Setup writes to Settings > Apps (uninstall key "Publisher"), so winget can match it.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: irregbex.WASAPIDriverForASIO
+PackageVersion: 0.9.8
+PackageLocale: en-US
+Publisher: WASAPI Driver for ASIO contributors
+PublisherUrl: https://github.com/irregbex
+PublisherSupportUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/issues
+PackageName: WASAPI Driver for ASIO
+PackageUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/blob/main/LICENSE.txt
+Copyright: Copyright (C) 2026 The WASAPI Driver for ASIO contributors
+ShortDescription: Free ASIO driver that plays and records through any Windows audio device (WASAPI).
+Description: |-
+  ASIO driver for Windows that uses WASAPI (Shared or Exclusive mode), so any Windows audio device, including
+  Bluetooth headphones and built-in sound, can be used by ASIO programs. Includes a control panel, a monitor
+  window, loopback capture, additional devices, direct monitoring and a diagnostics tool.
+  ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+Moniker: wasapi-asio
+Tags:
+  - asio
+  - audio
+  - driver
+  - wasapi
+  - daw
+ReleaseNotesUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/tag/v0.9.8
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

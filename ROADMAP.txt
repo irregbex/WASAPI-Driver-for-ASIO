@@ -1,0 +1,195 @@
+WASAPI Driver for ASIO - Roadmap towards "the best ASIO driver for Windows"
+==========================================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+FEATURE FREEZE (0.9.1 release candidate -> 1.0)
+-----------------------------------------------
+No new features until 1.0 (accepted exceptions: 0.9.2 help tips, 0.9.3
+application and tray icons, interface only; 0.9.4 low-latency engine at any
+sample rate, suggested by Microsoft's Windows music team; 0.9.8 hardening and diagnostic tracing, requested
+in a review by the same team, no user-visible feature). Only fixes for defects found on real hardware,
+in reviews or by the soak test, and documentation. 1.0 is released when:
+- every offline test passes (tests/run_all.sh, enforced by release.yml since 0.9.8);
+- TEST-GUIDE.txt blocks A-R, U, V, W, X and Y pass on the configurations of COMPATIBILITY.txt
+  marked "tested OK", with no open crash or audio-dropout defect;
+- a 60-minute soak test (WasapiDriverTest.exe --soak 60) PASSES with at
+  least one unplug/replug and one sleep/resume, in Shared and in Exclusive;
+- the beta features (README section 36) are either confirmed on hardware
+  and promoted to stable, or stay marked beta in 1.0;
+- the project is published (update source configured, signed Setup if a
+  certificate is available).
+Items marked "not started" below move to after 1.0.
+
+What defines a first-class ASIO driver, and where WASAPI Driver for ASIO
+stands:
+
+Criterion                        Status in 0.9.8
+1. Never crashes the DAW         Full reviews (34 defects fixed in 0.2.2,
+                                 plus one review per version); 0.9.8:
+                                 exception barrier on every entry point,
+                                 host argument validation, fuzzing under
+                                 sanitizers, test T11 (bad host calls);
+                                 validation on real hardware still pending.
+2. Low and honest latency        Shared IAudioClient3 at any rate (0.9.4,
+                                 exact internal conversion) + Exclusive;
+                                 reported latency computed and checked by an
+                                 offline model; real measurement pending.
+3. No dropouts at small buffers  Critical MMCSS thread without locks;
+                                 measurement pending.
+4. Works with any sound card     WASAPI covers every Windows device.
+5. Does not hijack Windows       Shared by default; several DAWs at once.
+   audio
+6. Recovers by itself            Device following + ASIO reset.
+7. Easy to install               .exe installer with uninstaller.
+8. Clear diagnostics             Panel with live status, meters, DSP load,
+                                 log and WasapiDriverDiag.exe; 0.9.8:
+                                 TraceLogging events + WPR profile.
+
+Phase 1 - Validation (essential, needs real hardware)
+-----------------------------------------------------
+1.1 Run the whole TEST-GUIDE.txt in Cubase and Live.
+1.2 Fix what fails (one version per round).
+1.3 Measure the real round-trip latency with a physical loopback cable and
+    compare it with the reported one; adjust the computation if it differs
+    by more than 1 ms.
+    TOOL DONE in 0.3.1: WasapiDriverTest.exe --latency (T8). It still has
+    to be run on real hardware, adjusting the computation if needed.
+1.4 8-hour test with counters at 0. TOOL DONE in 0.9.1: soak test
+    (WasapiDriverTest.exe --soak 480 for 8 hours).
+1.5 DONE in 0.3.1. Automatic ASIO host test (WasapiDriverTest.exe, T1-T7)
+    to run before the manual tests.
+
+Phase 2 - Audio quality and performance
+---------------------------------------
+2.1 DONE in 0.4.0 (Sinc option). Drift resampling with a polyphase (sinc)
+    filter instead of Hermite: flat response up to 20 kHz (Hermite slightly
+    attenuates above ~15 kHz while correcting).
+2.2 DONE in 0.3.0. Glitch detection in Exclusive mode via
+    IAudioClock::GetPosition + late wake-up.
+2.3 DONE in 0.3.0. Load measurement: time of each bufferSwitch vs block
+    duration (now and maximum in the panel).
+2.4 DONE in 0.4.0. Optional TPDF dither when converting to 16/24 bits in
+    Exclusive mode.
+
+Phase 3 - Features
+------------------
+3.1 BETA in 0.5.0 (up to 3 extra outputs and 3 extra inputs). Several input
+    and output devices at once (aggregate), with drift correction per
+    device.
+3.2 DONE in 0.3.0. Per-channel level meters in the panel (peak, hold,
+    clip).
+3.3 DONE in 0.5.0 (main output, OutputMap). Routing matrix (which ASIO
+    channel goes to which physical channel).
+3.4 DONE in 0.4.0. Savable profiles (e.g. "Studio", "Laptop",
+    "Streaming").
+3.5 DONE in 0.4.0. Per-application loopback (choose a single program to
+    capture; WASAPI INCLUDE_TARGET_PROCESS_TREE with the chosen PID).
+3.6 STARTED in 0.8.0 (experimental CI job, MSVC on a Windows 11 ARM64
+    runner). ARM64X DLL (a single DLL for native ARM64 and emulated x64
+    DAWs). Open: confirm the job builds, test in an ARM64 and an x64 DAW on
+    Windows on ARM, then let the Setup register it in place of the choice.
+3.7 DONE in 0.5.0 (AlignDevices). Compensate the delay of the extra outputs
+    (align them with the main one). Still open: direct monitoring to extra
+    devices and of loopback inputs (deliberately excluded for now).
+3.8 Input/output gain controls for the host (kAsioCanInputGain /
+    kAsioCanOutputGain) - not implemented in 0.8.0.
+3.9 DONE in 0.8.0. Bluetooth mode, hearing-safety limiter, automatic profile
+    per program, "Follow Windows" sample rate, tray icon, channel names from
+    the devices.
+3.11 DONE in 0.8.1. Optional animated panel background (plasma, starfield,
+    copper bars, tunnel, audio-reactive) and an About-tab scroller, with
+    frame-time protection.
+3.12 DONE in 0.9.0. Themes, four more background effects, interface in
+    five languages, optional update check.
+3.17 DONE in 0.9.4 (freeze exception, suggested by Microsoft's Windows
+    music team). Low-latency engine (IAudioClient3) at any DAW rate with
+    exact fixed-ratio conversion inside the driver and ASIO callbacks on
+    demand.
+3.16 DONE in 0.9.3 (freeze exception). Application icon everywhere, tray
+    icon with status dot.
+3.15 DONE in 0.9.2 (freeze exception). Help tips on every control, with
+    F1 and screen-reader descriptions.
+3.14 DONE in 0.9.1. Accessibility (screen readers, keyboard, high
+    contrast), installer logo, soak test, quick start / FAQ / compatibility
+    table.
+3.13 After 1.0: more languages (the string table makes it a translation-only task) and
+    a second installer language set beyond English / Spanish.
+3.10 Measured Bluetooth latency: offer the value measured by the latency
+    test (T8) as the output offset for Bluetooth devices per device.
+
+Phase 4 - Release
+-----------------
+4.1 DONE in 0.6.0 ("WASAPI Driver for ASIO", with migration). Final name.
+4.2 PREPARED in 0.8.0 (release workflow, issue forms, RELEASING.txt);
+    0.9.7: repository tree, .gitattributes and first-release procedure
+    ready, waiting for the GitHub account name.
+    Public source repository (GPLv3; .gitignore ready).
+4.3 DONE in 0.4.0. Automatic builds on GitHub Actions (the 3 DLLs +
+    installer).
+4.4 PREPARED in 0.8.0 (SIGNING.txt, scripts/sign.sh, NSIS hooks, Trusted
+    Signing job; needs a certificate or a Trusted Signing account).
+    Authenticode signature so that SmartScreen does not warn.
+4.5 PREPARED in 0.8.0 (draft GitHub Release with notes from VERSION.txt and
+    SHA256SUMS.txt). Releases page with notes per version.
+4.6 DONE in 0.8.0 (.github/ISSUE_TEMPLATE forms). Bug report channel asking
+    for the status text and the WasapiDriverDiag.exe report.
+4.10 PREPARED in 0.8.0 (manifests/ templates). winget package.
+4.7 DONE in 0.3.0. Diagnostics tool WasapiDriverDiag.exe (system,
+    registration, devices, formats, MMCSS, config and log report) with a
+    Start menu shortcut.
+4.9 DONE in 0.7.0. Settings applied live, floating monitor window, latency
+    offsets (measure and save), direct monitoring from the panel, crash
+    reports with safe mode.
+4.8 DONE in 0.6.0. Everything in English (interface, tools, installer,
+    documentation, source comments).
+
+Why not a kernel driver
+-----------------------
+A kernel driver (WDM/ACX) only beats this design if you control the hardware
+(your own interface). For existing sound cards, WASAPI Exclusive reaches the
+same DMA buffer of the vendor's driver (WaveRT): the latency difference is
+1-2 ms and the risk (blue screens, Microsoft signing) is not worth it.
+
+Done in 0.9.6 (fixes from real-hardware testing of 0.9.5)
+--------------------------------------------------------
+- KI-4: the microphone warning appears only when an input is selected.
+  DONE.
+- KI-5: the fixed-ratio converter uses sinc whenever the CPU budget allows.
+  DONE.
+- Installer: detects locked DLLs (a host has the driver loaded) and asks to
+  close the audio programs, with Retry / Cancel. DONE.
+- Code-review notes from the 0.9.5 documentation pass (CODE-REVIEW.txt,
+  section "Documentation pass"): D1-D12. DONE.
+
+Done in 0.9.7 (public beta preparation)
+---------------------------------------
+- Repository tree ready for GitHub: sources, documents, legal texts,
+  workflows, issue forms, winget templates in the winget-pkgs layout,
+  .gitattributes (line endings), SPDX headers everywhere. DONE.
+- Documents and test data cleaned of personal hardware details (generic
+  device descriptions, fictional channel-name examples). DONE.
+- Update source names the public repository; an unfilled owner is treated
+  as "not configured" (no request). DONE.
+- RELEASING.txt step 0: creating the repository and the first release from
+  the web interface or GitHub Desktop. DONE.
+
+Done in 0.9.8 ("Hardening", from an external review)
+----------------------------------------------------
+- Exception barrier on every entry point called by the host or Windows.
+  DONE.
+- Validation of every host argument and of the call order (asiocheck.h),
+  read-once copies of host structures (TOCTOU). DONE.
+- Untrusted device data bounded (formats, periods, buffer sizes); no
+  unbounded wait on the audio thread or device IO that can be bounded. DONE.
+- Re-review for exceptions, use after free, TOCTOU, lock order, overruns
+  and overflow (CODE-REVIEW.txt H1-H32); dead code removed. DONE.
+- Fuzz, validation and trace-encoder tests under sanitizers; all offline
+  tests gate the release workflow; test tool T11 (bad host calls). DONE.
+- TraceLogging provider, WPR profile, Start / Stop trace helpers,
+  TRACING.txt. DONE.
+Next: publish the repository and the 0.9.8 pre-release, collect
+COMPATIBILITY.txt reports and traces from beta users; then Arm64X (MSVC CI
+job, which now also builds src/trace.cpp) and a code-signing application
+(SignPath). Possible later: a fuzzer that feeds random WASAPI behavior
+(an IAudioClient mock) to the stream-opening code.

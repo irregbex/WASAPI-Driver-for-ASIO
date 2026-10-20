@@ -1,0 +1,238 @@
+WASAPI Driver for ASIO - Known issues and field observations
+=============================================================
+
+This file records problems seen during real-world testing (Windows 11
+(Insider build), Cubase 15, DaVinci Resolve Studio 21, Bluetooth earbuds
+(A2DP, 10 ms minimum period), a USB audio adapter, HDMI monitor audio and a
+USB audio interface). Each entry lists the symptom, what the logs showed,
+the cause (confirmed or suspected), the workaround and the status.
+
+Status values: FIXED (version), CONFIRMED (cause known, not a driver bug),
+UNDER INVESTIGATION, OPEN (driver bug, fix pending).
+
+
+KI-1  Opening DaVinci Resolve cuts all Windows audio (YouTube, recordings)
+---------------------------------------------------------------------------
+Status: CONFIRMED - caused by another ASIO driver, not by this driver.
+
+Symptom
+  - Audio playing in other apps (e.g. YouTube in a browser) stops the moment
+    DaVinci Resolve starts, and does NOT come back by itself.
+  - The browser recovers only when playback is restarted (moving the
+    YouTube position marker).
+  - Snipping Tool screen recording with system audio stops with
+    "Audio stopped during recording. Check the connection."
+  - Apps started afterwards (e.g. MPC-HC) play normally.
+  - Resolve itself may be silent at first.
+
+What the logs showed
+  - The WASAPI Driver for ASIO log for the Resolve session is normal:
+    Shared mode, IAudioClient3, 48000 Hz, no conversion, no exclusive mode,
+    no errors.
+
+Cause
+  - On the "LOADING FAIRLIGHT ENGINE" splash screen, Resolve first loads the
+    "Generic Low Latency ASIO Driver" (installed by Steinberg software).
+    That driver opens the audio device in EXCLUSIVE mode.
+  - When a device is taken exclusively, Windows invalidates every shared
+    stream that was playing on it. Apps that do not handle the
+    "device invalidated" event (most browsers mid-playback, screen
+    recorders) stop until they reopen their stream.
+  - Resolve then switches to the ASIO driver selected in its preferences.
+  - Resolve's preferences did not always show which driver was really in
+    use; after removing the Generic driver Resolve fell back to the next
+    ASIO driver it found (the ASIO driver of a USB audio interface that has
+    its own ASIO driver).
+  - Cubase does not show the problem because it loads only the selected
+    ASIO driver.
+
+Workaround
+  1. Uninstall "Generic Low Latency ASIO Driver" (Settings > Apps) if it is
+     not needed. Close every Cubase / Resolve process first (Task Manager),
+     otherwise Windows reports it as in use; reboot if needed.
+  2. In Resolve: Preferences > System > Audio I/O > select
+     "WASAPI Driver for ASIO", save, restart Resolve.
+
+Documentation to add
+  - FAQ entry: "Some programs probe other ASIO drivers at startup. Exclusive
+    drivers (Generic Low Latency ASIO Driver, ASIO4ALL in some modes) will
+    interrupt Windows audio while they are loaded."
+
+
+KI-2  Cubase process stays running after File > Quit
+-----------------------------------------------------
+Status: CONFIRMED - caused by an old third-party plugin in one project,
+not by this driver.
+
+Symptom
+  - After closing Cubase, its process remained in Task Manager with 0 % CPU
+    and its memory still allocated (three hung instances accumulated over
+    several sessions).
+  - Side effects:
+    - The driver installer could not replace WasapiDriver64.dll ("in use").
+    - A hung Cubase that had the Generic Low Latency ASIO Driver open kept
+      the audio device in exclusive mode (see KI-1): no sound anywhere until
+      the process was ended, and the Generic driver could not be uninstalled.
+    - The PC felt slow while the hung processes were alive.
+
+What the logs showed
+  - The driver log always ended with "Driver released": the driver finished
+    its own shutdown (streams closed, buffers disposed, object destroyed).
+
+Tests
+  - Generic Low Latency ASIO Driver uninstalled: Cubase still hung with the
+    old project, so the Generic driver was not the cause.
+  - New empty project, one new instrument, played, saved, File > Quit with
+    WASAPI Driver for ASIO: Cubase closed normally.
+  - Conclusion: an old plugin used by the recovered project does not release
+    correctly when Cubase quits.
+
+Workaround
+  - Task Manager > Cubase > End task. Identify the plugin by disabling the
+    project's plugins one by one (or loading the project in safe mode) and
+    update or replace it.
+
+Installer improvement (0.9.6, independent of the cause)
+  - The installer (and the uninstaller) now detects locked DLLs: before
+    changing anything it checks that WasapiDriver64.dll, WasapiDriver32.dll,
+    WasapiDriverARM64.dll and the two tools can be replaced. If one is in
+    use (a DAW, or a hung host process, has the driver loaded) it asks the
+    user to close the audio programs (Cubase, DaVinci Resolve, Ableton
+    Live, ...) or end the hung process in Task Manager, with Retry /
+    Cancel, instead of failing or leaving the old DLL in place. Cancel
+    leaves the installation unchanged.
+
+
+KI-3  "The ASIO Sample Rate has changed" after headphones disconnect
+---------------------------------------------------------------------
+Status: FIXED in 0.9.5 (verified on real hardware: Bluetooth case test, no
+rate dialog).
+
+Symptom
+  - Project at 44.1 kHz. Putting the Bluetooth headphones in their case
+    (output device disappears) made Cubase show "The ASIO Sample Rate has
+    changed: ASIO 96 kHz, Project 44.1 kHz".
+
+Cause
+  - On a device-change reset the driver re-read SampleRate from config.ini
+    (96000, left by the automatic test) instead of keeping the rate the host
+    had set with setSampleRate (44100). Cubase also recreates the driver
+    object after the reset, so a per-instance flag was not enough.
+
+Fix (0.9.5)
+  - The host rate is kept per process and persisted as LastHostRate in
+    config.ini. Precedence: host rate of this process > SampleRate=Auto >
+    LastHostRate > panel SampleRate. Choosing a rate in the panel clears the
+    remembered values. Test T10 "Rate kept" in the automatic test.
+
+Note
+  - LastHostRate is shared by all hosts: after using Resolve at 48 kHz,
+    Cubase starts at 48 kHz and then sets its project rate (normal; no
+    dialog expected because Cubase sets the rate itself when loading).
+
+Related user error during testing
+  - The first report of this bug after "installing 0.9.5" was still 0.9.4:
+    the installer could not replace the DLL because of hung Cubase
+    processes (see KI-2).
+
+
+KI-4  Microphone warning shown although Input device is "(None)"
+-----------------------------------------------------------------
+Status: FIXED in 0.9.6.
+
+Symptom
+  - Main tab shows "Windows blocks recording - choose (None - no inputs) or
+    allow microphone access" with a "Set to None" button, even when
+    Input device is already "(None - no inputs)".
+
+Cause
+  - The warning is driven by the Windows microphone privacy setting only; it
+    does not check whether any input is selected.
+
+Fix (0.9.6)
+  - The warning (and its "Set to None" button) is shown only when an input
+    device is selected on the panel (Input device other than "(None - no
+    inputs)", or at least one extra input) AND Windows denies microphone
+    access (privacy setting, or the last open failed with "access denied").
+    It follows the selection at once, before Apply. "Set to None" now also
+    clears the extra inputs. The direct-monitoring note and the diagnostics
+    verdict follow the same rule.
+
+
+KI-5  44.1 -> 48 kHz conversion uses Hermite instead of sinc
+--------------------------------------------------------------
+Status: FIXED in 0.9.6.
+
+Observation
+  - Log: "Output: rate conversion 44100 -> 48000 Hz, 2 channels: Hermite
+    (sinc would cost 12 M MAC/s, budget 150 M)". The fixed-ratio converter
+    follows ResamplerQuality=Hermite from config.ini when converting up.
+  - Hermite measures about 89 dB SNR at 1 kHz; sinc about 115 dB.
+
+Fix (0.9.6)
+  - The fixed-ratio converter uses sinc whenever the CPU budget allows
+    (both directions), independent of ResamplerQuality, which now only
+    selects the drift resampler. Hermite is used only when an up-conversion
+    is over the budget (150 M MAC/s, shared by all converters of a session:
+    the inputs get what the output leaves). New log line, e.g.: "Output:
+    rate conversion 44100 -> 48000 Hz, 2 channels: sinc (12 M MAC/s, budget
+    150 M)". Cost: about 1.45 ms more output latency at 44.1 kHz (reported
+    to the host) and more CPU than Hermite (COMPATIBILITY.txt).
+
+
+KI-6  Automatic test window "closed by itself"
+-----------------------------------------------
+Status: NOT A BUG.
+
+  - The test window had only gone behind another window. The report
+    (%APPDATA%\WASAPI Driver for ASIO\WasapiDriver-test.txt) was complete
+    with RESULT: PASSED.
+
+KI-7  Cubase plays silence after switching ASIO drivers
+--------------------------------------------------------
+Status: CONFIRMED - Cubase behaviour, not a driver bug.
+
+Symptom
+  - Cubase shows "WASAPI Driver for ASIO" as the ASIO driver, transport runs,
+    but nothing is heard and the driver's channel meters do not move.
+
+What the logs showed
+  - The driver was running normally (Shared, IAudioClient3, 0 glitches) and
+    had accepted the project rate (setSampleRate 48000 -> 44100). The host
+    was sending silence.
+
+Cause
+  - After switching the ASIO driver in Studio Setup (e.g. to the Generic Low
+    Latency ASIO Driver and back), Cubase left the output bus with no device
+    ports assigned ("Not Connected" in Audio Connections).
+
+Fix
+  - Studio > Audio Connections (F4) > Outputs > Stereo Out > Device Port:
+    assign "Out L" and "Out R" of WASAPI Driver for ASIO.
+
+Prevention
+  - Keep DeviceChannelNames unchanged between sessions (port names are how
+    Cubase restores connections). Add this to the FAQ.
+
+
+KI-8  Stricter answers to invalid host calls (0.9.8)
+-----------------------------------------------------
+Status: BY DESIGN (0.9.8 hardening; watch for reports).
+
+What changed
+  - Some calls that the ASIO specification does not allow now get the error
+    code asio.h defines instead of being accepted silently: start() or any
+    query before init() -> ASE_NotPresent; setSampleRate() / controlPanel()
+    from inside a buffer callback -> ASE_InvalidMode. Valid calls are
+    unchanged; disposeBuffers() and setClockSource(0) still answer ASE_OK in
+    every state, as in 0.9.7.
+  - The audio thread ends and asks the host for a reset when the output
+    device delivers no event for 10 s AND its playback position does not
+    move during that time (0.9.7 waited forever and reported "running"
+    without callbacks). A device whose position still moves (for example
+    right after a resume from Modern Standby) keeps the stream.
+  - WasapiDriverTest.exe of 0.9.7 shows no "Engine:" line in T2 with a 0.9.8
+    driver (the private engine-information request changed); use the 0.9.8
+    test tool.
+If a host shows an error message that it did not show with 0.9.7, record a
+trace (TRACING.txt): the AsioCall events show the call and the code returned.

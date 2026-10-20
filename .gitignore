@@ -1,0 +1,9 @@
+# WASAPI Driver for ASIO - files git must not track (build outputs, intermediates and local traces)
+# SPDX-License-Identifier: GPL-3.0-or-later
+*.dll
+*.lib
+*.pdb
+*.o
+*.exe
+obj/
+*.etl

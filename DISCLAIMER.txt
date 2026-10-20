@@ -1,0 +1,46 @@
+WASAPI Driver for ASIO(R) - Disclaimer
+======================================
+
+This document is provided for information only and is not legal advice. The
+binding terms are those of the GNU General Public License version 3
+(LICENSE.txt).
+
+1. No warranty, no liability (summary of GPLv3 sections 15 and 16)
+------------------------------------------------------------------
+The program is provided "as is", without warranty of any kind, express or
+implied, including the implied warranties of merchantability and fitness
+for a particular purpose, to the extent permitted by applicable law. The
+entire risk as to the quality and performance of the program is with you;
+should it prove defective, you assume the cost of all necessary servicing,
+repair or correction (section 15).
+Unless required by applicable law or agreed to in writing, no copyright
+holder or anyone who modifies or conveys the program is liable to you for
+damages, including general, special, incidental or consequential damages
+arising out of the use or inability to use the program (including loss of
+data, recordings or projects, or failures of other programs), even if
+advised of the possibility of such damages (section 16).
+This is beta software. Keep backups of your projects and recordings.
+
+2. Hearing and equipment safety
+-------------------------------
+- An audio driver can produce very loud sound: a wrong gain setting, a
+  clipped signal in Exclusive mode, a dropout or a host bug can send
+  full-scale noise or clicks to your speakers or headphones. Start with a
+  low monitoring volume, especially with headphones and in-ear monitors.
+- The latency test (WasapiDriverTest.exe --latency) deliberately plays a
+  loud click every second. Turn the volume down before running it.
+- Loopback inputs can create acoustic or digital feedback: with Loopback
+  "All audio of the output device", monitoring the loopback track feeds the
+  output back into itself and can build up to full scale. Use "Everything
+  except this DAW" when you need to monitor, and never monitor a microphone
+  through speakers in the same room at high gain.
+- The "Gain (dB)" setting can raise the output by up to +24 dB.
+Prolonged exposure to high sound levels can permanently damage hearing.
+High-level signals can damage speakers.
+
+3. Not endorsed
+---------------
+This program is not affiliated with, sponsored by or endorsed by Steinberg
+Media Technologies GmbH or Microsoft Corporation. ASIO is a registered
+trademark of Steinberg Media Technologies GmbH; Windows and WASAPI are
+trademarks of Microsoft (see TRADEMARKS.txt).

@@ -1,0 +1,9 @@
+; WASAPI Driver for ASIO - DLL exports (the four COM entry points; LIBRARY names the output DLL)
+; Copyright (C) 2026 The WASAPI Driver for ASIO contributors
+; SPDX-License-Identifier: GPL-3.0-or-later
+LIBRARY WasapiDriver
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
+    DllRegisterServer   PRIVATE
+    DllUnregisterServer PRIVATE

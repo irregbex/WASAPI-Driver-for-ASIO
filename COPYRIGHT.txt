@@ -1,0 +1,43 @@
+WASAPI Driver for ASIO(R) - Copyright notice
+============================================
+
+Copyright (C) 2026 The WASAPI Driver for ASIO contributors
+
+"The WASAPI Driver for ASIO contributors" means every person who has
+contributed code or documentation to this project; the project history (for
+example the version control log) records who contributed what. No single
+person holds the copyright of the whole program.
+
+License
+-------
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version ("GPL-3.0-or-later"). This is the same choice stated in
+the header of every source file (SPDX-License-Identifier:
+GPL-3.0-or-later).
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License in
+LICENSE.txt for more details.
+
+Third-party components keep their own copyright and license; see
+THIRD-PARTY-NOTICES.txt. In particular, the Steinberg ASIO SDK headers are
+Copyright (c) Steinberg Media Technologies GmbH and are used under their GPL
+version 3 license option.
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH. See
+TRADEMARKS.txt.
+
+How to cite
+-----------
+  WASAPI Driver for ASIO, version 0.9.8. The WASAPI Driver for ASIO
+  contributors, 2026. Free software under the GNU General Public License
+  version 3 or later.
+
+When you redistribute the program (modified or not), keep this file,
+LICENSE.txt, THIRD-PARTY-NOTICES.txt and TRADEMARKS.txt with it, and make
+the corresponding source code available as required by the GPL.
+
+This document is provided for information only and is not legal advice.

@@ -1,0 +1,2024 @@
+WASAPI Driver for ASIO 0.9.8 (public beta) - Architecture
+=========================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+1. LAYERS
+---------
+ASIO host --IASIO (in-proc COM, ThreadingModel=Apartment)--> WasapiBridge --WASAPI-->
+  Shared:    audiodg (mixing, SRC, APOs) -> miniport -> hardware
+  Exclusive: miniport (WaveRT, DMA buffer) -> hardware
+Capture sources: device (IAudioCaptureClient), device loopback
+(AUDCLNT_STREAMFLAGS_LOOPBACK) and process loopback (VAD\Process_Loopback).
+
+2. MODULES
+----------
+dll.cpp      DllMain, static COM class factory, DllGetClassObject,
+             DllCanUnloadNow (g_objects + g_locks), DllRegisterServer /
+             DllUnregisterServer.
+config.cpp   config.ini in UTF-16LE (Get/WritePrivateProfileStringW), log
+             with a CRITICAL_SECTION, rotation log.txt -> log-previous.txt,
+             profiles [Profile:x] (sections 20 and 26), migrations
+             (section 25).
+driver.cpp   WasapiBridge (IASIO), message window, devices, WASAPI opening,
+             audio thread, resampling, monitoring, process loopback, extra
+             devices.
+drift.h      PI drift controller and the sink write plan (sections 9, 21).
+sinc.h       Polyphase sinc resampler table (0.4.0, section 19).
+limiter.h    Hearing-safety output limiter (0.8.0, section 35).
+chnames.h    ASIO channel-name rules (0.8.0, section 39).
+visuals.h    Portable software renderer of the panel background (0.8.1, section 41).
+themes.h     Color themes (0.9.0, section 44).
+strings.h    Interface string table, strings_ids.inc, strings_en/es/pt/fr/de.h (0.9.0, section 46).
+update.h     Update check: versions, JSON, checksums, URL rules (portable; 0.9.0, section 45).
+update.cpp   Update worker thread: WinHTTP, BCrypt, WinVerifyTrust (run-time loaded; 0.9.0, section 45).
+panel.cpp    Win32 control panel (no resources), modal over the host window
+             (sections 13 and 24).
+diag.cpp     WasapiDriverDiag.exe: separate console program (not linked into
+             the DLL). See section 17.
+hosttest.cpp WasapiDriverTest.exe: separate ASIO test host. See section 18.
+guard.h      Exception barrier helpers (0.9.8, section 58.1).
+asiocheck.h  Validation of host arguments and call order (pure; 0.9.8, 58.2).
+parse.h      Pure parsers of config.ini values, OutputMap and names; with
+cfgtypes.h   the Config structure without Windows headers (0.9.8, 58.8).
+trace.h/.cpp TraceLogging provider; tlg.h the event encoder (0.9.8, 58.7).
+
+3. THREADING MODEL (invariants)
+-------------------------------
+H = host thread (the one that called init(); the DAW's UI thread).
+A = audio thread (one per start()).
+N = Windows threads: MMDevice notifications, volume callbacks, asynchronous
+    loopback activation.
+
+Rule 1: only H calls asioMessage() on the host (kAsioResetRequest,
+  kAsioOverload, kAsioLatenciesChanged) and only H changes configuration,
+  devices, streams and buffers.
+Rule 2: A takes no locks, allocates no memory, writes no log and never calls
+  asioMessage. It publishes to H with atomics + PostMessage(msgWnd).
+Rule 3: N only queues (evQueue under evLock) and calls PostMessage(msgWnd).
+  Exception: the volume callback reads IAudioEndpointVolume under a shared
+  SRWLOCK (volLock); closeStreams takes it exclusively before releasing.
+  0.9.8: each N callback object uses its owner only under its own shared
+  lock; H detaches it (exclusive) before releasing or destroying anything
+  (section 58.5).
+Rule 8 (0.7.0): live settings. LiveParams (gain, dither, routing table, panel
+  direct monitoring) are written only by H and published with SeqPublished
+  (seqlock over atomic words, section 28); A copies them at the start of every
+  wake-up and never reads cfg. Monitor ramps, monFeed and monScratch contents
+  belong to A. The monitor window and the panel are H only.
+Rule 9 (0.7.0): the crash handler runs on whatever thread faults; it touches
+  only static data prepared by H and kernel events (section 32).
+Rule 10 (0.8.0): the limiter state (limMain, limSink[], deficit, maximum
+  reduction) belongs to A; H resets it in start() before creating the
+  thread. A publishes the reduction through limGr (CAS maximum), H drains it
+  with exchange in readMeters. The tray window, channel names, Bluetooth
+  state, host profile and the SampleRate=Auto decision are H only; the
+  format notification (N) is only queued like every other device event.
+Rule 4: any call that may destroy the driver (a reset asioMessage) is the
+  last thing the function does; MsgWndProc wraps it with AddRef/Release.
+Rule 5 (0.3.0): meters, load and counter reset.
+  A writes peakIn/peakOut with a CAS maximum (relaxed), clip*Mask with
+  fetch_or, loadNow/loadMax with store. H reads the peaks with exchange(0)
+  and the masks with load. The internal load state (loadEma, loadMaxA,
+  loadSkip, qpcToLoad, loadAlpha) belongs to A only (H initializes it in
+  start() before creating the thread, like samplePos). A reset requested by
+  the panel is resetReq.fetch_or (bits WB_RESET_CLIPS / WB_RESET_STATS); A
+  consumes it with exchange at the start of every wake-up. If no audio
+  thread is alive, H clears only the atomics directly (never A's internal
+  state).
+Rule 6 (0.4.0): dither and sinc. ditherActive (H, when opening the output),
+  sincTab (H, once in openStreams; never freed before the destructor, so a
+  stuck thread never reads freed memory) and InputSource.sinc/posBase/target
+  (H, when opening) are read-only for A. ditherState[] is A's state; H seeds
+  it in start() before creating the thread. Profiles, the application list
+  and PID resolution: H only (panel / openLoopback).
+Rule 7 (0.5.0): extra devices. outEx/inEx, nOutEx/nInEx, lbFirst, nOutPrim,
+  routeSrc/routeDefault and the streams of sinks[]/srcEx[] are set by H
+  (resolveDevices / openStreams); A only reads them. Each sink's state
+  (fifo, pos, ratio, fillEma, integ, primed, written) belongs to A; H resets
+  it in start() before creating the thread. Counters and ratioView: atomics.
+  Software volume of an Exclusive sink: volGain atomic, epVol under volLock
+  like the main output (VolumeCallback with an index). A sink failure on A
+  only publishes postReset(RR_DEVICE), once per cycle.
+
+Message window (msgWnd): HWND_MESSAGE, class "WasapiBridgeMsg" registered
+once per DLL load. This is how asioMessage is marshalled to H: every
+thread that needs the host to act posts a message, and the window procedure
+runs on H (the thread that created the window in init()). Messages:
+  WM_APP+1 RESET     pendingReset (CAS RR_NONE -> reason) -> requestReset()
+  WM_APP+2 DEVEVENT  drains evQueue -> handleDeviceEvent() per event
+  WM_APP+3 OVERLOAD  pendingOverload -> asioMessage(kAsioOverload)
+  WM_APP+4 DELETE    the last Release happened on A -> teardown() on H
+  WM_APP+5 LATCHG    deferred kAsioLatenciesChanged (0.7.0)
+  WM_APP+6/+7        create / destroy the monitor window (0.7.0)
+  WM_APP+8/+9        create / destroy the tray window (0.8.0, section 38);
+                     +9 is sent synchronously and needs no AddRef (it may
+                     arrive from the destructor)
+The window counts in g_objects until WM_NCDESTROY (the DLL cannot unload
+while it exists). If the destructor runs on another thread, WM_CLOSE is sent
+(DestroyWindow is only valid on the creating thread). It is created once per
+instance.
+
+4. IASIO LIFE CYCLE
+-------------------
+init(sysHandle)   hostWnd = sysHandle. LoadConfig, LogInit, msgWnd,
+                  IMMDeviceEnumerator, resolveDevices(), DeviceNotifier.
+resolveDevices()  FindDevice by substring (or the eConsole default; marks a
+                  fallback). Channels = nChannels of the mix format
+                  (<= MaxChannels). nIn = nInDev + 2 with loopback
+                  (total <= 32). Reads Id, name and PKEY_Device_ContainerId
+                  of input and output.
+createBuffers()   Refused when called from A or while a stuck thread is
+                  alive. If devicesDirty: LoadConfig + resolveDevices.
+                  Contiguous float block numChannels*2*bufSize. Detects
+                  support for kAsioSupportsTimeInfo, kAsioResetRequest,
+                  kAsioOverload, kAsioLatenciesChanged. openStreams().
+start()           Collects a thread that ended because of an error. Clears
+                  FIFOs, counters, resampling and time state, peaks, clips,
+                  load and resetReq; loadSkip = 8. ResetEvent(outEvent)
+                  (stale signal). timeBeginPeriod(1) once (timerRaised).
+                  cbRun = cb.
+stop()            From A: only SetEvent(stopEvent). From H: SetEvent + wait
+                  10 s. Timeout = thread stuck in a host callback:
+                  threadStuck, stuckThread keeps the handle; streams and
+                  buffers are leaked (not freed) and createBuffers/start
+                  return ASE_HWMalfunction until that thread ends.
+disposeBuffers()  Refused from A. stop + closeStreams + freeBuffers.
+setSampleRate()   44.1..192 kHz. Reopens the streams; kAsioLatenciesChanged.
+getLatencies()    out = bufSize + WASAPI buffer + GetStreamLatency.
+                  in  = bufSize + input FIFO target.
+getSamplePosition Seqlock: A increments tsSeq (odd = write in progress),
+                  stores position and time, increments again (even =
+                  stable). The reader retries while tsSeq is odd or changed
+                  during the read: up to 1000 tries, SwitchToThread after
+                  100; otherwise the last consistent pair.
+controlPanel()    AddRef; ShowControlPanel; Release.
+future()          kAsioCanTimeInfo, kAsioCanReportOverload: SUCCESS.
+                  kAsioCanInputMonitor: SUCCESS if there is a device input.
+                  kAsioSetInputMonitor: applied; loopback channels are
+                  ignored with SUCCESS (so the host does not disable the
+                  selector).
+Release()         Last reference: on A -> SetEvent(stop) + WM_APP+4;
+                  on H -> teardown(): stop(); if a stuck thread is alive the
+                  object is leaked; otherwise delete.
+
+5. OUTPUT OPENING
+-----------------
+Exclusive: period = max(10^7*bufSize/rate, minimum period). Candidates:
+channels {mix, 2, 1} x {float32, int32, int32/24, int24, int16}.
+IsFormatSupported(EXCLUSIVE) == S_OK -> Initialize(EVENTCALLBACK, p, p).
+BUFFER_SIZE_NOT_ALIGNED -> GetBufferSize -> aligned duration for buffer and
+period. DEVICE_IN_USE / EXCLUSIVE_MODE_NOT_ALLOWED -> Shared.
+Low-latency Shared (LowLatencyShared and rate == mix rate):
+IAudioClient3::GetSharedModeEnginePeriod -> InitializeSharedAudioStream(
+EVENTCALLBACK, minPeriod, mix).
+Standard Shared: Initialize(EVENTCALLBACK|AUTOCONVERTPCM|SRC_DEFAULT_QUALITY,
+float32 x mix channels, mix channel mask).
+outFmt.clamp = Exclusive (float > 1.0 is clipped; the Shared engine already
+clips).
+IAudioClock (0.3.0): Exclusive only, GetService on H when opening the
+output + GetFrequency (not used if it fails or is 0). closeStreams releases
+it (leaked when the thread is stuck, like render and outClient).
+Volume: softVolume = Exclusive && !ENDPOINT_HARDWARE_SUPPORT_VOLUME;
+volGain = mute ? 0 : 10^(dB/20).
+
+6. INPUT OPENING
+----------------
+Exclusive (polled, no EVENTCALLBACK): periodicity = want; duration =
+max(4*want, 4*output period). If not aligned, only the duration is aligned.
+Capture period = want.
+Low-latency Shared: IAudioClient3, minimum period raised in steps of the
+fundamental period until per*3 >= 2*outPeriod; accepted if buffer >=
+2*outPeriod. Otherwise standard Shared (AUTOCONVERTPCM, 20 ms).
+FIFO target = capture period + outPeriod.
+Drift correction (Auto): on unless the ContainerIds of input and output are
+equal and known. Treated as unknown: the zero GUID and
+{00000000-0000-0000-FFFF-FFFFFFFFFFFF} (shared by all built-in devices,
+which may have different clocks: onboard codec vs HDMI).
+Privacy (0.5.1): E_ACCESSDENIED when activating or initializing a capture
+stream (main input, extra inputs, loopback; also in the Exclusive attempt
+through lastExclHr) -> noteCaptureHr: a log line with the Settings path and
+captureDenied (shown in the status); the driver continues without that
+input.
+
+7. LOOPBACK
+-----------
+ExcludeDaw / App: process loopback through ActivateAudioInterfaceAsync
+(resolved from Mmdevapi.dll at runtime) on the virtual device
+"VAD\Process_Loopback", with AUDIOCLIENT_ACTIVATION_PARAMS
+{PROCESS_LOOPBACK, pid, mode}: ExcludeDaw = own PID +
+EXCLUDE_TARGET_PROCESS_TREE; App (0.4.0) = PID of LoopbackApp +
+INCLUDE_TARGET_PROCESS_TREE. pid and mode travel in ActCtx (written by H
+before creating the activation thread).
+App: FindProcessByExe on every openLoopback: one Toolhelp snapshot, every
+match of szExeFile (case-insensitive) as {pid, parent}; the own PID is
+dropped (if LoopbackApp is the DAW's executable, it is rejected).
+Preference: the single root (a match whose parent is not a match; e.g. the
+main process of a browser, whose tree includes the audio processes); with
+several roots or none, the match that has an active audio session on some
+output (ListAudioSessionPids, the same IAudioSessionManager2 walk the panel
+uses); otherwise the first root or the first match. The PID and the reason
+are logged. No process: log line and a source without a client (readSource
+delivers zeros; the 2 Loopback channels still exist, nIn does not change).
+The PID is not followed live: if the application restarts, it is resolved
+again on the next open (Apply / host reset).
+FollowDeviceChanges is not involved.
+Activation thread details:
+the activation runs on a dedicated MTA thread. The context (ActCtx) lives on
+the heap with a reference count of 2 (host + thread): neither side writes
+the other's memory after releasing it, so a late completion can never write
+into a freed stack frame. The thread takes a reference to the DLL
+(GetModuleHandleExW) and ends with FreeLibraryAndExitThread, so the DLL
+cannot be unloaded under it. ActHandler implements IAgileObject (the
+completion callback may run on any thread), counts in g_objects and releases
+its client. Waits: thread 3 s for the activation; host 8 s for the thread.
+Formats float32 2ch, then int16 2ch; LOOPBACK|EVENTCALLBACK|AUTOCONVERTPCM
+with a dummy event (the stream is polled). Drift: corrected unless
+DriftCorrection=Off.
+All: loopback of the output device; same clock -> no resampling unless On.
+
+8. AUDIO THREAD (run)
+---------------------
+audioTid; CoInitializeEx(MTA); MMCSS "Pro Audio" + AVRT_PRIORITY_CRITICAL.
+Own references (AddRef) to render, output client, input and loopback clients
+and capture clients, and IAudioClock (Exclusive only); cbRun is a copy of the
+host callbacks. QueryPerformanceFrequency: qpcToLoad = 100 /
+(freq * bufSize/rate); loadAlpha = 1 - exp(-(bufSize/rate)/0.3).
+headroom = buffer >= 1.5 periods (only then does padding 0 mean a glitch).
+Pre-fill with silence (written = buffer if it succeeded); Start capture,
+loopback and render.
+Loop: WaitForMultipleObjects({stop, render}, 2000 ms)
+  1. wakeNs = timeGetTime*1e6; firstOfWake; now = QPC; applyResetRequest().
+     Exclusive (0.3.0), from the 4th wake-up on and with cntSwitches > 0:
+       with IAudioClock: a glitch only if played = GetPosition * rate /
+       frequency >= written (the device played everything delivered); then
+       written = played + buffer (re-synchronization: the normal state on
+       wake-up is written - played ~ 1 buffer). Without IAudioClock
+       (fallback): a glitch if now - prevWake > max(2 periods - 1 ms,
+       period + 1 ms) (QPC). At most one glitch per wake-up: ++cntOutGlitch
+       and WM_APP+3 as in Shared. prevWake = now.
+  2. pullSource per source (returns true if the device became invalid; one
+     RR_CAPTURE is published per cycle).
+  3. Shared: padding; if 0 with headroom -> cntOutGlitch, WM_APP+3 (once
+     pending). frames = buffer - padding. Exclusive: frames = buffer.
+  4. while outFifo < frames: bufferSwitch(); if stopEvent is signaled ->
+     leave.
+  5. GetBuffer: AUDCLNT_E_BUFFER_TOO_LARGE in Exclusive = early event,
+     continue (not added to written). writeOut -> ReleaseBuffer; on success,
+     written += frames.
+A 2 s timeout counts in cntTimeouts, and the next wake-up counts as a
+glitch in Exclusive mode (it was real).
+Leaving the loop: Stop/Reset, Release of the own references. On an error
+HRESULT: lastHr, running = false, RR_WASAPI.
+
+9. bufferSwitch / readSource
+----------------------------
+Priming: FIFO >= buf + target + 4.
+Without resampling: copies bufSize frames; if short -> zeros, underrun,
+re-prime.
+With resampling (4-point Hermite, Catmull-Rom):
+  k = floor(pos), t = pos - k, y = H(x[k-1], x[k], x[k+1], x[k+2], t),
+  pos += ratio; floor(pos)-1 frames are consumed; pos stays in [1, 2).
+  Time-normalized PI controller (src/drift.h, PiUpdate), dt = bufSize/rate:
+    sp = target + buf/2                 (fill set point)
+    fillEma += (1 - exp(-dt/1.0667)) * (fill - fillEma)
+    e = (fillEma - sp)/sp               (normalized fill error)
+    integ += 9.375e-6 * e * dt          (|integ| <= 0.002)
+    ratio = 1 + 0.0005*e + integ        clamped to [0.997, 1.003]
+  The EMA (time constant 1.0667 s) filters the packet granularity of the
+  capture side; the proportional gain 0.0005 reacts to the fill error and the
+  integral term (gain 9.375e-6 per second) removes the steady-state error,
+  so the ratio settles exactly at the clock ratio. Because every constant is
+  expressed per second (dt), the loop behaves the same for any buffer size.
+  The ratio limit +-3000 ppm bounds the correction.
+  Simulation (10 min, 480-frame packets): buffer 256 with +200/-300/+500/0
+  ppm -> exact average, 0 underruns; -500 ppm -> 1 initial underrun; buffers
+  64 and 2048 with -300 ppm -> converge, 0 underruns.
+Time: ts = t0 + pos*1e9/rate. Only on the first block of each wake-up:
+  drift = wakeNs - ts; if |drift| > max(50 ms, 3 buffers) re-anchor;
+  otherwise t0 += drift*(1 - exp(-period/10 s)). publishTime(pos, ts) before
+  the callback; bufferSwitchTimeInfo(samplePosition, systemTime, sampleRate,
+  flags) or bufferSwitch.
+Meters (0.3.0): after readSource, for every input with an active buffer,
+  m = max|x| of the block; if m > 0: AtomicMax(peakIn[c], m) and, if
+  m >= 1.0, clipInMask |= 1<<c. After the callback, the same with outBufs
+  (what the host sends, before gain and volume) into peakOut/clipOutMask.
+Load (0.3.0): QPC before and after the host callback;
+  load = ticks * qpcToLoad (% of the block); loadEma += loadAlpha*(load -
+  loadEma); the first loadSkip=8 blocks do not count for the maximum;
+  loadNow/loadMax are published with relaxed stores.
+
+10. writeOut
+------------
+gain = Gain * (softVolume ? volGain : 1). Direct monitoring added per frame
+(monFifo; limited to 2*target + frames). Conversion: float (clipped in
+Exclusive), int16 lrintf(x*32767), packed int24 lrintf(x*8388607), int32
+llrint(x*2147483647). Extra device channels = 0; mono = (L+R)/2.
+TPDF dither (0.4.0): ditherActive = Dither && Exclusive && integer && valid
+bits <= 24 (ParseFmt reads wValidBitsPerSample). Per device channel,
+xorshift32 (ditherState[c]); tri = ((s & 0xFFFF) - (s >> 16)) / 65536, a
+triangular density in (-1, 1) LSB of the valid bits. Scaled by the valid
+bits: q = 2^(valid-1) - 1, v = lrint(x*q + tri) clipped to [-q-1, q] and
+written shifted left by (container - valid) bits: 16, 20 and 24 in packed
+24, 20 and 24 in 32. Arithmetic in double (in float the tri would be lost
+near full scale). Exact 0 is written without dither (digital silence).
+Without dither (or float / 32 valid bits) the path is the 0.3.x one.
+
+11. DIRECT MONITORING
+---------------------
+gain/0x20000000 (0 dB), pan 0..0x7fffffff with a constant-power law.
+input -1 = all. monOut[i] = destination left channel or -1. monFifo is
+cleared when monitoring is re-enabled (monWas) so that stale audio is never
+played.
+
+12. DEVICE NOTIFICATIONS
+------------------------
+DeviceNotifier -> queueDeviceEvent (queue bounded to 64) -> WM_APP+2 ->
+handleDeviceEvent on H (if FollowDeviceChanges):
+- The eConsole default changed and that side follows the default -> reset.
+- The Id in use is no longer ACTIVE -> reset.
+- The configured device becomes ACTIVE while a fallback is in use -> reset.
+- An extra device disappears, or a missing extra device appears -> reset.
+requestReset(): if the host has buffers and supports kAsioResetRequest, it is
+sent once per start cycle; otherwise devicesDirty (re-resolved on the next
+createBuffers).
+
+13. PANEL: WINDOW OWNERSHIP AND LOOP
+------------------------------------
+(The 0.6.0 look is described in section 24; the ownership, loop, WM_QUIT,
+timer and apply rules of this section still hold.)
+Owner (0.5.1): PickOwner = GetActiveWindow() of the thread that calls
+controlPanel (e.g. Cubase's Studio Setup dialog); if null, the foreground
+window only if it belongs to the calling thread (0.6.0; before it was any
+window of this process); otherwise hostWnd. The top-level ancestor
+(GetAncestor GA_ROOT) is passed as hWndParent to CreateWindowEx (an owned
+window: Windows keeps it in front of the owner and hands it the activation
+while the owner is disabled). That owner (not always hostWnd) is disabled
+while the panel is open and re-enabled before DestroyWindow so that focus is
+not lost. Before 0.5.1 the owner was always hostWnd: after switching
+applications and coming back, Studio Setup came to the front and the panel
+stayed behind with no way to bring it back.
+WS_EX_APPWINDOW: taskbar button and Alt+Tab entry, IDI_APPLICATION icon
+(WM_SETICON). WM_ACTIVATEAPP (activation): SetWindowPos HWND_TOP without
+activating. The name and routing dialogs are owned by the panel and disable
+it the same way. "Copy status": the status text to CF_UNICODETEXT
+(GlobalAlloc GMEM_MOVEABLE; if SetClipboardData fails it is freed and the
+user is warned).
+Own message loop: Ctrl+Tab / Ctrl+Shift+Tab are handled first
+(HandleTabKeys), then IsDialogMessage. WM_QUIT from the host: the panel is
+destroyed and WM_QUIT is re-posted. WM_DESTROY clears GWLP_USERDATA. Timer
+500 ms -> getStatus(). Changes are applied only if the host still holds a
+reference (hostHoldsRef). A non-standard buffer from the .ini is kept as an
+extra combo item.
+Meters (0.3.0): 50 ms timer (only while the panel is open) -> readMeters()
+(exchange(0) of each peak, clip masks, active channels). Per-channel UI
+state (MeterUi, H only): disp in dB falling at 24 dB/s, hold for 1.5 s
+(GetTickCount). Click -> resetCounters(WB_RESET_CLIPS). "Reset counters" ->
+resetCounters(WB_RESET_ALL). DPI of the host window (GetDpiForWindow loaded
+dynamically; otherwise the system DPI). Centered in rcWork of the host's
+monitor (MonitorFromWindow, MONITOR_DEFAULTTONEAREST).
+Buttons: BN_CLICKED and BN_DOUBLECLICKED are handled alike (0.6.0), so a
+fast second click on a toggle or push button is not lost.
+
+14. LOG
+-------
+%APPDATA%\WASAPI Driver for ASIO\log.txt / log-previous.txt. Only H and N
+write (never A).
+
+15. COUNTERS AND RESET (0.3.0)
+------------------------------
+WB_RESET_STATS clears: loadMaxA/loadMax, cntOutGlitch, cntTimeouts, input
+and loopback underruns/drops/glitches, sink counters. WB_RESET_CLIPS:
+clipInMask and clipOutMask. With a live thread (thread and
+WaitForSingleObject(thread,0) == WAIT_TIMEOUT): only resetReq.fetch_or; if
+the thread ends before consuming it, start() clears everything anyway. Peaks
+are not reset (they are drained on every panel read).
+
+16. LIMITS OF THE EXCLUSIVE GLITCH DETECTION
+--------------------------------------------
+- It depends on IAudioClock reporting the real device position. A stalled or
+  late position does not produce false positives (played < written), but it
+  can hide glitches (with a clock the late wake-up criterion is not used).
+- Late wake-up (only without IAudioClock): threshold max(2 periods - 1 ms,
+  period + 1 ms); with double buffering a delay below one period is
+  inaudible.
+- The first 3 wake-ups (the first event arrives right after Start) and those
+  before the host's first callback are skipped.
+
+17. DIAGNOSTICS TOOL (WasapiDriverDiag.exe)
+-------------------------------------------
+Static x64 console program, no network; read-only. wmain (-municode).
+Builds the report in memory (std::wstring), prints it (WriteConsoleW; UTF-8
+when the output is redirected) and saves it as UTF-8 with BOM as
+WasapiDriver-diagnostics.txt: exe folder, else %APPDATA%\WASAPI Driver for
+ASIO, else %TEMP%. If stdin is a console, it waits for Enter before exiting.
+Sections: RtlGetVersion (ntdll, GetProcAddress) + ProductName /
+DisplayVersion / UBR; GetNativeSystemInfo + IsWow64Process2 (real native
+machine on ARM64); registration in KEY_WOW64_64KEY and KEY_WOW64_32KEY (ASIO
+key, CLSID\{...}\InprocServer32, DLL existence, other ASIO drivers);
+leftovers of the old name (ASIO keys, uninstall entry, program folder,
+settings folder); ACTIVE render and capture endpoints (name, Id,
+ContainerId, GetMixFormat, GetDevicePeriod,
+IAudioClient3::GetSharedModeEnginePeriod, IsFormatSupported EXCLUSIVE at
+44100/48000/96000 x float32/int32/int24/int24-in-32/int16 x 2ch,
+IAudioEndpointVolume::QueryHardwareSupport and range); defaults per role;
+MMCSS (service, AvSetMmThreadCharacteristics "Pro Audio" + critical priority
+and revert, SystemProfile keys); config.ini (UTF-16LE with BOM) and the last
+200 lines of log.txt (UTF-8), opened with FILE_SHARE_WRITE (the driver may be
+writing).
+
+18. AUTOMATIC TEST (WasapiDriverTest.exe, 0.3.1)
+------------------------------------------------
+Static x64 console program. STA main thread; CoCreateInstance(CLSID, IID =
+CLSID, CLSCTX_INPROC_SERVER) like a DAW; init() with its own hidden window as
+sysHandle. Every wait uses MsgWaitForMultipleObjects +
+PeekMessage/DispatchMessage (never Sleep): the driver's message window lives
+on this thread and kAsioResetRequest and kAsioOverload arrive through it.
+Callbacks (the driver's audio thread): no locks, no allocation. A
+preallocated record of 131072 entries {QPC, index, samplePosition,
+systemTime} with an atomic counter; the main thread analyzes it after stop()
+(stop waits for the audio thread). Outputs are zeroed in every callback.
+asioMessage: answers kAsioSelectorSupported (ResetRequest, Overload,
+LatenciesChanged, SupportsTimeInfo, EngineVersion), EngineVersion = 2,
+SupportsTimeInfo = 1; every message is recorded with QPC in a fixed array.
+Criteria: callbacks = span * rate / buffer + 1 (+-5% + 1; +-10% + 1 with
+buffers >= 512, because of bursts aligned to the WASAPI period), alternating
+indices, samplePosition + buffer exactly, non-decreasing systemTime,
+getSamplePosition ASE_OK and monotonic (every 100 ms). T2: intervals >
+max(100 ms, 4 blocks) = warning (count and worst value); more than 3 in the
+10 s = FAILED. No callbacks within 3 s = FAILED and the test goes on.
+States: PASSED, FAILED, SKIPPED (not applicable: a rate rejected by
+canSampleRate or a buffer outside the range, as sub-results; T8 without a
+physical input). SKIPPED does not count as a failure. Final line
+"RESULT: PASSED" (", N warnings") or "RESULT: FAILURES = N".
+T8 (--latency), audio thread state: 1 s of noise floor on input 1;
+threshold = max(10 x noise, 0.01); an impulse of 0.5 at sample 0 of output 1
+every second; round trip = position of the first |x| > threshold - impulse
+position (0.5 s window); 10 detections or 15 impulses. The median is
+compared with getLatencies (input + output). PASSED if the min-max spread
+<= max(2, buffer/8) frames.
+
+19. SINC RESAMPLER (0.4.0)
+--------------------------
+ResamplerQuality=Sinc replaces Hermite only for sources with active drift
+correction (InputSource.resample) and for extra output sinks. The PI
+controller (section 9) does not change.
+Kernel (src/sinc.h): kSincHalf = 16 taps per side (32 in total), 256 phases
++ 1, Kaiser window with beta 8, cutoff at Nyquist (the ratio is ~1, there is
+no decimation), each phase normalized to unity DC gain. A 257 x 32 float
+table (32 KB) built once on H (BuildSincTable) in openStreams; it is never
+freed before the destructor (rule 6).
+Per output sample: k = floor(pos), t = pos - k; coefficients = linear
+interpolation between phase floor(t*256) and the next one (SincCoefs, on the
+stack); y = sum m=0..31 coef[m] * x[k - 15 + m]. The 32 FIFO pointers are
+computed once per sample and reused for every channel.
+Bounds: posBase = 15 (Hermite: 1); after consuming, pos is in [15, 16) and
+consumed = floor(p) - posBase. need = pos + buf*ratio + 17 (Hermite: +3),
+which guarantees highest index read < fill; lowest index k - 15 >= 0.
+Priming and the pullSource drop reset pos = posBase.
+Latency: target += 16 (filter look-ahead) when opening; this raises the PI
+set point, the priming threshold and the reported input latency
+(bufSize + target).
+Offline test (tests/resampler_test.cpp, g++ on Linux; same float/double
+arithmetic as readSource). Sine of 0.5, 48 kHz, fixed ratio 1.0002; RMS
+error against the ideal signal, in dB relative to the signal (THD+N of the
+resampling):
+  Frequency    Hermite    Sinc 32x256 Kaiser 8
+    1000 Hz     -91.6      -87.7
+    5000 Hz     -47.5      -90.0
+   10000 Hz     -26.6      -85.1
+   15000 Hz     -14.7      -90.2
+   18000 Hz      -9.7      -80.2
+   20000 Hz      -7.1      -78.6
+At 1 kHz Hermite is slightly better (the sinc floor is set by the linear
+interpolation between 256 phases and float precision). The same test checks
+the read bounds with ratios 0.997 / 1.0 / 1.003 and irregular arrivals: OK.
+Cost: 64 MACs per frame to interpolate the coefficients + 32 MACs per
+channel.
+
+20. PROFILES (0.4.0)
+--------------------
+config.ini: [General] is the active configuration (the one the driver
+reads); [Profile:<name>] sections hold the same keys or a subset
+(ReadSection/WriteSection). ActiveProfile in [General] is informative (shown
+by the combo). The factory profiles Studio / Laptop / Streaming are written
+once: EnsureDefaultProfiles in LoadConfig, only if no profile exists and
+[General] ProfilesInit != 1; then ProfilesInit = 1 (if the user deletes them
+all, they do not come back). Valid name: 1..40 characters, no [ ] = ;, no
+control characters and no leading or trailing spaces.
+Panel (H): selecting a profile = ReadControls (base) + LoadProfile +
+FillControls; nothing is applied until "Apply" (Apply writes
+[General] and ActiveProfile and follows the usual path: requestReset or
+devicesDirty). "Save..." uses its own dialog without resources (class
+WasapiBridgeName, EDIT + "Include devices" + Save/Cancel, loop with
+IsDialogMessage; the panel is disabled while it is open and re-enabled before
+it is destroyed; WM_QUIT is re-posted so that the panel loop handles it).
+Application list: IAudioSessionManager2 of every active output ->
+IAudioSessionControl2::GetProcessId (0 and the own PID are skipped) ->
+QueryFullProcessImageNameW -> file name; unique, sorted. The combo is
+editable (a name can be typed).
+
+21. EXTRA DEVICES (0.5.0, beta)
+-------------------------------
+Configuration: ExtraOutputs / ExtraInputs (substring, up to 3, separated by
+|). resolveExtras (H): FindDeviceSub (no default), the main device and
+duplicates are ignored; channels = mix (MixChannels); if it does not fit in
+32 (inputs: 32 - loopback) it is truncated or skipped with a log line;
+missing = 2 silent channels (the count does not depend on it being
+connected, unless it has a different count when it appears).
+FindDeviceSub skips the Id of the main device and of extra devices already
+chosen and goes on with the next match (two devices with similar names).
+ASIO channel layout:
+  outputs [0, nOutPrim) main; then outEx[k].asioFirst.. in order.
+  inputs  [0, nInDev) main; then inEx[k]; lbFirst = end; Loopback L/R.
+  Names: "N:Out L" / "N:In 3" (N = 1 main, 2.. extras) only if there are
+  extra devices in that direction; otherwise the usual names.
+Master clock: the event of the main output wakes A as always.
+Extra inputs: srcEx[k] (InputSource) opened with openInput (the same code as
+the main input, without Exclusive), Auto drift by ContainerId against the
+main output, polled with pullSource on every wake-up and read in
+bufferSwitch with readSource (no device: zeros).
+Extra outputs (aggregate sinks): sinks[k] (OutputSink). Opening (H):
+Exclusive only with Mode=Exclusive (initExclusive without an event: 4x
+buffer); otherwise Shared AUTOCONVERTPCM|SRC_DEFAULT_QUALITY without an
+event, buffer max(2*master period + 4*device period, 40 ms). Optional
+IAudioClock. targetPad = master period + 2*device period (drift.h). sp
+(FIFO) = ASIO buffer + master period (+16 with sinc). overLimit = 2*sp +
+4*buffer + targetPad.
+Feeding (A, bufferSwitch): after the host callback, the sink's ASIO channels
+are copied into its FIFO (preallocated MultiFifo).
+Servicing (A, on every wake-up, after reading the capture sources):
+  1. pad = GetCurrentPadding; if FIFO > overLimit: drop to sp, overflow++.
+  2. w = SinkFramesToWrite(pad, buffer, targetPad); 0 -> nothing.
+  3. Priming: FIFO >= sp + need (the excess is dropped) -> primed;
+     otherwise w frames of silence.
+  4. need = pos + w*ratio + (3 Hermite / 17 sinc); if short: silence,
+     underflow++, re-prime.
+  5. ResampleFifo (same code as readSource) -> PutSample in the device
+     format (device channels beyond the ASIO channels = 0), gain and
+     software volume when applicable; consumption floor(p) - posBase.
+  6. PI (PiUpdate, the constants of section 9) on the total fill =
+     (FIFO - pos) + (queued - targetPad), dt = w/rate. queued = written -
+     played, with played = GetPosition interpolated to the QPC time of the
+     wake-up (IAudioClock); without a clock, queued = targetPad (FIFO only).
+  A GetCurrentPadding/GetBuffer failure stops that sink and requests a reset
+  (RR_DEVICE) once per cycle; the main output continues.
+  Start: pre-fill targetPad with silence and Start before the master.
+Latency: see section 23 (alignment). Direct monitoring is mixed after the
+alignment delay line, with the main output's routing; kAsioSetInputMonitor
+limits the destination to the main output's channels (destination >=
+nOutPrim -> channel 0).
+Dither: an integer Exclusive sink with <= 24 valid bits uses PutSampleDither
+with its own state (OutputSink.ditherState, owned by A, seeded in start());
+ditherActive is set by H in openSink.
+
+Offline loop test (tests/sink_test.cpp, g++ on Linux; uses drift.h and the
+same policy as serviceSink). Master 48000 Hz; the device consumes its
+period every period/(48000*(1+ppm)); 10 min per case; "ratio" = mean of the
+last minute; "starve" = the device did not have a period queued (only at
+start, with an empty buffer):
+    clock  drift   buffer  period master/dev     resampler   under over starve   ratio ppm (expected)
+    yes     -300     256     480/480              Hermite       0    0     0     +300.1 (+300.1)
+    yes     -100     256     480/480              Hermite       0    0     0     +100.0 (+100.0)
+    yes       +0     256     480/480              Hermite       0    0     1       +0.0 (+0.0)
+    yes     +100     256     480/480              Hermite       0    0     1     -100.0 (-100.0)
+    yes     +300     256     480/480              Hermite       0    0     1     -299.9 (-299.9)
+    yes     -300      64     128/480              Hermite       0    0     0     +300.1 (+300.1)
+    yes     -100      64     128/480              Hermite       0    0     0     +100.0 (+100.0)
+    yes       +0      64     128/480              Hermite       0    0     0       +0.0 (+0.0)
+    yes     +100      64     128/480              Hermite       0    0     0     -100.0 (-100.0)
+    yes     +300      64     128/480              Hermite       0    0     0     -299.9 (-299.9)
+    yes     -300    1024    1024/480              sinc          0    0     2     +293.3 (+300.1)
+    yes     -100    1024    1024/480              sinc          0    0     2      +90.7 (+100.0)
+    yes       +0    1024    1024/480              sinc          0    0     2      -10.5 (+0.0)
+    yes     +100    1024    1024/480              sinc          0    0     2     -111.8 (-100.0)
+    yes     +300    1024    1024/480              sinc          0    0     2     -314.3 (-299.9)
+    yes     -300     256     480/480              sinc          0    0     0     +300.1 (+300.1)
+    yes     -100     256     480/480              sinc          0    0     0     +100.0 (+100.0)
+    yes       +0     256     480/480              sinc          0    0     1       +0.0 (+0.0)
+    yes     +100     256     480/480              sinc          0    0     1     -100.0 (-100.0)
+    yes     +300     256     480/480              sinc          0    0     1     -299.9 (-299.9)
+    no      -300     256     480/480              Hermite       0    0     0     +289.1 (+300.1)
+    no      -100     256     480/480              Hermite       0    0     0      +30.0 (+100.0)
+    no        +0     256     480/480              Hermite       0    0     1       -0.0 (+0.0)
+    no      +100     256     480/480              Hermite       0    0     1      -30.0 (-100.0)
+    no      +300     256     480/480              Hermite       0    0     1     -288.9 (-299.9)
+    no      -300      64     128/480              Hermite       0    0     0     +300.1 (+300.1)
+    no      -100      64     128/480              Hermite       0    0     0     +100.0 (+100.0)
+    no        +0      64     128/480              Hermite       0    0     0       +0.0 (+0.0)
+    no      +100      64     128/480              Hermite       0    0     0     -100.0 (-100.0)
+    no      +300      64     128/480              Hermite       0    0     0     -299.9 (-299.9)
+    no      -300    1024    1024/480              sinc          0    0     2     +304.3 (+300.1)
+    no      -100    1024    1024/480              sinc          0    0     2     +101.7 (+100.0)
+    no        +0    1024    1024/480              sinc          0    0     2       +0.3 (+0.0)
+    no      +100    1024    1024/480              sinc          0    0     2     -100.9 (-100.0)
+    no      +300    1024    1024/480              sinc          0    0     2     -303.3 (-299.9)
+    no      -300     256     480/480              sinc          0    0     0     +289.4 (+300.1)
+    no      -100     256     480/480              sinc          0    0     0      +31.4 (+100.0)
+    no        +0     256     480/480              sinc          0    0     1       -0.0 (+0.0)
+    no      +100     256     480/480              sinc          0    0     1      -31.4 (-100.0)
+    no      +300     256     480/480              sinc          0    0     1     -289.2 (-299.9)
+With IAudioClock the ratio converges to the expected value (+-0.1 ppm; with
+buffer 1024 and master period 1024 a slow +-15 ppm oscillation remains
+because of the bursts). Without a clock (FIFO only), sampling the padding in
+engine-period steps produces a slow beat: the ratio oscillates around the
+correct value (a one-minute mean can differ by up to ~70 ppm) but without
+underflows or overflows. There were no underflows or overflows in any case.
+
+22. OUTPUT ROUTING (0.5.0)
+--------------------------
+OutputMap = "asio:dev,..." 1-based (asio in [1, nOut], dev in [1, channels
+of the main device]); buildRoute (H, when opening) fills routeSrc[dev] =
+asio-1; unassigned = -1 (silence). Empty = identity (dev < nOutPrim).
+writeOut: tmp[] (ASIO channels + monitoring) -> physical channel c =
+tmp[routeSrc[c]] or 0; dither and clipping are applied afterwards, as
+before. Mono with identity: (L+R)/2 as before; mono with routing: the chosen
+channel. outFifo holds all nOut ASIO channels (extra devices included) so
+that any of them can be routed to the main device. Panel: "Output routing"
+dialog (class WasapiBridgeRoute, same loop scheme as the name dialog), one
+combo per physical channel (up to 32, in two columns) with "Silence" + the
+ASIO channels; "Identity" leaves OutputMap empty. Numbering and names are
+computed from what is selected on screen even if not applied yet
+(PendingOutLayout: mix channels of the main device and of the selected
+extra devices, same rule as the driver); if it differs from the open layout,
+the dialog says so.
+
+23. DEVICE ALIGNMENT (0.5.0)
+----------------------------
+AlignDevices=1 (default) and at least one extra device open.
+computeAlignment (H, in openStreams, before the FIFOs are sized) estimates
+the latency of each path in frames:
+  main output   = WASAPI buffer + GetStreamLatency
+  sink          = sp (includes the sinc look-ahead) + targetPad + one master
+                  period + the sink's GetStreamLatency
+  input (main and extras) = target (includes sinc) + GetStreamLatency
+  (Loopback does not take part.)
+maxOut / maxIn = maxima. Aligning:
+  - Main output: fixed delay primDelayFrames = maxOut - own, as a delay line
+    on the physical channels (MultiFifo primDelay preallocated on H with
+    capacity delay + buffer + 16; start() fills it with silence; writeOut
+    pushes the routed frame and pops the oldest, with no allocation). It
+    sits after the routing and before dither/clipping. Direct monitoring is
+    accumulated separately (mt[], main output channels), goes through the
+    same routing and is added AFTER the delay line: its latency is minimal
+    with or without AlignDevices.
+  - Faster sink: sp += maxOut - own (more FIFO; overLimit and capacity are
+    computed afterwards).
+  - Faster input: target += maxIn - own (raises priming, the PI set point
+    and the drop thresholds).
+getLatencies when aligned: output = bufSize + maxOut; input = bufSize +
+srcIn.target (already shifted; without a main input: bufSize + maxIn).
+Without alignment (or without extra devices): the usual values of the main
+device.
+Limit: these are estimates; drivers that do not report their stream latency
+(Bluetooth, some USB) stay misaligned by that difference. The panel shows
+each device's own latency and the common one.
+
+24. PANEL 0.6.0 (DARK THEME, TABS)
+----------------------------------
+Everything runs on the host thread (the panel's modal loop). No dialog
+resources: native child controls of the panel window (WS_CLIPCHILDREN) and
+a background, header, tabs, cards, status tiles and "About" painted in
+WM_PAINT with double buffering.
+Structure: PanelState.tabCtl[5] = the controls of each tab (ShowTab shows /
+hides them and moves the focus off hidden controls to the first tab stop of
+the new tab, or to OK; TAB_ALL = the always-visible bottom bar); cards[] =
+rounded rectangles with a title per tab; tabRc[] = clickable tab areas
+(WM_LBUTTONDOWN). Ctrl+Tab / Ctrl+Shift+Tab switch tabs (handled in the
+message loop before IsDialogMessage, which would otherwise consume Tab).
+Logical height 700 (minimum 560 on short screens; the meter and status cards
+absorb the difference). Logical coordinates scaled by S() with the owner's
+DPI.
+Theme (Theme): background #1E1F22, card #2B2D31, input #1A1B1E, accent
+#3DDC97, amber #F5A524, red #F2545B. Brushes created when the panel opens
+and freed after it closes. Dark title bar: DwmSetWindowAttribute 20 (19 on
+Windows 10 before 20H1), dwmapi.dll loaded at runtime. Controls:
+SetWindowTheme "DarkMode_CFD" (combo boxes) and "DarkMode_Explorer" (edits
+and lists: dark scroll bars) from uxtheme.dll loaded at runtime;
+WM_CTLCOLORSTATIC (labels on cards; read-only edits with the input
+background), WM_CTLCOLOREDIT and WM_CTLCOLORLISTBOX (also the drop-down list
+of the combos, which the combo forwards to its parent). Font Segoe UI
+Variable Text if it exists (checked with GetTextFace), otherwise Segoe UI;
+Consolas for status text.
+Buttons and toggles: BUTTON BS_OWNERDRAW painted in WM_DRAWITEM
+(DrawOwnerButton). Window properties: "wbkind" (1 normal, 2 accent, 3
+toggle), "wbbg" (background color for the corners), "wbhov" (hover, through
+the BtnHoverProc subclass + TrackMouseEvent/WM_MOUSELEAVE); they are removed
+in WM_NCDESTROY. A toggle's state is in GWLP_USERDATA (SetChk/GetChk);
+BN_CLICKED or BN_DOUBLECLICKED flips it (click or Space). The name and
+routing dialogs use the same drawing and colors (DlgCommon) and the same
+modal loop (DlgLoop: panel disabled, re-enabled before destroying, WM_QUIT
+re-posted).
+"Live" tiles: StatusInfo copied in UpdateStatus (500 ms) and painted:
+latencies, DSP load (bar; amber > 80 %, red > 100 %, maximum marker),
+glitches (red if > 0). The bottom bar summarizes mode / rate / channels.
+Meters (child window WasapiBridgeMeter, 50 ms timer only while the panel is
+open, invalidated only while the Main tab is visible): one scale on the left
+(0, -6, -12, -24, -48; floor -60) with guide lines, labels left out if they
+would be closer than one text height to the previous one; inputs on the left
+and outputs on the right (width proportional to the channel count, between
+1/4 and 3/4); bar = dark track + lit part copied with StretchBlt from a
+1 x height DIB holding the gradient (green up to -18 dB, green to yellow up
+to -6, yellow to red up to 0; regenerated when the height changes); peak
+hold line, clip LED on top, channel numbers below (every k channels if they
+do not fit; each bar slot is at least 1 pixel wide) and the group name.
+ASIO Compatible logo: Steinberg's white PNG with a transparent background,
+unmodified, is stored in the DLL as RCDATA 101 (src/WasapiDriver.rc, windres
+/ zig rc). LoadLogo: FindResource/LoadResource -> IWICImagingFactory (COM is
+already initialized on the host thread; if not, no logo is drawn) ->
+IWICStream::InitializeFromMemory -> decoder -> IWICBitmapScaler (Fant) to
+the requested height -> format converter to 32bppPBGRA (premultiplied, the
+format AlphaBlend expects for per-pixel alpha) -> CopyPixels into a top-down
+32-bit DIB. Drawn with GdiAlphaBlend (AC_SRC_ALPHA). Every WIC interface is
+released on every path. Two sizes: header (40 logical px, always visible:
+the panel configures ASIO) and "About" (120).
+Per-monitor DPI (0.6.0): WM_DPICHANGED -> OnDpiChanged: ReadControls (keep
+what is on screen), destroy the child controls, FreeUiResources, set the new
+DPI, CreateUiResources (fonts, logos; the meter gradient is rebuilt lazily),
+BuildControls, RefreshProfiles, FillControls, ShowTab, then SetWindowPos to
+the rectangle suggested by Windows. The initial window size uses
+AdjustWindowRectExForDpi (Windows 10 1607+, loaded at runtime) when
+available.
+
+25. NEW NAME AND MIGRATION (0.6.0)
+----------------------------------
+WB_NAME = "WASAPI Driver for ASIO": getDriverName, the key
+HKLM\SOFTWARE\ASIO\WASAPI Driver for ASIO (64-bit and 32-bit) with CLSID and
+Description, the name of the CLSID key. The CLSID does not change.
+WB_OLDNAME_W = "WasapiBridge"; WB_FILEBASE_W = "WasapiDriver" (files). Window
+class names and some internal source names are still WasapiBridge*.
+Trademark: "ASIO" only to indicate compatibility ("for ASIO"); (R) on the
+first mention (panel header and "About", README); the attribution "ASIO is a
+registered trademark of Steinberg Media Technologies GmbH." in the panel,
+the installer (Notices page, branding text, last line of the details), the
+Diagnostics and Test reports and the documentation.
+Migration:
+- ConfigDir (config.cpp): if %APPDATA%\WASAPI Driver for ASIO\config.ini
+  does not exist and %APPDATA%\WasapiBridge\config.ini does, the new folder
+  is created and config.ini is copied (CopyFileW without overwriting); the
+  old one is not touched. If SHGetFolderPathW fails, nothing is migrated.
+- Profiles (config.cpp, MigrateProfiles, run by EnsureDefaultProfiles on
+  every LoadConfig): every section with the old Spanish prefix "Perfil:"
+  (0.4.0 to 0.5.1) is moved to "Profile:" with the same contents (if the
+  name is taken, " (2)", " (3)"... is appended; nothing is ever
+  overwritten). The old factory profiles Estudio, Notebook and Streaming
+  become Studio, Laptop and Streaming, with their empty device keys and the
+  default AlignDevices=1 removed, but only if they still look like the
+  factory version (OutputDevice, InputDevice, ExtraOutputs and ExtraInputs
+  absent or empty); otherwise they keep their name and contents.
+  ActiveProfile follows a renamed profile. After the first run no old
+  section is left, so it is idempotent. (The old prefix and names are the
+  only Spanish strings left in the binaries, and they are needed for this
+  migration.)
+- DllRegisterServer: deletes HKLM\SOFTWARE\ASIO\WasapiBridge in both
+  registry views (KEY_WOW64_64KEY and KEY_WOW64_32KEY) before registering;
+  DllUnregisterServer deletes both names in both views. Only that key.
+- Installer (WasapiDriver.nsi, RemoveOldInstall): deletes the old ASIO key
+  in both views; reads InstallLocation from the old uninstall entry (64-bit
+  view, then 32-bit view; fallback %ProgramFiles%\WasapiBridge); deletes the
+  known files of that folder (RMDir without /r: it never deletes foreign
+  files) and the old Start menu shortcuts; and only then deletes the old
+  uninstall entry in both views. install.bat and uninstall.bat do the same
+  with the ASIO registry keys.
+- Diagnostics: "Leftovers of the previous version" section.
+
+26. PROFILES 0.6.0: ENGINE AND DEVICES
+--------------------------------------
+WriteSection(sec, c, path, kind): General = every key; ProfileEngine = Mode,
+LowLatencyShared, BufferSize, SampleRate, Gain, DriftCorrection,
+ResamplerQuality, Dither, Loopback (and it removes from the profile the
+device keys and FollowDeviceChanges/MaxChannels/Log); ProfileDevices =
+engine + OutputDevice, InputDevice, LoopbackApp, ExtraOutputs, ExtraInputs,
+OutputMap, AlignDevices. Saving: the "Include devices" option is off for a
+new profile and starts with ProfileHasDevices(name) when overwriting an
+existing one; overwriting a profile with devices without the option asks
+for confirmation. LoadProfile starts from the on-screen configuration and
+only overrides the keys present: a profile without device keys does not
+change the devices; older profiles with those keys keep working the same.
+Factory profiles: ProfileEngine.
+
+27. CONFIG.INI COMMENTS AND PRINTED-OUTPUT PRIVACY (0.6.1)
+----------------------------------------------------------
+RewriteConfigFile (config.cpp, H only) runs at the end of LoadConfig,
+SaveConfig, SaveProfile and DeleteProfile, after the profile API cache is
+flushed. It reads config.ini (UTF-16LE with BOM; UTF-8 with BOM or the ANSI
+code page are also accepted), drops every comment (';' or '#') and blank
+line, keeps every section header and key=value line verbatim and in order
+(unknown keys and every [Profile:x] section included), puts the English
+comment block on top and a blank line between sections. If the result equals
+the current text nothing is written (idempotent). Otherwise it is written
+with a BOM to config.ini.tmp<pid> in the same folder, flushed, and moved over
+config.ini with MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+MOVEFILE_WRITE_THROUGH); on failure the temporary file is deleted and the
+old file stays. A crash leaves either the old or the new file.
+src/privacy.h: SanitizeText replaces the values of %TEMP%/%TMP%,
+%LOCALAPPDATA%, %APPDATA% and %USERPROFILE% (longest first,
+case-insensitive) with the variable names, any other "X:\Users\<name>"
+prefix with %USERPROFILE% (except Public and Default), and the user name and
+computer name (whole words, 3+ characters) with <user> / <computer>.
+ShortHash = "#" + 8 hex digits of the 32-bit FNV-1a hash of the lower-cased
+text. Applied to: every log line (Log, H and N threads; never A), the whole
+Diagnostics report and its console output (endpoint Ids and ContainerIds
+hashed unless --full-ids), every line of the Test report and console, the
+saved-report path messages, and the panel's "Copy status" text. Device Ids
+in "Device change" log lines are hashed.
+
+28. LIVE AND RESET SETTINGS (0.7.0, F1)
+---------------------------------------
+Classification (NeedsReset in config.cpp is the single source of truth):
+  LIVE (applied at the next buffer, no interruption)
+    Gain, Dither, OutputMap (routing), OutputLatencyOffsetMs,
+    InputLatencyOffsetMs, DirectMonitor* (panel direct monitoring),
+    MonitorWindow, MonitorTopmost, Monitor X/Y/W/H, Log,
+    FollowDeviceChanges, ActiveProfile
+  RESET (the host must reopen the driver)
+    Mode, LowLatencyShared, OutputDevice, InputDevice, Loopback, LoopbackApp,
+    BufferSize, SampleRate, DriftCorrection, ResamplerQuality, MaxChannels,
+    ExtraOutputs, ExtraInputs, AlignDevices
+Publication of LIVE parameters to the audio thread:
+
+   H (panel Apply)                         A (audio thread)
+   ---------------                         ----------------
+   cfg = saved (LIVE keys)                 every wake-up:
+   buildRoute() -> routeSrc[]                pubLive.tryRead(lv, lvSeq)
+   publishLive():                              seq odd or unchanged -> keep lv
+     LiveParams p = {gain, dither,             else copy words, re-check seq
+       route[], dm...}                       writeOut / serviceSink use lv only
+     pubLive.publish(p)
+       seq++ (odd) -> store words -> seq++ (even)
+
+SeqPublished<T> (src/live.h) stores T in std::atomic<uint64_t> words: the
+writer never waits, the reader never waits (a torn read is detected by the
+sequence number and simply retried at the next wake-up), and every access
+is a defined atomic operation. tests/live_test.cpp publishes 200,000
+versions against a polling reader: no torn or backwards read.
+Latency offsets: H only (getLatencies). After a change, WM_WB_LATCHG is
+posted to the hidden window; its handler sends kAsioLatenciesChanged (or
+requestReset if the host does not support it). Nothing is sent from inside
+the panel's WM_COMMAND.
+RESET path: applyPanelChanges keeps the RESET keys of cfg as opened, sets
+devicesDirty (the next createBuffers reloads config.ini) and calls
+postReset(RR_PANEL); the hidden window then calls requestReset ->
+kAsioResetRequest. Hosts typically stop, dispose and recreate the buffers
+(or reload the driver) asynchronously. The panel stays open and holds its
+own reference (controlPanel AddRef), so even a host that releases the
+driver meanwhile cannot free the object under the panel.
+
+29. FLOATING MONITOR WINDOW (0.7.0, F2)
+---------------------------------------
+   H: createBuffers ok --> updateMonitorWindow --> PostMessage(msgWnd,
+      WM_WB_MONCREATE) --> msgThread: CreateMonitorWindow
+      (no owner, WS_EX_TOOLWINDOW, SW_SHOWNOACTIVATE, ++g_objects)
+   destroy: msgThread only (WM_WB_MONDESTROY sent synchronously from any other
+      thread); MonState::drv and GWLP_USERDATA are cleared before
+      DestroyWindow, so the timer and every handler see null and stop.
+   H: WM_TIMER 33 ms --> UpdateMeters(ps, WB_METERS_MONITOR)
+                         every 15th tick: getStatus (atomics), repaint text
+   H: disposeBuffers / destructor / Close / MonitorWindow=0 --> DestroyWindow
+   A: never touches it.
+The window has its own PanelState (fonts, DPI, gradient, MeterUi) and reuses
+the panel's WasapiBridgeMeter child and ballistics. readMeters keeps one
+accumulator per consumer on H (panel, monitor): the atomics are drained
+once and max-merged into every consumer, so both windows see every peak.
+Position: the saved rectangle is used only if MonitorFromRect finds a
+monitor (MONITOR_DEFAULTTONULL); otherwise top-right of the primary work
+area. WM_EXITSIZEMOVE and Pin save MonitorX/Y/W/H/Topmost only
+(SaveMonitorPlacement). Per-monitor DPI: WM_DPICHANGED rebuilds fonts and
+children and takes the suggested rectangle; after creation the window
+checks GetDpiForWindow. "Settings" calls controlPanel() (nested modal loop
+on H); the handler touches nothing afterwards because the host may destroy
+the window meanwhile. The theme brushes are reference counted (panel and
+monitor share them). Only one panel can be open at a time.
+
+30. LATENCY OFFSETS (0.7.0, F4)
+-------------------------------
+getLatencies = previous value + lround(offsetMs * rate / 1000), never below
+bufSize. Offsets are device keys (stored in profiles only with "Include
+devices"). WasapiDriverTest T8: diff = measured round trip - (reported in +
+out); stable result and |diff| >= 0.05 ms -> "Save ... ? (y/n)"; yes ->
+LoadConfig, OutputLatencyOffsetMs += diff (clamped -50..500), SaveConfig
+(the test tool links config.cpp: same writer, English comments, atomic
+replace). Split rule: everything into the output offset.
+
+31. DIRECT MONITORING MIXER (0.7.0, F5)
+---------------------------------------
+Signal path on A (writeOut, one device frame at a time):
+
+  capture packets --(same clock: pullSource)--------------+
+  resampled input block --(drift corrected: readSource)---+--> monFifo
+                                                                 |
+  outFifo (host output) * gain -> routing -> alignment delay     |
+                                     |                           v
+                                     +-----(+)<--- mixMonitor(monFifo frame)
+                                            |        host: per input, dest o,
+                                            |              ramps to monGainL/R
+                                            |        panel: pair -> pair,
+                                            |              ramps to lv.dmG[]
+                                            v
+                                  SoftClip -> volume/clip -> dither -> device
+
+- Ramps: dmix::Ramp, one-pole 5 ms (RampCoef), snaps to the target at
+  1e-5 or when float precision stalls, so it ends exactly at 0 or 1 (no
+  denormals). Ramps advance every frame, even when the FIFO is empty, so an
+  "off" fades out; monFeed stays on until every ramp is 0.
+- Pan: constant power (PanGains) for mono sources and the host's pan;
+  balance (BalanceGains, never boosting) for a stereo pair.
+- Clip safety: while monitoring, every physical channel passes SoftClip
+  (identity to 0.9, tanh knee to 1.0) before conversion and dither.
+- Meters: for monitored main channels, the peak of program + monitor (pre
+  gain, like the other meters) is merged into peakOut once per writeOut.
+- Bounded queue: monFifo is trimmed to 2 * (target [+ bufSize when
+  resampled]) + frames; underruns count in monUnder and give silence.
+- Exclusions: loopback channels (never in monFifo), extra outputs, no
+  device input (dmOn false, monAny ignored).
+Real latency: same clock = capture buffer + monFifo queue + output WASAPI
+buffer; drift corrected = input FIFO target + one ASIO block + output
+buffer. Never "zero latency".
+kAsioSetInputMonitor: input -1..nInDev-1 (others ignored with SUCCESS),
+output clamped to the main output, gain/pan converted with
+AsioGainToLinear/AsioPanTo01; state off -> target gains 0 (the destination
+is kept so it can fade out). kAsioCanInputGain/OutputGain: not supported.
+tests/dmix_test.cpp checks ramps (largest step, settle time, no
+denormals), pan and balance laws, ASIO conversions and the soft clipper.
+
+32. CRASH PROTECTION AND SAFE MODE (0.7.0, F8)
+----------------------------------------------
+   H, driver constructor --> CrashInstall (once per process, ref counted)
+        prune dumps to 5, LoadLibraryEx(dbghelp, SYSTEM32), events,
+        dump thread (holds a DLL reference), AddVectoredExceptionHandler(0)
+   any thread faults inside the DLL (address in [base, base+SizeOfImage))
+        and the code is fatal (AV, illegal/privileged instruction, stack
+        overflow, int divide/overflow, bounds, in-page, misalignment,
+        noncontinuable, heap corruption):
+        handler: one-shot flag, fill MINIDUMP_EXCEPTION_INFORMATION,
+                 SetEvent(req), wait done (15 s), EXCEPTION_CONTINUE_SEARCH
+        dump thread: crash-<yyyymmdd-hhmmss>.dmp (MiniDumpNormal |
+                 MiniDumpWithThreadInfo) + crash-marker.txt, SetEvent(done)
+   H, last driver destructor --> CrashUninstall: remove handler, SetEvent
+        (quit); the thread closes its events and ends with
+        FreeLibraryAndExitThread.
+Faults are never swallowed and there is no longjmp: continuing after an
+access violation would corrupt the host. Breakpoints and C++ exceptions are
+not handled.
+Session files: session-<pid>.txt is written at init and deleted when the last
+driver object of the process is destroyed cleanly. The crash marker is
+written ("dump pending") before the minidump and rewritten after it; the
+faulting thread waits at most 5 s on {done, dump thread}.
+Safe mode (init): marker present AND a session file of a process that is no
+longer running (unclean exit; a marker alone is cleared) -> safe = true,
+applySafeSettings() (Shared, default output, InputDevice=none, no extras,
+no routing, Loopback=Off, DirectMonitor off, buffer 512, Hermite). cfg is
+never saved; the panel and the monitor window use uiCfg (the saved
+configuration, config()); cfg is only what is open. Exit: "Use my
+settings again" (leaveSafeMode: clear marker, devicesDirty, postReset),
+Apply in the panel, or disposeBuffers after a session that started (clean
+session) -> marker cleared, safe mode stays for the current session.
+Hardening: createBuffers rejects a null array, more channels than exist,
+out-of-range or duplicate channels, and callbacks without any buffer
+switch function; only a callback the host provided is ever called; every
+getter checks its pointers.
+
+33. PANEL Z-ORDER POLICY AND REBIND (0.7.1)
+-------------------------------------------
+Topmost policy (host thread, panel timer 250 ms; monitor window timer every
+8th 33 ms tick when pinned):
+   foreground window's process == this process ?
+      yes -> SetWindowPos(HWND_TOPMOST)    } only when the state changes,
+      no  -> SetWindowPos(HWND_NOTOPMOST)  } SWP_NOMOVE|NOSIZE|NOACTIVATE|
+                                              NOOWNERZORDER
+Applied to the panel and to an open name / routing dialog (p->dlg);
+message boxes are owned by the panel and follow it. Owner-based z-order
+(section 13) stays, but it is not relied on: Cubase's Studio Setup can be
+on another thread or a Qt window.
+Owner loss: the timer and WM_SHOWWINDOW(SW_PARENTCLOSING) detach the panel
+from an owner that is destroyed, hidden or minimized (GWLP_HWNDPARENT =
+null, owner re-enabled) and keep it visible (restored if iconic). Dialog
+loops also stop when their window was destroyed from outside.
+Rebind (B):
+   driver.cpp: g_instances (H only): RegisterInstance in init(),
+               UnregisterInstance in the destructor; FindNewerInstance(old)
+               = newest instance != old that is not dying.
+   panel:      ShowControlPanel AddRefs the driver and Releases the one it
+               ends up with; controlPanel() no longer holds a reference and
+               never touches `this` after the call.
+   timer 500 ms, CheckDriverInstance:
+      host holds our instance -> same driver; if its stream generation
+                                 changed, refresh the channel lists only
+      released + newer exists -> n->AddRef(); p->drv = n; old->Release()
+                                 (old may be destroyed here, on H); controls,
+                                 tab and pending edits are kept
+      released, none yet      -> "Restarting driver..." (state 1); after 5 s
+                                 state 2: "The DAW released the driver.
+                                 Settings were saved." (Apply = save only);
+                                 polling continues
+The old instance stays alive while the panel holds it, so the panel never
+uses a freed object; the monitor window is recreated by the new instance and
+its Settings button finds the open panel (g_openPanel) and brings it to the
+front.
+Fit: before creating the panel (and on WM_DPICHANGED) the layout DPI is
+lowered in steps of 4 until the window fits the work area, so the bottom bar
+is never cut off; the minimum logical height is kept (560, 640 since 0.8.0, 700 since 0.8.1).
+Unowned panel (0.7.1, final): the panel has no owner at all (CreateWindowEx
+parent = null, WS_EX_APPWINDOW) and never disables a host window, so the
+host destroying the window that opened it (closing Cubase's Studio Setup)
+cannot destroy the panel. The window that was active when it opened only
+selects the DPI, the monitor to center on and where the focus returns.
+controlPanel() still runs the panel's message loop until it closes (Tab /
+Ctrl+Tab navigation via IsDialogMessage; hosts expect controlPanel to return
+when the panel is closed); that loop dispatches every message of the host
+thread, so the host's windows keep working. Child dialogs and prompts are
+owned by the panel. The owner-detach code of this section is now inert
+(st.owner is always null). Section 13's owner and disable rules no longer
+apply to the panel itself.
+
+
+34. BLUETOOTH MODE (0.8.0, G1)
+-----------------------------
+Detection (H, resolveDevices): PKEY_Device_EnumeratorName {a45c254e-df1c-
+4efd-8020-67d146a850e0},24 of the endpoint starts with "BTH" (BTHENUM =
+classic A2DP / hands-free, BTHHFENUM = hands-free, BTHLEDEVICE = LE Audio).
+The form factor is not used: wired headphones report the same form factor.
+State (H): outBt, inBt, a2dpBlocked, recBuf; copied to StatusInfo.
+Recommended buffer: max(512, 2 x device period at the mix rate), capped at
+4096. The panel's "Use recommended" selects it and calls Apply (RESET
+setting -> reset through the hidden window, rule 4).
+Latency: Windows reports only the buffers it knows; the radio and codec
+delay of Bluetooth is invisible to WASAPI. The driver never guesses: the
+panel suggests about +150 ms for the existing output latency offset
+(section 30), which the user sets.
+ProtectA2dp (RESET, default 1): if the output is Bluetooth and the main
+input has the same ContainerId (SameContainer: a zero or the "built-in"
+ContainerId {00000000-0000-0000-FFFF-FFFFFFFFFFFF} never matches), inDev is
+released before any stream opens (no audio client is ever activated on it,
+so Windows never switches the headset to the hands-free profile). The same
+rule removes extra inputs of that container (their channels stay present
+and silent, like a missing device, so the channel count does not change).
+Diagnostics: "Bluetooth: yes/no (enumerator ...)" per endpoint.
+
+35. HEARING-SAFETY LIMITER (0.8.0, G2)
+--------------------------------------
+src/limiter.h, header-only, used by A only:
+   knee = ceiling * 0.708 (-3 dB)
+   curve(x) = x                                         x <= knee
+            = knee + (c - knee) * tanh((x - knee)/(c - knee))   x > knee
+   per frame: peak = max |x[ch]|  (linked)
+              d = deficit * (1 - rel); d < 1e-6 -> 0   (release, snap)
+              need = 1 - curve(peak)/peak  if peak > knee
+              deficit = max(d, need)  (instant attack)
+              y = clamp(x * (1 - deficit), +-ceiling)  (rounding guard)
+   rel = 1 - exp(-1 / (rate * 0.150))  (150 ms)
+The release runs on the deficit (1 - gain): the form gain += (1 - gain) * rel
+stalls about 2e-4 below 1.0 in float because the increment falls below half
+an ulp of 1.0f (found by tests/limiter_test.cpp). No lookahead, no added
+latency; the output can never exceed the ceiling because the frame's gain is
+computed from the frame itself.
+Position: main output: writeOut, after routing, the alignment delay and the
+direct-monitoring soft clipper, before PutSample (integer conversion, clip,
+dither). Extra outputs: serviceSink buffers one frame from the resampler
+callback (frame-major order, channels 0..n-1) in a stack array, limits it,
+then writes it. Each output has its own Limiter (limMain, limSink[k]).
+Live parameters (LiveParams): limOn, limCeil (linear); the gain cap is
+applied by H in publishLive (gain = min(gain, cap) while limOn && capOn), so
+A has no extra branch. Keys: Limiter, LimiterCeilingDb (-20..-0.1),
+LimiterGainCap, LimiterGainCapDb (-20..24); engine keys (stored in profiles).
+Gain reduction: A writes limGr with a CAS maximum after each block; H
+exchanges it in readMeters and keeps a per-consumer maximum (limGrAcc), so
+the panel and the monitor window each see every peak. The UI holds a value
+for 1 s.
+
+36. AUTOMATIC PROFILE PER PROGRAM (0.8.0, G3)
+---------------------------------------------
+[HostProfiles] maps an executable file name to a profile name;
+GetPrivateProfileString keys are case-insensitive. HostExeName() =
+GetModuleFileNameW(nullptr) without the folder. init() (H): LoadConfig,
+then LoadProfile(mapping) on top, then uiCfg = cfg, then the crash/safe-mode
+check (safe mode still overrides), all before resolveDevices. The log line
+uses SafeLogName() (only [A-Za-z0-9 ._+()-], other characters -> '_', at
+most 64). hostProfile (H) keeps the applied name: loadSaved() (LoadConfig +
+the profile) replaces LoadConfig in every reload path (createBuffers with
+devicesDirty, applyPanelChanges without buffers, leaveSafeMode), so a
+reset keeps the profile. applyPanelChanges clears hostProfile: the panel
+showed the profile's values and saved them as [General], so re-applying the
+profile would undo the user's change. The panel writes the mapping on Apply
+(SetHostProfile) and removes entries at once ("Remove").
+
+37. FOLLOWING THE WINDOWS SAMPLE RATE (0.8.0, G4)
+-------------------------------------------------
+SampleRate=Auto (sampleRateAuto, RESET; SampleRate is written as "Auto").
+applyAutoRate() (H): in Shared mode, rate = mix rate of the output
+(MixInfo, IAudioClient::GetMixFormat) after every "rate = cfg.sampleRate";
+autoRateSeen = that Windows rate.
+Notification: DeviceNotifier::OnPropertyValueChanged (N) queues a "format"
+event only for PKEY_AudioEngine_DeviceFormat {f19f064d-082c-4e27-bc73-
+6882a1bb8e4c},0 (rule 3). handleDeviceEvent (H) handles it before the
+FollowDeviceChanges check: onFormatChanged(id) ignores other endpoints and
+Exclusive mode, logs a change against mixRateOpen (rate when the output was
+opened) and, with Auto, reacts once per new Windows rate (autoRateSeen):
+rate = new rate, sampleRateDidChange(new rate) if the host gave it,
+devicesDirty = true, requestReset() as the last statement (rule 4). The
+invalidated stream also ends the audio thread (RR_WASAPI); whichever reset
+comes first, resetRequested allows only one per cycle, and autoRateSeen
+prevents a second reaction after the streams were reopened at the new
+rate. A host that then calls setSampleRate wins (Windows converts). The
+audio thread is never involved and nothing blocks.
+
+38. TRAY ICON (0.8.0, G5)
+-------------------------
+Window: hidden WS_POPUP top-level window, class "WasapiBridgeTray" (a
+message-only window does not receive the TaskbarCreated broadcast). One
+Shell_NotifyIconW entry (uID 1), NIM_ADD + NIM_SETVERSION
+(NOTIFYICON_VERSION_4): events arrive as LOWORD(lParam) of WM_APP+40
+(NIN_SELECT / NIN_KEYSELECT = left click, WM_CONTEXTMENU = right click,
+anchor point in wParam).
+Life cycle (same rules as the monitor window, section 29 / fix 1): created
+on msgThread through WM_APP+8 (posted by updateTray at the end of
+createBuffers and after Apply; TrayIcon is LIVE), destroyed by
+destroyTrayNow on msgThread: directly when already there, otherwise
+SendMessage(WM_APP+9), from disposeBuffers, applyPanelChanges (TrayIcon=0)
+and the destructor. DestroyTrayWindow clears TrayState::drv, deletes the
+icon (NIM_DELETE) and destroys the window before freeing the state; the
+window counts in g_objects.
+Refresh: 1 s timer (H): getStatus -> tooltip (128 characters) and state
+(gray no stream, green, amber load > 80 %, red when output glitches +
+timeouts + input dropouts > 0); NIM_MODIFY only on change; a failed
+NIM_MODIFY re-adds. TaskbarCreated (registered message, allowed through UIPI
+with ChangeWindowMessageFilterEx) re-adds the icon.
+Icons: 32-bit top-down DIB with alpha, anti-aliased dot (4x4 supersampling)
+with a dark rim, CreateIconIndirect, SM_CXSMICON size; destroyed with the
+window. No resources, no new DLLs (shell32 and user32 were already
+imported).
+Menu: TrackPopupMenuEx(TPM_RETURNCMD) after SetForegroundWindow, then
+WM_NULL (documented requirement). The menu and the About MessageBox are
+nested modal loops: g_objects is held around them so the DLL cannot unload,
+and after the menu the state is looked up again through GWLP_USERDATA
+because the driver may have destroyed the window meanwhile. Commands that
+may destroy the driver (Open settings -> controlPanel) are the last
+statement. Left click calls trayToggleMonitor (H), which stores only
+MonitorWindow (SaveGeneralFlag) so neither safe-mode nor program-profile
+values are ever written by it (the monitor window's Close uses the same
+helper since 0.8.0).
+
+39. CHANNEL NAMES (0.8.0, G6)
+-----------------------------
+Built by buildChannelNames() at the end of resolveDevices (H) into
+chNameIn/chNameOut[32][32]; getChannelInfo only copies them
+(DeviceChannelNames=1, RESET; 0 = the old names). LoadConfig: an existing
+config.ini without the key resolves to 0 and the 0 is written immediately;
+a new config.ini gets 1 (SaveConfig). Rules (src/chnames.h,
+tests/chnames_test.cpp):
+  device part  ShortName(friendly name): "Speakers (X)", "Headphones (X)",
+               "Line (X)", "Microphone (X)"... -> X; otherwise the whole name
+  outputs      speaker position from the mix format's channel mask when its
+               bit count equals the channel count (L, R, C, LFE, BL, BR, SL,
+               SR ...), else "Out n"
+  inputs       "In n"; loopback "Loopback L" / "Loopback R"
+  fit          the device part is converted to CP_ACP (WC_NO_BEST_FIT_CHARS,
+               '?' for missing characters) and shortened on whole characters
+               until "<device> <suffix>" fits 31 bytes (never splits a
+               double-byte character); the suffix is never cut
+  unique       repeated names get " #2", " #3"...
+ASIOChannelInfo.name is char[32] in the ANSI code page of the host process.
+Changing names can break saved port connections in a DAW (risk accepted,
+README section 31).
+
+40. RELEASES, SIGNING AND ARM64X (0.8.0, G7-G9)
+-----------------------------------------------
+release.yml (tag v*): build job = build.yml + all offline tests + optional
+signing + Setup + bin/src zips; release job = SHA256SUMS.txt + DRAFT GitHub
+Release (permissions: contents: write only in that job). Details:
+RELEASING.txt. Signing: scripts/sign.sh (PFX + osslsigncode, timestamped,
+no-op without a certificate) for DLLs and EXEs; NSIS -DSIGN_CMD enables
+!finalize (Setup) and !uninstfinalize (uninstaller, before it is embedded);
+optional package-trusted job (Windows, signtool + Trusted Signing dlib).
+Details: SIGNING.txt.
+ARM64X: an ARM64X image is a native ARM64 PE that also contains ARM64EC
+code and a second export/import view, so the same DLL loads in native ARM64
+processes and in emulated x64 processes. Producing it needs (1) ARM64EC code
+generation, (2) ARM64EC import libraries and CRT, and (3) a linker that
+emits the hybrid metadata (load-config CHPE fields, the ARM64X relocation
+directory). Checked here (0.8.0): Zig 0.16 (clang/lld) has no arm64ec target
+("zig cc -target arm64ec-windows-msvc" is rejected) and no ARM64EC libraries;
+lld-link accepts /machine:arm64x but warns about the missing
+_load_config_used and has no objects to put in the EC half; mingw-w64 GCC has
+no ARM64 target at all. So it is not feasible in this Linux environment.
+The "arm64x" job of release.yml uses MSVC on a windows-11-arm runner:
+cl (native) + cl /arm64EC on the same sources, link /machine:arm64x with
+/defArm64Native and /def (same exports), static CRT (/MT). It is
+continue-on-error and its DLL is a separate experimental download; the
+existing x64 / ARM64 / x86 builds and the Setup are unchanged. Not verified
+yet: that the sources compile with MSVC without changes (they are written
+for GCC/clang; any fix belongs in a later version).
+
+41. PANEL VISUALS (0.8.1)
+-------------------------
+Renderer: src/visuals.h, class vis::Renderer, platform independent (tested on
+Linux by tests/visuals_test.cpp). State: pixel buffer (0x00RRGGBB, top-down),
+tunnel lookup tables (angle | distance << 8, depth shade) - allocated only in
+resize(); sine table (1024 entries, -127..127), plasma and tunnel palettes,
+256 x 256 procedural texture, 192 stars, per-frame column / row / diagonal
+sums (fixed arrays sized for 320 x 240) - built in the constructor. frame()
+uses integer and table math only and writes every pixel through
+std::vector::operator[] (checked with -D_GLIBCXX_ASSERTIONS in the test).
+Output = background color + effect x intensity / 100 (saturated), so
+intensity 0 is exactly the plain background. Time steps are clamped to
+200 ms (no jump after a pause). Effects: plasma (sum of sines + palette
+cycling), starfield (perspective, xorshift respawn), copper bars (7 bars on
+sine paths), tunnel (LUT into texture, darker in the middle), reactive
+(plasma phase speed and brightness + stars from a 0..255 level), scroller
+(stars + 5x7 dot font, column-wise sine offset, scale 1..3).
+Panel (panel.cpp, host thread only):
+  buffer size   client / d with d >= 3 so that it fits 320 x 240 (square
+                pixels); recomputed in VisResize on creation, WM_SIZE and
+                after WM_DPICHANGED (BuildControls -> VisApply); the About
+                strip uses d >= 2
+  painting      PaintPanel stretches the buffer (StretchDIBits,
+                COLORONCOLOR: nearest neighbor, no HALFTONE) into the back
+                buffer first, then header, cards (opaque) and text as before;
+                the strip is blitted after the About card
+  back buffer   cached in PanelState (recreated only on size change);
+                WM_PAINT selects the update region as clip region
+  invalidation  VisInvalidate: client minus each visible card deflated by
+                8 px (corners and edges are repainted with the background),
+                plus the About strip; InvalidateRgn without RDW_ALLCHILDREN;
+                the panel has WS_CLIPCHILDREN, so controls are never redrawn
+                by an animation frame
+  timer         ID_VTIMER 33 ms; VisTick: skip if IsIconic or not visible;
+                level = max output/input meter peak of the panel's own
+                MeterSnapshot (already read by the 50 ms meter timer through
+                the lock-free readMeters), fast attack, 7/8 decay; render;
+                invalidate. WM_PAINT adds its own time.
+  cost control  EMA of render + paint; after 30 frames above 4 ms: 66 ms
+                (15 fps); again above 4 ms: timer killed, static frame
+                (logged once each)
+  policy        VisualsEffective: Off in SM_REMOTESESSION unless
+                visualsExplicit (the Visuals key exists or the user changed
+                the combo); SPI_GETCLIENTAREAANIMATION false -> one static
+                frame, no timer
+  controls      About tab: combo ID_VIS (preview at once), slider
+                "WasapiBridgeSlider" (own class, no comctl32: value in
+                GWLP_USERDATA, mouse and arrow keys, WM_COMMAND EN_CHANGE),
+                toggle ID_VISMON. Apply saves (LIVE keys, general-only).
+Monitor window (VisualsMonitor): MonState owns its own renderer sized to the
+meter child / 3, rendered in the existing 33 ms timer at intensity x 0.3;
+the meter child (MeterProc) stretches it instead of filling its card color.
+The audio thread is never involved; the renderer has no global state.
+Config: Visuals is written only when visualsExplicit, so an untouched
+configuration keeps the remote-session default; VisualsIntensity (0..100)
+and VisualsMonitor are general-only keys.
+
+42. PANEL VISUALS TIMING (0.8.2)
+--------------------------------
+Replaces the timing rules of section 41 (renderer and painting unchanged).
+  clock         VisNowUs(): QueryPerformanceCounter in microseconds
+  renderer      frame(effect, tUs, intensity, level, speedPct): dt = tUs -
+                last (0 on the first frame, clamped to 200 ms); animation
+                time += dt x speed / 100; every effect is a function of that
+                time (stars: depth velocity in units per second with the
+                fractional remainder carried), so the movement does not
+                depend on the frame rate; tested offline
+  timer         ID_VTIMER 15 ms: timers expire on the system tick (15.6 ms by
+                default, 1 ms while the driver runs timeBeginPeriod(1)), so
+                15 ms = one frame per tick (~60 fps); 16 ms would be two
+                ticks
+  accounting    only VisRender and the two VisBlit calls (background and
+                About strip) add to visWinMs; frames counted per tick; every
+                2 s: fps and ms/frame; > 6 ms -> 31 ms timer (~30 fps),
+                < 3 ms -> 15 ms; logged on change; never paused (pause only
+                when IsIconic / not visible; static frame when
+                SPI_GETCLIENTAREAANIMATION is false)
+  speed         VisualsSpeed 25..400 (%), slider position v 0..100 maps to
+                25 x 16^(v/100) (v = 50 -> 100 %)
+  scroller      setScrollRate(120 x dpi/96 x lowResWidth / stripWidth):
+                ~120 screen pixels per second at 100 % scaling
+  status        VisStatusLine on the Status tab (host thread)
+
+43. SAMPLE RATE ON THE AUDIO THREAD AND THE ASIOTime CHECK (0.8.3)
+------------------------------------------------------------------
+rateRun (driver.h): copy of `rate` for A, written by H only in start()
+before the thread is created (rule 6 pattern). bufferSwitch (timestamps,
+timeInfo.sampleRate), readSource / serviceSink (PI time step, clock-based
+fill) and run() (block length, clock conversion) read only rateRun. H keeps
+changing `rate` (setSampleRate stops first; onFormatChanged with
+SampleRate=Auto sets it while the old stream may still run until the host
+resets): A never sees that value, so there is no data race and every
+callback reports the rate of the running stream.
+Test host: src/tichk.h Checker, per phase expected rate = getSampleRate()
+of the instance just before start() (RunFor, T8), counted per kind on the
+audio thread with relaxed atomics, the first 8 invalid callbacks stored in
+reserved slots, read on the main thread after stop().
+
+44. THEMES (0.9.0, H1)
+----------------------
+src/themes.h: thm::kPalettes[6] (0x00RRGGBB): bg, card, input, tile, text,
+dim, accent (+hi/lo), amber, red, line, btn (+hi/lo), onAccent, meter
+gradient (lo/mid/hi), bar on/off, clip off, hold, guide, three effect
+anchors, dark flag, dot-header flag. panel.cpp ThemeSelect(id) copies a
+palette into g_th (COLORREF) and recreates the three long-lived brushes if
+they exist (they are only handed out in WM_CTLCOLOR*, so replacing them
+between paints is safe; host thread). DarkCtl uses "Explorer" and
+DarkTitle requests a light caption when the theme is not dark. Live
+preview: the Theme combo calls ThemeSelect + RebuildPanel (destroy and
+recreate all controls like a DPI change, pending values kept: owner-drawn
+buttons store their corner color at creation) + NotifyMonitorWindows
+(EnumThreadWindows -> WM_APP+61 -> MonBuild, renderer recreated). Closing
+the panel restores the saved theme and language. Effects: Renderer::
+setPalette(a, b, c) builds the plasma / tunnel / fire / blob palettes from
+the anchors; the background color is the theme's. Tray dots use fixed
+colors. tests/themes_test.cpp: WCAG 2.x contrast >= 4.5:1 for 14 text pairs
+per theme. Retro title: DrawDotText with vis::kFont (FillRect per dot).
+
+45. UPDATE CHECK (0.9.0, H3)
+----------------------------
+Off by default (UpdateCheck=0); no request ever happens before the user
+clicks "Check for updates now" or turns on the weekly check (then at most
+once per 7 days, when the panel opens; UpdateLastCheck is written by
+SaveGeneralInt64 only).
+Threads: the panel (H) creates a upd::Job (refs = 2) and a worker thread
+(CreateThread). The worker loads winhttp.dll / bcrypt.dll / wintrust.dll
+with LOAD_LIBRARY_SEARCH_SYSTEM32, never touches the driver, the panel or
+config, writes only its Job, stores done (release), posts WM_APP+50 to the
+panel (fails harmlessly if the panel is gone), drops its reference and ends
+with FreeLibraryAndExitThread on a module reference it took at start
+(GetModuleHandleEx FROM_ADDRESS), so the DLL cannot unload under it. The
+panel reads the result after the message (acquire) and drops its reference
+in WM_DESTROY. The audio thread is not involved.
+Requests: https only (WinHttpCrackUrl scheme check, WINHTTP_FLAG_SECURE),
+default TLS validation, redirect policy "never HTTPS -> HTTP", timeouts 10
+/ 10 / 15 / 30 s, User-Agent "WASAPI-Driver-for-ASIO/<version>", API Accept
+header; size limits 1 MB (API), 64 KB (SHA256SUMS.txt), 50 MB (Setup).
+URLs: API from the validated owner/repository; asset URLs must start with
+https://github.com/. Download: SHA256SUMS.txt -> expected hash of
+"WASAPI-Driver-for-ASIO-*-Setup.exe" -> Setup streamed to <name>.part
+with BCrypt SHA-256 -> compare -> rename -> WinVerifyTrust
+(WTD_REVOKE_NONE): valid = signed, no signature = accepted as unsigned,
+invalid = deleted and refused. Install: confirmation, the file is hashed
+again, ShellExecute (the Setup shows its own pages). Portable helpers
+(versions, JSON reader with type checks and depth limit 32, checksum
+lookup, URL and repository rules) are tested in tests/update_test.cpp.
+
+46. INTERFACE LANGUAGES (0.9.0, H4)
+-----------------------------------
+src/strings.h: lang::StrId (ids in strings_ids.inc), tables filled by
+Fill_en/es/pt/fr/de (one assignment per id, so a missing id is a compile
+error in English and a null entry elsewhere - tests/strings_test.cpp checks
+none is null or empty and that the printf placeholders match English).
+T(id) uses the current language (host thread), falling back to English;
+TIn(lang, id) for the English "Copy status". Resolve(config, LANGID):
+Auto -> PRIMARYLANGID of GetUserDefaultUILanguage (es, pt, fr, de) else en.
+Formats are passed to swprintf / FmtW as data (never concatenated).
+Static arrays of strings were removed (they would freeze the language at
+load). TM(id) appends the RESET marker from a per-id cache. Live switch:
+SetLang + RebuildPanel + NotifyMonitorWindows; driver.cpp getStatus uses
+the table for its per-device lines. LayoutAudit (after every build of the
+controls): measures every label / owner-drawn button with its font (DT_CALCRECT,
+word wrap for multi-line labels); a text that does not fit gets the small
+font, else it ends with an ellipsis; counts are logged. Not translated:
+log.txt, Copy status, WasapiDriverDiag.exe, WasapiDriverTest.exe, docs,
+"ASIO", "WASAPI", the product name, the trademark sentence (a translated
+explanatory line follows it). Installer: Modern UI 2 with English and
+Spanish (installer/lang_en.nsh, lang_es.nsh); the legal texts stay English.
+
+47. UPDATER HARDENING (0.9.1, AF1-AF5, AF8)
+-------------------------------------------
+Job (update.cpp): refs (host + worker), op, result, done (release/acquire),
+cancel (atomic flag), active (atomic HINTERNET of the request being waited
+on), self (DLL reference), deadline (GetTickCount64).
+- Start(): deadline (120 s check / 600 s download); GetModuleHandleEx
+  (FROM_ADDRESS) -> job->self; ++g_objects; CreateThread; on failure
+  --g_objects, FreeLibrary(self), delete. Worker: ... PostMessage, Unref,
+  --g_objects, FreeLibraryAndExitThread(self).
+- Get(): starting host and final host (WINHTTP_OPTION_URL after
+  ReceiveResponse) must pass AllowedFinalHost(op); `active` is set after
+  OpenRequest; Stop() (cancel or deadline) is checked before each step and
+  in the read loop; at the end the handle is closed only by whoever
+  exchanges `active` to null. Cancel() (host): cancel = true, own
+  winhttp.dll reference (GetModuleHandleEx), exchange, WinHttpCloseHandle
+  (the blocked call fails with OPERATION_CANCELLED), FreeLibrary.
+- Download: CreateFileW(.part, READ | WRITE | DELETE, share 0) -> stream +
+  hash -> compare -> FlushFileBuffers -> SetFileInformationByHandle
+  (FileRenameInfo, ReplaceIfExists) -> WinVerifyTrust(hFile) -> close. Any
+  failure: FileDispositionInfo (delete on close) -> close.
+- LaunchVerified (host, on Install): CreateFileW(GENERIC_READ,
+  FILE_SHARE_READ) -> SHA-256 from the handle -> WinVerifyTrust(hFile;
+  refused if invalid, or unsigned when it was signed at download) ->
+  ShellExecuteExW(SEE_MASK_NOCLOSEPROCESS | NOASYNC) -> (0.9.6) the file
+  and process handles go to a detached HoldThread (own DLL reference,
+  FreeLibraryAndExitThread) that waits WaitForInputIdle up to 10 s and then
+  closes both, so the panel never blocks while the file stays locked
+  against rename / replace until NSIS has reopened $EXEPATH; if the thread
+  cannot start, both are closed at once. The panel deletes a file that
+  fails and shows the hash or signature message.
+- Versions: Compare -> ComparePre (SemVer 2.0.0 section 11).
+
+48. INSTANCE REGISTRY (0.9.1, AF3)
+----------------------------------
+src/registry.h: reg::Registry<T> = vector + Lock (SRWLOCK on Windows,
+std::mutex in the Linux test). add (init), remove (first statement of the
+destructor), findNewerAddRef(old): newest entry != old whose tryAddRef()
+succeeds, under the lock. WasapiBridge::tryAddRef: false if dying, else a
+compare-exchange loop that increments refs only from a value > 0 (never
+resurrects). FindNewerInstance returns a referenced instance; the panel
+(CheckDriverInstance) only swaps p->drv and releases the old one. The
+panel also skips the whole check while modalDepth > 0 (AF7).
+
+49. SAMPLE RATE FOLLOWING WITHOUT A DOUBLE RESET (0.9.1, AF6)
+-------------------------------------------------------------
+onFormatChanged (H, SampleRate=Auto, Shared): if the Windows rate changed
+(autoRateSeen) and differs from `rate`: with buffers created,
+pendingAutoRate = new rate (rate and rateRun unchanged); without buffers,
+rate = new rate. devicesDirty, then requestReset (the only signal; no
+sampleRateDidChange). disposeBuffers: after closeStreams, rate =
+pendingAutoRate. setSampleRate clears pendingAutoRate (the host wins).
+createBuffers with devicesDirty re-runs applyAutoRate as before.
+
+50. ACCESSIBILITY (0.9.1, B1)
+-----------------------------
+src/a11y.h. Toggles (owner-drawn BUTTON, "wbkind" 3) and sliders
+(WasapiBridgeSlider) answer WM_GETOBJECT(OBJID_CLIENT) with a11y::Wrap: an
+IAccessible that delegates to CreateStdAccessibleObject and overrides, for
+CHILDID_SELF only: role (CHECKBUTTON / SLIDER), state (+CHECKED from
+GWLP_USERDATA; PRESSED and DEFAULT removed), value (slider: the parent
+answers kMsgSliderText, e.g. "150 %" for Speed), default action
+("Check"/"Uncheck"; accDoDefaultAction posts BM_CLICK). UI Automation uses
+the MSAA proxy for windows that answer WM_GETOBJECT themselves, so UIA
+clients see CheckBox + Toggle and Slider + Value. Each Wrap counts in
+g_objects. oleacc and oleaut32 are loaded from System32 on first use (no
+new imports). Native controls without a preceding label get a name by
+Direct Annotation (IAccPropServices::SetHwndPropStr, PROPID_ACC_NAME),
+marked "wbacc" and cleared (ClearHwndProps) before RebuildPanel destroys
+the controls and in WM_DESTROY. SetToggle raises EVENT_OBJECT_STATECHANGE,
+the slider EVENT_OBJECT_VALUECHANGE. Sliders and the meter carry their
+label as window text (= accessible name). Native check boxes were not
+used: their look needs NM_CUSTOMDRAW (comctl32 6), which a DLL cannot
+count on in every host.
+Keyboard: HandleTabKeys (panel loop, before IsDialogMessage): Ctrl+Tab;
+EnterOnButton (focused BUTTON -> BM_CLICK; also in DlgLoop); WM_SYSCHAR ->
+tab or Apply / Close mnemonic. AssignMnemonics (after each BuildControls,
+so per language): Apply, Close, then the tabs; first free word-initial
+letter, else any free letter or digit. Buttons get "&" in their text and
+"wbmnem" (drawn with DT_HIDEPREFIX while WM_QUERYUISTATE says
+UISF_HIDEACCEL); tabs are drawn the same way; WM_UPDATEUISTATE repaints
+the tab strip. Focus: DrawOwnerButton draws a ring in g_th.focus (accent;
+WINDOWTEXT in high contrast) and an inner on-accent ring on accent
+buttons; the slider draws a frame. Read-only status edits have WS_TABSTOP.
+High contrast: ThemeSelect checks SPI_GETHIGHCONTRAST and then builds the
+palette from GetSysColor (WINDOW, WINDOWTEXT, HIGHLIGHT, HIGHLIGHTTEXT,
+BTNFACE, BTNTEXT, GRAYTEXT, HOTLIGHT), flat meters, g_th.hc = true:
+VisualsEffective -> Off, DarkCtl -> "Explorer", no dark title. The
+configured theme id is kept. WM_SETTINGCHANGE (SPI_SETHIGHCONTRAST) /
+WM_SYSCOLORCHANGE: the panel re-selects and rebuilds; the monitor window
+does it itself when no panel is open. DrawLogo puts a dark plate under the
+white logo when the background luma is >= 128.
+
+51. SOAK MODE OF THE TEST HOST (0.9.1, B3)
+------------------------------------------
+hosttest.cpp RunSoak: everything on the main thread from a 250 ms timer of
+the hidden host window (works inside a modal loop of the driver's panel).
+Audio thread: RecordBlock adds each interval to atomic sums (count, sum,
+sum of squares, max by CAS); the main thread exchanges them once a minute.
+SoakTick: reset request count changed -> event + reload (stop,
+disposeBuffers, Release, CoFreeUnusedLibrariesEx, CoCreateInstance, init,
+createBuffers, start); no callback for 2 s -> stall event, reload after
+5 s; failed start -> retry every 3 s; event recovered when 10 callbacks
+arrived after the event and the last start (late if > 120 s);
+--soak-cycle: buffer size change every 5 minutes. Host window:
+WM_POWERBROADCAST (suspend logged, resume = event), WM_DEVICECHANGE (logged,
+at most every 5 s), WM_SOAK_DEV from an IMMNotificationClient (default
+device, state, added, removed; the client only posts). Per minute:
+K32GetProcessMemoryInfo (PrivateUsage), GetProcessHandleCount,
+GetGuiResources (GDI, USER), "panel open" if a WasapiBridgePanel window
+exists; the report is rewritten. Verdict: every event recovered within
+120 s; least-squares slope and growth from minute 3 (runs of 8+ minutes):
+memory < 64 KB/min and < 8 MB, handles / GDI / USER < 1/min and < 50.
+
+52. HELP TIPS (0.9.2)
+---------------------
+Table: src/tips.h kDefs = {key, string id, tag}; key = control id
+(src/panel_ids.h) or an ID_TIP_* key of a painted item (tabs, tiles, the
+monitor window's text lines) or of a dialog button; tips::KeyFor(ctx, id)
+maps dialog IDOK / IDCANCEL, the routing combos and the monitor buttons
+that share a panel tip. Tags follow NeedsReset (kReset) or say kLive;
+actions have none. kRequired lists every (context, control) the code
+creates; strings_test checks each has a tip of at most 220 characters in
+every language; TipAnnotate also logs any child without a tip at run time.
+State: PanelState::tip (TipState; the monitor window uses its MonState::ps).
+Tracking (host thread only): WM_SETCURSOR of the panel, the dialogs and the
+monitor window (sent for every mouse move over any descendant; labels are
+resolved with ChildWindowFromPointEx) -> TipOnSetCursor: new item -> key,
+screen rectangle, hover time; a button-down hides and suppresses.
+ID_TIPTIMER (100 ms, on the panel or monitor window): cursor still inside
+the item (GetCursorPos + WindowFromPoint) else cancel; show after 600 ms;
+hide after 15 s. TipKey (panel loop and DlgLoop, before IsDialogMessage):
+F1 / Shift+F1 -> TipForControl (focused control, keyboard placement,
+works with the setting off), Esc hides (consumed), any key or the wheel
+hides. Monitor window: WM_HELP. Hidden by ShowTab, RebuildPanel,
+OnDpiChanged, DlgLoop start/end, MonBuild, WM_WB_RETHEME, WM_ACTIVATEAPP
+(deactivation).
+Window "WasapiBridgeTip": WS_POPUP, WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
+WS_EX_NOACTIVATE, CS_DROPSHADOW, owner = panel or monitor window, created
+lazily (++g_objects; --g_objects in WM_NCDESTROY), destroyed by TipDestroy
+in WM_DESTROY / DestroyMonitorWindow. WM_NCHITTEST = HTTRANSPARENT,
+WM_MOUSEACTIVATE = MA_NOACTIVATE. TipMeasure: body in p->font with
+DT_WORDBREAK in 360 - 16 logical pixels, tag line in p->small (accent for
+live, amber for reset); colors g_th.tile / text / accent (high contrast:
+the system palette of ThemeSelect). Placement: small item (<= 60 px high)
+or keyboard -> below the item, above it if it does not fit; large item ->
+22 px below the cursor (or above); clamped to the monitor work area.
+Accessibility: TipAnnotate sets PROPID_ACC_DESCRIPTION (Direct Annotation,
+"wbacc", cleared with the name by AccClear) on every child with a tip after
+BuildControls, MonBuild and at DlgLoop start; a11y::Wrap answers
+get_accDescription through kMsgDescription to its parent (TipDescribe).
+Setting: Config::helpTips (HelpTips, general-only, LIVE): TipsEnabled reads
+the panel's toggle while the panel is open (preview), else config().
+
+53. APPLICATION ICON AND TRAY STATES (0.9.3)
+--------------------------------------------
+Artwork: scripts/make_icon.py (Pillow) draws each size on its own at 8x and
+reduces it with Lanczos (sizes 16-32 with their own stroke, node and corner
+parameters and node centers on pixel centers) and writes src/res/app.ico
+(DIB entries with alpha + AND mask, 256 as PNG) and src/res/icon-256.png.
+DLL: ICON 100 (WasapiDriver.rc). panel.cpp AppIcon(size): LoadImageW at the
+exact size, cache of 12 sizes, FreeAppIcons from DllMain (FreeLibrary only).
+SetWindowIcons(w, dpi): ICON_BIG = SM_CXICON, ICON_SMALL = SM_CXSMICON for
+that DPI (GetSystemMetricsForDpi, loaded at run time; else scaled). Used by
+ShowControlPanel, OnDpiChanged, DlgCreate, CreateMonitorWindow and its
+WM_DPICHANGED, the window classes (hIcon), AppMessageBox (thread CBT hook,
+HCBT_ACTIVATE of "#32770"). The panel and dialogs dropped
+WS_EX_DLGMODALFRAME (it suppresses the caption icon). DrawAbout draws a 64
+logical px icon centered under the ASIO logo, 24 px below it.
+Tools: src/tools.rc (ICON 1) linked into both exes; conicon.h sets the
+console window's icons (WM_SETICON) and restores the previous ones.
+Installer: MUI_ICON / MUI_UNICON app.ico, app.ico installed, DisplayIcon,
+Quick start shortcut icon.
+Tray: src/trayicon.h (portable): AddStatusDot(px, size, rgb) draws a disc of
+40 % of the size (at least 6 px) touching the right and bottom edges, 1 px
+outline 0x101114, 4x4 supersampled coverage, straight-alpha "over"
+compositing; Pick(running, load, now, lastDrop): stopped / dropouts (10 s
+hold) / high load (> 80 %) / OK. panel.cpp MakeTrayIcon: AppIcon(size) ->
+GetIconInfo + GetDIBits (32-bit straight alpha; alpha from the mask for an
+icon without it) -> AddStatusDot -> CreateDIBSection + CreateIconIndirect.
+TrayState: icons[4] for iconSize = SM_CXSMICON, rebuilt in TrayRefresh when
+the size differs or on WM_DISPLAYCHANGE / WM_DPICHANGED / WM_SETTINGCHANGE /
+WM_THEMECHANGED (old set destroyed after NIM_MODIFY), lastDrops /
+lastDropMs (GetTickCount64) for the hold; the tooltip gets "\n<state word>"
+within the 127 characters. tests/icon_test.cpp checks the file and the
+composition on the real images.
+
+54. LOW-LATENCY ENGINE AT ANY RATE: FIXED-RATIO CONVERSION AND ON-DEMAND
+    CALLBACKS (0.9.4)
+-------------------------------------------------------------------------
+Suggested by Microsoft's Windows music team. IAudioClient3 shared streams
+only run at the engine's mix format, so with LowLatencyShared=1 openOutput
+always opens the main output at the mix rate:
+  IAudioClient3 InitializeSharedAudioStream(min period)  (engineKind 1)
+  -> IAudioClient3 at the default period                 (engineKind 1)
+  -> IAudioClient::Initialize Shared at the mix format    (engineKind 2)
+  -> Shared at the ASIO rate + AUTOCONVERTPCM (0.9.3)     (engineKind 0)
+fr::Choose decides first (with the real channel count: every ASIO output
+channel is converted, so OutputMap can route extra-device channels): no
+exact ratio (den <= 4096, taps <= 1024) -> last step; rate down -> always
+sinc, or Windows converts (last step) when taps x channels x rate exceeds
+kMacBudget (150 M MAC/s); rate up -> sinc, Hermite above the budget (0.9.6,
+KI-5: before, rate up followed ResamplerQuality, so the default Hermite was
+used for 44.1 -> 48 kHz; ResamplerQuality now only selects the drift
+resampler). The log text comes from fr::Describe (section 56). An IAudioClient3 period is accepted only if its buffer holds one
+period plus one ASIO block; otherwise the next multiples of the fundamental
+(up to 16, below the default) and the default period are tried.
+Exclusive (engineKind 3) and Loopback are unchanged.
+
+Converter (src/fixedratio.h, header-only, portable). num/den = inRate /
+outRate in lowest terms (44100 -> 48000 = 147/160). Output frame j is the
+input at exactly j*num/den: integer position k_ and phase ph_ (0..den-1),
+ph_ += num, k_ += ph_/den, ph_ %= den, so there is no accumulated error.
+Sinc: den coefficient sets (one per phase, built at open), Kaiser beta 10,
+cut-off 0.95 x the lower Nyquist, half = 64 taps at the lower rate (64 /
+ratio input taps when decimating: 70 for 48->44.1, 128 for 96->48).
+Hermite: 4 points. ahead() = half (sinc) or 2: input frames needed after the
+evaluated position = the converter's delay in input frames (the filter is
+symmetric, linear phase). The ring is a power of two indexed by absolute
+counters, followed by a mirror of its first taps frames (written lazily on
+the next push / produce), so a filter window is always contiguous: the sinc
+loop has no masking and no row table (stereo: two accumulators; other
+counts: an array of 32); pushSlot / missingFor(n) / producible() / produce(n, out) are
+allocation-free and lock-free. reset() writes ahead()-1 zeros of history
+(start()).
+
+Audio thread with conversion (run(), outConvOn):
+
+  device event (every engine period P, device frames)
+      |
+      v
+  GetCurrentPadding -> frames = outFill - padding      (outFill = FillTarget:
+      |                                                 max(2P, P + block))
+      v
+  while outConv.missingFor(frames) > 0:     ASIO callbacks on demand
+      bufferSwitch()  -- reads inputs for samplePos, host fills block,
+      |                  bufSize ASIO frames pushed into outConv,
+      |                  samplePos += bufSize, index flips
+      v
+  outConv.produce(frames) -> outFifo (device rate) -> writeOut
+      (gain, routing, delay line, monitor, limiter) -> render buffer
+
+So callbacks happen exactly when the device needs data, at the average rate
+of the ASIO clock (ASIO rate / bufSize per second), with a jitter of at most
+one engine period plus one block (the model measures 10.9 ms max at P=480,
+96 kHz device, 44.1 kHz ASIO). samplePosition advances by exactly bufSize
+per callback; systemTime = sched::BlockClock: t0 + pos/rate, re-anchored on
+the first block of each wake-up (tau 10 s, jump > 3 x fill or 50 ms).
+
+Inputs (openInput, LowLatencyShared=1 and not Exclusive): opened at the
+input's own mix rate (IAudioClient3 with a period >= 2/3 of the output's,
+else standard Shared at the mix format), s.conv = device rate -> ASIO rate.
+pullSource decodes each packet into s.conv and drains producible() frames
+into s.fifo (qMade counts them). Same clock as the output (no drift
+correction): alignedIn, frame q of the FIFO is delivered at samplePosition
+q + inDelay, with
+  inDelay = B + aheadOut + ceil((aheadIn + 1 + capPeriod) x Ra / Rin)
+            + ceil(P x Ra / Rd)
+(sched::InDelay), which makes the round trip constant and equal to the
+reported latencies. readSource checks the frames ready beyond the block
+(model: 2-3 periods in steady state); outside [0, exHi] (output dropout,
+late capture start) it re-aligns to exMid and counts an underrun / drop.
+Inputs on another clock keep the drift PI after the converter (target +=
+converter delay). Inputs whose mix rate equals the ASIO rate do as before.
+
+Latencies (getLatencies = sched::ReportLatencies, the same function the
+model checks, ASIO frames, plus the user offsets):
+  output = B + aheadOut + round((outFill + streamLatency) x Ra / Rd)
+           (sched::OutLatency; primOutLat = output - B, used by alignment)
+  input  = B + target; aligned converted input: target = inDelay - B -
+           aheadOut (sched::InLatency) reported as is (the block is already
+           in it), so in + out = round trip = device part + inDelay
+outPeriodAsio = P x Ra / Rd replaces outPeriod wherever an ASIO-rate amount
+is meant (input targets, sink set points, alignment).
+
+Direct monitoring (monPath, set at open): 1 = capture packets (input at the
+output device's rate and clock), 2 = delivered blocks (output not
+converted), 0 = not available (converted output, input at another rate or
+on another clock; logged). With monPath 0 kAsioCanInputMonitor returns
+ASE_NotPresent; a change of availability between two opens of the same
+instance sets monResetPending and posts WM_WB_RESET (requestReset from the
+message window). The panel's direct-monitoring note shows S_DM_NORATE.
+
+Extra outputs keep the standard Shared stream at the ASIO rate with
+AUTOCONVERTPCM: they are serviced on the master's wake-ups and need a buffer
+of several master periods, which an IAudioClient3 stream (buffer = one
+period) does not give (CODE-REVIEW AI3).
+
+Engine line: openOutput builds engineLine (English, log "Engine: ...",
+private ASIOFuture selector WB_FUTURE_ENGINE_INFO for WasapiDriverTest T2);
+the panel builds a translated line from StatusInfo (engineKind, outDevRate,
+mixRate, outConv, convSinc).
+
+Offline model: src/sched.h Sim reproduces run() (device wake-ups, FillTarget,
+both converters, the aligned input FIFO) and tests/fixedratio_test.cpp runs
+6 rate pairs x periods 128/144/256/480 x buffers 32..1024 for 10 simulated
+minutes each (accounting, xruns, callback timing, re-alignment window) and
+5 s with an impulse through output converter, device buffer, stream
+latency, a loop-back cable and the input converter: measured round trip =
+reported within 0.5 frames.
+
+55. SAMPLE-RATE PRECEDENCE ACROSS RESETS AND INSTANCES (0.9.5)
+-------------------------------------------------------------
+src/ratepolicy.h (portable, tests/ratepolicy_test.cpp) decides the ASIO rate
+whenever an instance starts or reloads its settings (WasapiBridge::chooseRate:
+init, createBuffers with devicesDirty, applyPanelChanges without buffers,
+leaveSafeMode without buffers):
+  1. host rate of this process   (setSampleRate in any instance)  "host"
+  2. SampleRate=Auto             (applyAutoRate: Windows mix rate) "auto"
+  3. config.ini LastHostRate     (not in safe mode)                "last host"
+  4. config.ini SampleRate       (the panel)                       "panel"
+hostSetRate = (source is "host"), so Auto never moves a host rate.
+State and transitions:
+  setSampleRate(r)        process = r; LastHostRate = r (written if different)
+  panel changes SampleRate or Auto (applyPanelChanges, saved vs uiCfg)
+                          process = 0; LastHostRate removed
+  Auto, Windows rate changed (onFormatChanged)
+                          process = 0 (the reset follows Windows)
+Process value: a named file mapping "Local\WasapiDriverForAsio.HostRate.<pid>"
+(8 bytes, zero-filled on creation); the handle and the view are never closed,
+so the value survives FreeLibrary of the DLL between a host's Release and
+CoCreateInstance and disappears with the process. Host threads only.
+WasapiDriverTest T10 exercises the re-creation path (Release,
+CoFreeUnusedLibrariesEx, CoCreateInstance, init, createBuffers).
+
+56. 0.9.6 FIXES (KNOWN-ISSUES KI-2, KI-4, KI-5; CODE-REVIEW D1-D12)
+------------------------------------------------------------------
+Microphone warning (panel.cpp, KI-4). PanelInputSelected(p) reads the
+controls on screen: Input combo index >= 1 ("(Windows default)" or a device;
+0 is "(None - no inputs)") or at least one selected extra input. The privacy
+row (ID_PRIVLBL / ID_SETNONE) shows on the Main tab only when an input is
+selected AND (micDenied (registry, ReadMicPrivacy) OR the last open failed
+with E_ACCESSDENIED (StatusInfo::captureDenied)). It is refreshed on CBN_
+SELCHANGE of ID_IN, LBN_SELCHANGE of ID_EXIN and by "Set to None", which now
+also clears the extra inputs. UpdateDmNote applies the same rule to the
+direct-monitoring note (S_DM_PRIV only with an input selected), refreshed in
+the same handlers (review R6). WasapiDriverDiag reads InputDevice /
+ExtraInputs from config.ini [General] for the same verdict (R7a).
+
+Fixed-ratio quality (fixedratio.h, KI-5). Pure functions, no Windows types:
+  Choose(in, out, ch, budget = kMacBudget):
+    SincTaps == 0                -> None    (no exact ratio: Windows converts)
+    SincMacs <= budget           -> Sinc    (both directions)
+    over budget, rate goes down  -> None    (Hermite has no anti-aliasing)
+    over budget, rate goes up    -> Hermite
+  Describe(buf, n, q, in, out, ch) -> "sinc (12 M MAC/s, budget 150 M)",
+    "Hermite (sinc would cost 197 M MAC/s, over the budget of 150 M)",
+    "Windows converts (no exact ratio)" / "(sinc would cost ...)".
+openOutput / openInput log "<tag>: rate conversion <in> -> <out> Hz, <ch>
+channels: " + Describe. The sinc delay (ahead() = 64 input frames instead of
+2) is already part of sched::OutLatency / InDelay, so the reported latencies
+stay exact. tests/fixedratio_test.cpp checks fixed cases, a sweep of the
+standard rates x 1..32 channels against the rule, a custom budget and the
+exact log texts.
+Review R2: one budget per stream open. openStreams sets convBudgetLeft =
+kMacBudget; openOutput chooses with it, then subtracts fr::Cost(q) of the
+configured output converter (log "converter CPU budget left for inputs");
+each openInput (main input, then extra inputs) chooses with what is left and
+subtracts its own cost (clamped at 0). Describe prints the remaining budget.
+
+Installer "files in use" (WasapiDriver.nsi, KI-2). Function WaitFilesFree
+(and un.WaitFilesFree, from one macro) runs first in the install section and
+in the uninstall section, for WasapiDriver64/32/ARM64.dll and the two tools.
+For each existing file, FileOpen mode "a" (GENERIC_READ | GENERIC_WRITE,
+OPEN_ALWAYS; nothing is written or truncated) fails when the file is mapped
+as an image by a host (loaded DLL) or a running tool: exactly the case in
+which File / Delete would fail. Renaming is not a test (a loaded DLL can be
+renamed). On failure: MessageBox MB_RETRYCANCEL (close the audio programs,
+end a hung process in Task Manager); Retry checks again, Cancel aborts before
+anything is changed; silent mode (/S) answers Cancel. Stock NSIS only.
+SetFileAttributes NORMAL runs before the test (review R5: a read-only file
+would otherwise look locked forever).
+
+Smaller fixes (CODE-REVIEW D1-D12):
+  crash.cpp   CloseEvents on a failed install (D2); DumpThread receives its
+              events and module reference in a DumpArgs block (R3);
+              session-<pid>.txt holds
+              "created=<FILETIME>" (GetProcessTimes); CrashUncleanExitFound:
+              OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION),
+              then SYNCHRONIZE only; ERROR_ACCESS_DENIED = alive; a live
+              process whose creation time differs = reused pid = stale (D3);
+              access denied -> PROCESS_QUERY_LIMITED_INFORMATION alone (exit
+              code, creation time) before "alive" (R4).
+  config.cpp  !(lo <= x <= hi) range checks reject NaN (D4); UpdateLastCheck
+              defaults to the current value (D5); ConfigDir: AppData ->
+              LocalAppData -> GetTempPath, never "\<name>" at the drive root
+              (D6); the chain is src/appdir.h WbSettingsBase, also used by
+              the diagnostics (R7d).
+  update.cpp  LaunchVerified no longer waits on the panel thread: a
+              detached HoldThread keeps the file handle (no rename /
+              replace) until WaitForInputIdle (10 s max), then closes it (D7,
+              review R1).
+  diag.cpp    ReadFileBytes(path, out, maxBytes, cut): a larger file is read
+              from its end (BOM re-attached, UTF-16 offset even); the log
+              section reads 4 MB and drops the partial first line (D10).
+  hosttest    T6: registry view of the tool's own bitness (D11); T8: exact
+              "Loopback L" (D12: the driver never prefixes Loopback names).
+  Comments    crash.h 5 s (D1), diag.cpp threading / ReportFiles (D8),
+              hosttest.cpp CbSwitch (D9).
+Tools: src/tools.rc has a VERSIONINFO (FILETYPE VFT_APP); -DWB_TOOL_TEST
+selects the test tool's description.
+
+57. 0.9.7 PUBLIC BETA PACKAGING (NO ENGINE CHANGE)
+--------------------------------------------------
+Only packaging, documents and one rule of the update check change; the
+audio engine, the configuration format and the panel behave as in 0.9.6.
+Update source: WB_UPDATE_REPO (src/common.h) is
+"<owner>/WASAPI-Driver-for-ASIO", where <owner> is an owner token whose name
+contains "PLACEHOLDER" until the project's GitHub account is filled in
+(RELEASING.txt step 0). upd::IsPlaceholderRepo (src/update.h) returns true
+for an invalid repository, for the owner "OWNER" (pre-0.9.7 default) and
+for any owner containing "PLACEHOLDER" in any letter case; only the owner
+part is examined. Every path that could start a request (StartCheck in
+update.cpp, the panel's "Check for updates now" and the weekly check)
+tests it first, so such a build never contacts api.github.com and the
+panel shows "Update source not configured yet". Tested in
+tests/update_test.cpp (the token is built from two literals there, so the
+owner substitution leaves the test unchanged).
+Channel-name examples (src/chnames.h, tests/chnames_test.cpp) use
+fictional devices ("Nordvik AX-22", "Kestrel E10"); the test adds the
+exact 31-byte boundary (kept), one byte over (device part cut, suffix
+kept) and a cut that ends on a blank (blank trimmed).
+Repository: .gitattributes keeps every text file's line endings as stored
+("-text" for the CRLF Windows files, "eol=lf" for *.sh, *.yml, *.yaml,
+*.py), so the GitHub Actions runners execute the shell scripts with LF.
+release.yml refuses a tag build while the owner token is still present.
+
+58. HARDENING (0.9.8): EXCEPTION BARRIER, HOST VALIDATION, BOUNDED WAITS, TRACING
+--------------------------------------------------------------------------------
+Goal: whatever a host (or a dependency: Windows audio drivers, config.ini,
+the GitHub API) passes to the driver, the driver must answer with an error
+and keep the host process alive; it must never let a C++ exception, an
+out-of-bounds access or an unbounded wait reach the host. The audio engine
+and every valid call behave exactly as in 0.9.7. Findings and fixes:
+CODE-REVIEW.txt "0.9.8 hardening review" (H1-H32).
+
+58.1 Exception barrier (src/guard.h)
+  Every function the outside world calls is a C / COM / Win32 boundary. The
+  standard library reports allocation failure only by throwing, so
+  -fno-exceptions is impossible; instead each boundary catches everything:
+    IASIO methods         AsioCall (driver.cpp): the body is a lambda; any
+                          exception -> ASE_HWMalfunction (std::bad_alloc ->
+                          ASE_NoMemory), logged and traced. init() ->
+                          ASIOFalse with an error message.
+    IUnknown              QueryInterface null out pointer -> E_POINTER;
+                          Release() catches around teardown().
+    Class factory, DLL    CreateInstance (the constructor can throw through
+    exports               CrashInstall's allocations: now noexcept),
+                          DllGetClassObject, DllRegisterServer /
+                          DllUnregisterServer; LockServer never goes below 0.
+    Window procedures     registered as GuardedWndProc<P> (DefWindowProcW on
+                          an exception); the hidden message window catches
+                          inside (its WM_NCDESTROY bookkeeping always runs);
+                          the button subclass, the message-box CBT hook
+                          (CallNextHookEx) and the EnumWindows callbacks
+                          (GuardedEnumProc: stop enumerating) too.
+    COM callbacks         DeviceNotifier::forward (a failed allocation drops
+                          the event), VolumeCallback (nothing allocates),
+                          ActHandler (null operation checked).
+    Threads               audio thread (threadProc, outside the loop),
+                          update worker (kErrUnavailable), loopback
+                          activation (nothrow allocations), dump thread and
+                          hold thread (stack and Win32 only).
+    Destructor            ~WasapiBridge runs its work in a try block; the
+                          bookkeeping (critical section, crash protection
+                          reference, object count) runs in every case.
+    Control panel         the message loop of ShowControlPanel is wrapped,
+                          because its PanelState lives on that stack frame.
+    Log()                 noexcept (scope guard on the critical section; a
+                          failed allocation drops the line, never writes it
+                          unsanitized).
+  NoteException logs the first 16 contained exceptions and emits the
+  ExceptionContained event. The audio thread allocates nothing on the
+  real-time path, so the guard sits only at its thread procedure: no cost
+  while no exception is in flight (table-based unwinding).
+
+58.2 Host arguments and call order (src/asiocheck.h)
+  A pure header (no Windows, no ASIO SDK) holds every rule; driver.cpp maps
+  its results 1:1 to ASIOError (static_assert on the values) and
+  tests/asiocheck_test.cpp drives it with 200000 random calls.
+    State machine     Created -init-> Initialized -createBuffers-> Prepared
+                      -start-> Running. Before init: ASE_NotPresent. start
+                      before createBuffers: ASE_InvalidMode.
+                      getSamplePosition while stopped: ASE_SPNotAdvancing.
+                      outputReady: ASE_NotPresent. disposeBuffers (any
+                      state) and setClockSource(0) (also before init) answer
+                      ASE_OK as in 0.9.7 (independent review R2: hosts that
+                      dispose defensively must never see an error).
+    Rates             NaN, infinities, negative and non-standard rates:
+                      ASE_NoClock; setSampleRate(0) = no change.
+    createBuffers     callbacks present with bufferSwitch or
+                      bufferSwitchTimeInfo; size 32..4096 (any value: the
+                      preferred size of config.ini may be any value, so
+                      granularity -1 is advertised but other in-range sizes
+                      are accepted, as before); numChannels 1..nIn+nOut;
+                      every channel in range for its direction (isInput: any
+                      non-zero value is an input); no channel twice. All
+                      checks run BEFORE existing buffers are disposed.
+    Copy once         the host's ASIOCallbacks are copied into cbStore (the
+                      audio thread never follows the host's pointer again);
+                      the channel list is copied by CopyInfos, which reads
+                      each host field exactly once, and only the copy indexes
+                      the buffer tables; getChannelInfo and
+                      kAsioSetInputMonitor read their structures once. A host
+                      changing its memory concurrently cannot pass a check
+                      with one value and use another (TOCTOU).
+    Thread            setSampleRate, controlPanel and createBuffers are
+                      refused on the audio thread (they would wait for the
+                      thread itself or run a modal loop on it).
+    Private selector  WB_FUTURE_ENGINE_INFO (test tool) needs an EngineInfo
+                      header (magic + size); a host passing that selector
+                      value with any other buffer gets ASE_InvalidParameter
+                      instead of a 256-byte write.
+    Strings           getDriverName / getErrorMessage copy fixed sizes that
+                      fit asio.h's 32 / 124 bytes (static_assert).
+
+58.3 Untrusted device data
+  Mix formats are used only if writeOut / pullSource can handle them inside
+  the frame (DevFmtUsable: 1..1024 channels, block = channels x bytes, int
+  2/3/4 bytes, float 4 bytes); otherwise Windows converts (AUTOCONVERTPCM,
+  a format the driver builds itself). Periods and latencies
+  (REFERENCE_TIME) become frames through RefTimeFrames (clamped to 0..2^24;
+  the double -> UINT32 conversion of a huge or negative value was undefined
+  behavior). A device buffer of 0 or more than 2^20 frames is refused (main
+  output) or closes that source (inputs, extra outputs), and MultiFifo::init
+  clamps frames (2^22) and channels (1024), so no FIFO size computation can
+  overflow size_t on the 32-bit build. pullSource reads at most 256 capture
+  packets per wake-up.
+
+58.4 Waits
+  Wait                                  Bound    On timeout
+  ------------------------------------  -------  -----------------------------
+  stop(): audio thread end               10 s     thread marked stuck; its
+                                                  objects and buffers are kept
+                                                  (stuckAlive)
+  start(): audio thread still exiting    10 s     same (was INFINITE before)
+  run(): render event                    2 s x 5  ends the thread with
+                                                  HRESULT_FROM_WIN32(ERROR_TIMEOUT),
+                                                  reset requested (a device that
+                                                  stops signaling without a
+                                                  notification); WAIT_FAILED ends
+                                                  it at once (it used to be taken
+                                                  for a render event). Review
+                                                  R5: before ending, the device
+                                                  position (IAudioClock, or the
+                                                  Shared padding) sampled at each
+                                                  timeout is checked; if it moved,
+                                                  the count restarts (e.g. resume
+                                                  from Modern Standby)
+  process-loopback activation            3 s / 8 s  E_ABORT
+  crash handler on the faulting thread   5 s      returns (no dump)
+  dump thread: request / quit events     INFINITE  by design: no device IO, quit
+                                                  always signaled by the last
+                                                  CrashUninstall
+  update worker (WinHTTP)                10/10/15/30 s per operation, 2 / 10 min
+                                                  per job; cancellable
+  HoldThread WaitForInputIdle            10 s
+  Not boundable: the IAudioClient calls themselves (Initialize, Start, Stop,
+  Reset) have no timeout parameter; a hung Windows audio driver blocks the
+  calling thread inside Windows. On the audio thread this is covered by the
+  10 s stop() bound; on the host thread nothing can be done. SendMessageW to
+  the hidden window from another thread (monitor / tray destruction) waits
+  for the host's UI thread; a timeout there would let a window outlive the
+  driver (use after free), so it is kept.
+
+58.5 Notifications without use after free
+  DeviceNotifier and VolumeCallback hold an SRW lock shared while they use
+  their owner; detach() takes it exclusively and clears the owner. Once
+  detach() returns no callback is inside the driver, so the driver can be
+  destroyed even while Windows delivers a notification. Before, a callback
+  could load the owner pointer, lose the CPU, and use it after the driver had
+  been freed. Release() also sets `dying` on every thread now, so the hidden
+  window ignores the object while it is being destroyed.
+
+58.6 Lock order (no ABBA)
+  DeviceNotifier::lock -> evLock;  VolumeCallback::lock -> volLock;
+  any -> g_logCs (Log never takes another lock);  g_installLock (crash) ->
+  none of the driver's locks;  instance registry lock -> none (tryAddRef is
+  atomic). H never holds evLock, volLock or g_logCs while it takes a
+  callback lock (detach runs with no lock held), and no lock is held while
+  calling the host (asioMessage) or WASAPI register/unregister functions.
+  The audio thread takes no lock at all.
+
+58.7 Tracing (src/trace.h, trace.cpp, tlg.h; TRACING.txt)
+  The DLL is a TraceLogging (self-describing ETW) provider:
+    name "WASAPIDriverForASIO", GUID {52b9f111-957d-5973-b76d-97bdf8f813df}
+    = the EventSource / TraceLogging name hash of the name (SHA-1 over the
+    namespace 482C2DB2-C390-47C8-87F8-1A15BFC130FB + the upper-case name in
+    UTF-16BE; tests/trace_test.cpp checks the constant and the algorithm
+    against GUIDs Microsoft publishes; PowerShell check:
+    [System.Diagnostics.Tracing.EventSource]::new("WASAPIDriverForASIO").Guid).
+  Microsoft's TraceLoggingDynamic.h (MIT) was evaluated and not used: it does
+  not compile with mingw-w64 (MSVC SAL annotations) and builds events in heap
+  vectors. tlg.h encodes the documented format in fixed stack buffers
+  (provider traits, event metadata, payload; channel 11; descriptors of type
+  2 and 1), trace.cpp registers with EventRegister (+ EventSetInformation
+  provider traits, resolved at run time) and writes with EventWriteTransfer.
+  Registration happens on the first class-factory request or driver object
+  (never in DllMain); EventUnregister runs in DllMain on a dynamic unload.
+  Enabled() is one atomic load when no session listens; WB_TRACE evaluates
+  its arguments only after it. Levels: 1 critical .. 5 verbose. Keywords:
+  0x1 lifecycle, 0x2 ASIO calls, 0x4 devices, 0x8 streams, 0x10 resets,
+  0x20 errors, 0x40 statistics, 0x80 crash protection, 0x100 panel,
+  0x200 update check.
+  Events: DriverLoaded / DriverUnloaded / DriverCreated / DriverDestroyed,
+  AsioInit, AsioCall (every IASIO call on a non-real-time thread: method,
+  result), AsioBuffers, DevicesResolved (names sanitized, Id as a short
+  hash), DeviceNotification, OutputOpen / InputOpen / LoopbackOpen /
+  ExtraOutputOpen / StreamsClosed, ExclusiveFormatRefused, CaptureOpenFailed,
+  ResetRequest / ResetPending, DriverError, AudioThreadEnded,
+  AudioThreadStuck, ExceptionContained, Stats (every 10 s from the hidden
+  window's timer on the host thread, and once at stop: callback count,
+  glitches, timeouts, under/overruns, DSP load, drift; counters only),
+  CrashProtectionInstalled, SafeMode, CrashMarkerCleared, CrashDump (written
+  by the dump thread, code and module offset only), PanelOpen / PanelClose /
+  PanelApply, UpdateCheck / UpdateDownload (error code and tag only).
+  The audio thread never writes an event. No audio sample, level or meter
+  value, no file path, no user or computer name is ever traced.
+  Source-Code/trace/WasapiDriver.wprp: an EventCollector of its own (64 KB
+  buffers, at most 32 MB) for this provider at level 5, and a separate
+  collector (at most 64 MB) for Microsoft-Windows-Audio at level 4, so the
+  audio service's volume can never evict the driver's events; profiles
+  WasapiDriver.Verbose.Memory and WasapiDriver.Verbose.File. "Start trace.bat"
+  / "Stop trace.bat" run wpr.exe (elevated).
+
+58.8 Tests and the release gate
+  tests/run_all.sh builds and runs every offline test; build.yml runs it, and
+  release.yml runs it in a "tests" job that every other job needs, so nothing
+  is built, signed or published unless all tests pass. New in 0.9.8:
+    fuzz_test       ASan + UBSan + libstdc++ assertions, fixed seeds,
+                    180000 iterations: config.ini sections (every key),
+                    normalization, UTF-16 decode, double-NUL lists, host
+                    profiles, OutputMap, names, update JSON / versions /
+                    sums / URL rules, SanitizeText, channel names, trace
+                    encoder. The parsers live in pure headers for this
+                    (src/parse.h, cfgtypes.h; privacy.h's text functions).
+    asiocheck_test  the rules of 58.2, a state-machine scaffold with 200000
+                    random host calls, and the read-once (TOCTOU) property.
+    trace_test      SHA-1 vectors, the name-hash GUID (published Microsoft
+                    GUIDs and this provider's constant), exact event bytes,
+                    truncation and overflow handling.
+  WasapiDriverTest.exe T11 calls the real driver with invalid arguments and
+  in the wrong order (no audio) and checks every error code and that the
+  driver still reports what T1 saw; it runs right after T1 so T2..T10 prove
+  the driver still plays normally.

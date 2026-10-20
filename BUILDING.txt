@@ -1,0 +1,284 @@
+WASAPI Driver for ASIO 0.9.8 - Source code and building
+=======================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Building (Linux or WSL, cross-compiling)
+----------------------------------------
+  x64:   sh build.sh          needs g++-mingw-w64-x86-64   -> WasapiDriver64.dll
+  ARM64: sh build-arm64.sh    needs pip install ziglang    -> WasapiDriverARM64.dll
+  x86:   sh build-x86.sh      needs g++-mingw-w64-i686     -> WasapiDriver32.dll
+  Diag:  sh build-diag.sh     needs g++-mingw-w64-x86-64   -> WasapiDriverDiag.exe
+  Test:  sh build-test.sh     needs g++-mingw-w64-x86-64   -> WasapiDriverTest.exe
+  File prefix: WasapiDriver; product name "WASAPI Driver for ASIO".
+  All builds use -Wall -Wextra and must produce 0 warnings from src/.
+  Builds use -ffile-prefix-map / -fmacro-prefix-map (no build path is
+  embedded) and are stripped (-s).
+  Option: WB_FLAGS="-DWB_SHOW_ASIO_LOGO=0" sh build.sh (same for the other
+  scripts) builds without the Steinberg ASIO Compatible logo; the default
+  (1) embeds and shows it (see TRADEMARKS.txt).
+  The mingw "win32" thread model is used (the Ubuntu default), so the DLLs
+  need no mingw runtime DLLs; every import is a Windows system DLL.
+
+Installer
+  Needs installer/lang_en.nsh, lang_es.nsh, header.bmp, welcome.bmp and
+  app.ico (a copy of src/res/app.ico) next to the .nsi.
+  makensis -DVERSION=0.9.8 installer/WasapiDriver.nsi (nsis package), with
+  the 3 DLLs, WasapiDriverDiag.exe, WasapiDriverTest.exe, LICENSE.txt and
+  the documents README.txt, QUICK-START.txt, FAQ.txt, COMPATIBILITY.txt,
+  TEST-GUIDE.txt, COPYRIGHT.txt,
+  THIRD-PARTY-NOTICES.txt, TRADEMARKS.txt, DISCLAIMER.txt, PRIVACY.txt,
+  SECURITY.txt and CONTRIBUTING.txt in the parent folder of installer/
+  (NOTICES.txt goes next to the .nsi). 0.9.8: also TRACING.txt in that folder
+  and trace/WasapiDriver.wprp, "trace/Start trace.bat" and
+  "trace/Stop trace.bat" below it (installed into <program folder>\Tracing). Produces
+  WASAPI-Driver-for-ASIO-<version>-Setup.exe in that parent folder.
+  Optional: -DSIGN_CMD="sh <repo>/scripts/sign.sh" signs the Setup and its
+  uninstaller (!finalize / !uninstfinalize); see SIGNING.txt.
+
+ARM64X (experimental, 0.8.0)
+  One DLL with native ARM64 and ARM64EC code. Needs MSVC (cl /arm64EC and
+  link /machine:arm64x); the Linux toolchains cannot produce ARM64EC code.
+  Built only by the "arm64x" job of .github/workflows/release.yml on a
+  Windows 11 ARM64 runner; see ARCHITECTURE.txt section 40.
+
+Offline tests (Linux, plain g++)
+  0.9.8: sh tests/run_all.sh builds and runs ALL of them (18) and prints a
+  summary; exit code 0 only if every test passed. CI (build.yml) runs it, and
+  release.yml runs it in a "tests" job that every other job depends on: no
+  release is built unless all tests pass. Run it before every release.
+  New in 0.9.8 (built with -fsanitize=address,undefined
+  -fno-sanitize-recover=all -D_GLIBCXX_ASSERTIONS; SAN=0 sh tests/run_all.sh
+  without the sanitizer libraries):
+    fuzz_test       deterministic fuzzing of every parser of untrusted data
+                    (src/parse.h, update.h, privacy.h, chnames.h, tlg.h);
+                    optional argument: iteration multiplier
+    asiocheck_test  host argument validation and call order (src/asiocheck.h)
+                    with 200000 random host calls
+    trace_test      TraceLogging encoder and provider GUID (src/tlg.h, trace.h)
+  Single test by hand:
+  g++ -O2 -std=c++17 -Wall -Wextra tests/<name>.cpp -o t && ./t
+  for resampler_test, sink_test, dmix_test, limiter_test, chnames_test,
+  visuals_test (add -D_GLIBCXX_ASSERTIONS: bounds-checked; --dump <folder>
+  writes preview images), timeinfo_test (-pthread), strings_test,
+  themes_test, update_test, registry_test (-pthread), icon_test (from the
+  source root), fixedratio_test (0.9.4, about 30 s), ratepolicy_test (0.9.5);
+  live_test also needs -pthread. Exit code 0 = passed (most also print
+  RESULT: PASSED or FAILED).
+
+Releases
+  .github/workflows/release.yml (tag v<version>) and RELEASING.txt.
+
+Offline tests (Linux, no Windows needed)
+  sh tests/run_all.sh                      all 18 tests (0.9.8)
+  g++ -O2 -std=c++17 tests/resampler_test.cpp -o rt && ./rt
+  g++ -O2 -std=c++17 tests/sink_test.cpp -o st && ./st
+  g++ -O2 -std=c++17 tests/dmix_test.cpp -o dt && ./dt
+  g++ -O2 -std=c++17 -pthread tests/live_test.cpp -o lt && ./lt
+
+CI
+  .github/workflows/build.yml (GitHub Actions, ubuntu-latest) builds the
+  three DLLs and both tools, runs every offline test (tests/run_all.sh) and
+  builds the installer. release.yml builds nothing until its "tests" job
+  (the same script) has passed.
+
+Toolchain details
+  C++17. DLL libraries: ole32 uuid avrt winmm shell32 user32 advapi32 gdi32
+  (0.9.8: ETW functions EventRegister / EventUnregister / EventWriteTransfer
+  come from advapi32; EventSetInformation is resolved at run time because the
+  32-bit mingw import library lacks it). DLL sources: dll.cpp driver.cpp
+  config.cpp panel.cpp crash.cpp update.cpp trace.cpp.
+  Diagnostics libraries: ole32 uuid avrt advapi32 shell32 user32 (-municode,
+  wmain; user32 since 0.9.3 for the console icon).
+  Test libraries: ole32 uuid advapi32 shell32 user32 (-municode, wmain);
+  the test tool also compiles src/config.cpp (it saves latency offsets with
+  the driver's own config writer).
+  dbghelp.dll is never linked: the driver loads it at runtime (crash.cpp).
+  Resources (src/WasapiDriver.rc): windres for x86/x64, zig rc for ARM64.
+
+Source files
+------------
+src/common.h          Shared declarations: version (WB_VERSION_*), names
+                      (WB_NAME_W, WB_OLDNAME_W, WB_FILEBASE_W), Config,
+                      LoopbackMode / DriftMode / ResamplerQ, configuration,
+                      profile and log API.
+src/config.cpp        config.ini (UTF-16LE) load/save, profiles
+                      ([Profile:name], engine-only or with devices), factory
+                      profiles, migrations (old settings folder, old profile
+                      sections), diagnostic log with rotation.
+src/driver.h          WasapiBridge class (IASIO implementation) and its
+                      helpers: MultiFifo, InputSource, OutputSink,
+                      VolumeCallback, DeviceNotifier, StatusInfo,
+                      MeterSnapshot, reset reasons.
+src/driver.cpp        The engine: hidden message window (asioMessage
+                      marshalling), device resolution, WASAPI stream
+                      opening, the real-time audio thread, resampling and
+                      drift correction, extra devices, alignment, routing,
+                      monitoring, process loopback, meters and DSP load.
+src/drift.h           PI drift controller (PiUpdate) and sink write plan
+                      (SinkFramesToWrite, SinkTargetPad, SinkSetpoint);
+                      used by driver.cpp and tests/sink_test.cpp.
+src/sinc.h            Polyphase sinc table (Kaiser) and interpolated
+                      coefficients; used by driver.cpp and
+                      tests/resampler_test.cpp.
+src/appdir.h          Per-user settings folder with its fallback chain
+                      (AppData, LocalAppData, TEMP), shared by config.cpp
+                      and diag.cpp (0.9.6).
+src/privacy.h         SanitizeText (masks user folders, user and computer
+                      names in printed text) and ShortHash (FNV-1a hash of
+                      device Ids); used by the DLL, diag and test tools.
+src/live.h            SeqPublished<T>: lock-free publication of the LIVE
+                      settings from the host thread to the audio thread.
+src/dmix.h            Direct-monitoring mixer primitives (ramps, pan law,
+                      soft clipper, denormal flush).
+src/limiter.h         Hearing-safety output limiter (0.8.0).
+src/chnames.h         ASIO channel-name rules (short device name, speaker
+                      position, 31 characters, unique; 0.8.0).
+src/visuals.h         Panel background renderer (plasma, starfield, copper,
+                      tunnel, reactive, scroller; 0.8.1).
+src/crash.h, src/crash.cpp
+                      Crash protection: vectored handler, minidump thread,
+                      crash marker (safe mode).
+src/panel.cpp         Control panel, floating monitor window and tray icon
+                      (plain Win32, dark theme, tabs, meters, profiles,
+                      routing dialog, WIC logo, per-monitor DPI).
+src/dll.cpp           DllMain, COM class factory, DllRegisterServer /
+                      DllUnregisterServer.
+src/WasapiBridge.def  DLL exports (the 4 COM entry points).
+src/WasapiDriver.rc   RCDATA 101 (ASIO Compatible logo) and VERSIONINFO.
+src/res/asio-compatible-logo-white.png
+                      Steinberg artwork, unmodified.
+src/diag.cpp          WasapiDriverDiag.exe (console, read-only report).
+src/hosttest.cpp      WasapiDriverTest.exe (ASIO test host, T1-T11; T8
+                      latency test with --latency).
+tests/resampler_test.cpp  Offline Hermite vs sinc test and read bounds.
+tests/sink_test.cpp   Offline simulation of an extra output's PI loop.
+tests/dmix_test.cpp   Offline test of the direct-monitoring mixer.
+tests/live_test.cpp   Offline two-thread test of the live-settings seqlock.
+tests/limiter_test.cpp  Offline limiter test (overshoot, denormals, clicks).
+tests/chnames_test.cpp  Offline channel-name test.
+tests/visuals_test.cpp  Offline renderer test (bounds, hash, frame time).
+tests/timeinfo_test.cpp Offline test of the test host's ASIOTime check.
+src/tichk.h           ASIOTime validation per test phase (test host).
+src/themes.h          Color themes (0.9.0).
+src/strings.h, src/strings_ids.inc, src/strings_en.h, strings_es.h,
+strings_pt.h, strings_fr.h, strings_de.h
+                      Interface languages (0.9.0).
+src/update.h, src/update.cpp
+                      Optional update check (0.9.0; update.cpp is part of the
+                      DLL builds).
+installer/lang_en.nsh, installer/lang_es.nsh
+                      Installer strings (English, Spanish; UTF-8 with BOM).
+src/guard.h           0.9.8: exception barrier (NoteException, GuardedWndProc,
+                      GuardedEnumProc).
+src/asiocheck.h       0.9.8: validation of host arguments and call order
+                      (pure; tests/asiocheck_test.cpp).
+src/parse.h, src/cfgtypes.h
+                      0.9.8: pure parsers of config.ini values, OutputMap and
+                      names; the Config structure without Windows headers
+                      (fuzzed by tests/fuzz_test.cpp).
+src/trace.h, src/trace.cpp, src/tlg.h
+                      0.9.8: TraceLogging provider "WASAPIDriverForASIO"
+                      (trace.cpp: registration and writing, DLL only) and the
+                      portable event encoder (tlg.h; tests/trace_test.cpp).
+trace/WasapiDriver.wprp, trace/Start trace.bat, trace/Stop trace.bat
+                      0.9.8: Windows Performance Recorder profile and helpers
+                      (TRACING.txt).
+tests/fuzz_test.cpp, tests/asiocheck_test.cpp, tests/trace_test.cpp,
+tests/run_all.sh      0.9.8: see "Offline tests".
+tests/strings_test.cpp, tests/themes_test.cpp, tests/update_test.cpp
+                      Offline tests of the 0.9.0 features (update_test also
+                      covers the 0.9.1 SemVer and host rules).
+src/registry.h        Locked registry of driver instances (0.9.1).
+src/a11y.h            Accessibility of the owner-drawn controls (0.9.1).
+src/res/app.ico, src/res/icon-256.png
+                      Application icon (0.9.3), generated by
+                      scripts/make_icon.py (Pillow; python3
+                      scripts/make_icon.py [--previews <folder>]).
+src/tools.rc, src/conicon.h
+                      Icon resource and console icon of the two tools;
+                      tools.rc also holds their version information (0.9.6;
+                      build-test.sh passes -DWB_TOOL_TEST to windres).
+src/trayicon.h        Tray status dot composition (0.9.3).
+tests/icon_test.cpp   Offline test of app.ico and the tray icons (run from
+                      the source root; --dump <folder> writes PAM images).
+src/fixedratio.h      Fixed-ratio sample-rate converter (0.9.4, sinc /
+                      Hermite, exact rational ratio).
+src/sched.h           Timing model of the audio thread (0.9.4): block
+                      timestamps, latency formulas, offline simulation.
+src/ratepolicy.h      Sample-rate precedence across resets, instances and
+                      sessions (0.9.5).
+tests/ratepolicy_test.cpp
+                      Offline test of that precedence (0.9.5).
+tests/fixedratio_test.cpp
+                      Offline test of the converter (SNR, pass / stop band,
+                      CPU), its quality policy and log text (0.9.6: sinc
+                      whenever the CPU budget allows) and the scheduling model (10 simulated minutes per
+                      case, measured round trip).
+src/panel_ids.h, src/tips.h
+                      Control ids and the help-tip table (0.9.2; checked by
+                      tests/strings_test.cpp).
+tests/registry_test.cpp  Offline registry test with threads (0.9.1;
+                      g++ -O2 -std=c++17 -pthread).
+installer/header.bmp, installer/welcome.bmp
+                      ASIO Compatible logo for the installer pages (0.9.1),
+                      made from src/res/asio-compatible-logo-white.png
+                      (proportions kept, dark background).
+third_party/asiosdk/  asio.h, asiosys.h, iasiodrv.h, LICENSE.txt (Steinberg
+                      ASIO SDK 2.3.4, GPLv3 option). Unmodified.
+                      (0.9.8: Microsoft's TraceLoggingDynamic.h was evaluated
+                      for the tracing and is NOT included: it does not compile
+                      with mingw-w64; src/tlg.h implements the documented
+                      format instead. No other third-party source is used.)
+build.sh, build-x86.sh, build-arm64.sh, build-diag.sh, build-test.sh
+                      Build scripts (obj/ is a temporary folder).
+installer/WasapiDriver.nsi  NSIS installer script.
+installer/NOTICES.txt Notices page shown by the installer.
+.github/workflows/build.yml  CI.
+.github/workflows/release.yml  Release build (tags v*), signing hooks,
+                      ARM64X job, draft GitHub Release (RELEASING.txt).
+.github/ISSUE_TEMPLATE/  Issue forms (problem report, idea).
+manifests/            winget manifest templates, winget-pkgs layout
+                      manifests/<letter>/<owner>/WASAPIDriverForASIO/<version>/
+                      (InstallerSha256 filled in at release time).
+scripts/sign.sh       Optional Authenticode signing (SIGNING.txt).
+.gitignore            Build outputs git must not track.
+.gitattributes        Line endings kept as committed (0.9.7): CRLF for the
+                      Windows text files, LF for *.sh / *.yml / *.yaml /
+                      *.py / .gitignore / src/strings_ids.inc; binaries
+                      untouched.
+
+Repository owner (0.9.7)
+------------------------
+Until the project's GitHub account is filled in, the update source
+(WB_UPDATE_REPO in src/common.h), the documents' links, the issue chooser
+and the winget manifests use an owner token whose name contains the word
+PLACEHOLDER. Builds made that way are safe: upd::IsPlaceholderRepo treats
+such an owner as "not configured", so the update check sends nothing. See
+RELEASING.txt step 0 for the substitution; rebuild afterwards.
+
+Documentation
+-------------
+README.txt            User manual.
+VERSION.txt           Build information and full changelog.
+ARCHITECTURE.txt      Internal design (threading model, algorithms,
+                      constants).
+CODE-REVIEW.txt       Defects found and fixed in every review.
+TEST-GUIDE.txt        Test plan for real hardware.
+TRACING.txt           Diagnostic tracing (ETW): recording, contents, privacy
+                      (0.9.8).
+ROADMAP.txt           Next steps.
+RELEASING.txt         Step-by-step release procedure (maintainers).
+SIGNING.txt           Code-signing options (maintainers).
+COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt, TRADEMARKS.txt, DISCLAIMER.txt,
+PRIVACY.txt, SECURITY.txt, CONTRIBUTING.txt
+                      Legal documents (information only, not legal advice).
+install.bat / uninstall.bat  Portable installation scripts.
+
+Internal names
+--------------
+The C++ class is still called WasapiBridge, the window classes are
+WasapiBridgeMsg / WasapiBridgePanel / WasapiBridgeMeter / WasapiBridgeName /
+WasapiBridgeRoute / WasapiBridgeMonitor / WasapiBridgeTray (WasapiBridgeTestHost in the test tool) and the export
+file is WasapiBridge.def. These names are never shown to users and are kept
+to avoid needless churn; the product name is "WASAPI Driver for ASIO".

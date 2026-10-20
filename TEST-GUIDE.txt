@@ -1,0 +1,804 @@
+WASAPI Driver for ASIO 0.9.8 (public beta) - Test guide
+=======================================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Goal: validate on real Windows hardware what cannot be tested at build time.
+Report format: test number + OK/FAILED + (if it failed) what happened.
+When done: close the DAW, panel > Status > "Open log" (or open
+%APPDATA%\WASAPI Driver for ASIO) and attach log.txt and log-previous.txt to
+the report.
+
+Preparation
+-----------
+P0  Install WASAPI-Driver-for-ASIO-0.9.8-Setup.exe (README section 3).
+    OK = it finishes without errors and "WASAPI Driver for ASIO" appears in
+    the DAW.
+
+Block H - Automatic test (run first, before the manual blocks)
+--------------------------------------------------------------
+Since 0.8.3 every test prints an "ASIOTime (<test>):" line; each must say
+"null 0, no samplePosition 0, no systemTime 0, bad sampleRate 0", and the
+T7 line "ASIOTime over the whole run" must say "invalid fields 0". If not,
+the test fails and T7 lists the first 8 invalid callbacks: send that part
+of WasapiDriver-test.txt. T6 also prints the rate fresh driver instances
+start at (the SampleRate of config.ini).
+0.9.8: T11 "Bad host calls" runs right after T1: it calls the driver with
+invalid arguments and in the wrong order (no sound) and must say "every
+invalid call returned the expected error; driver unchanged"; the tests after
+it then show that the driver still plays normally.
+H1  Close the DAW. Start menu > WASAPI Driver for ASIO > "WASAPI Driver for
+    ASIO Automatic test". Wait ~2 minutes (nothing is heard: it sends
+    silence).
+    OK = last line "RESULT: PASSED" (it may add ", N warnings": note them).
+    SKIPPED tests are not failures (they do not apply to this computer). If
+    it says "FAILURES = N", attach WasapiDriver-test.txt (the console shows
+    where it was saved).
+H2  Repeat H1 with the panel in Exclusive mode (open the panel from the
+    DAW, Apply, close the DAW).  OK = PASSED. Switch back to Shared
+    afterwards.
+H3  (Optional, needs a cable) Connect output 1 -> input 1 of the sound card,
+    TURN THE VOLUME DOWN, Start menu > "WASAPI Driver for ASIO Latency test
+    (cable)", press Enter when asked.
+    OK = T8 PASSED (SKIPPED if input 1 is not physical). Note the median and
+    "Difference (measured - reported)". If |difference| > 1 ms, report it
+    (pending adjustment, ROADMAP 1.3).
+
+Block A - Basics (Shared)
+-------------------------
+A1  Panel: Mode Shared, "Low latency in Shared" on, buffer 256 > Apply and
+    restart.
+    OK = the DAW reopens by itself; the status shows "Shared low latency" or
+    "Shared standard"; reasonable latencies (< 30 ms).
+A2  Play a project for 5 minutes.
+    OK = no dropouts; "Output glitches" = 0.
+A3  Raise/lower the Windows volume and mute.
+    OK = the level changes; mute silences.
+A4  YouTube playing at the same time.  OK = both are heard.
+A5  Change the project sample rate 48k -> 44.1k -> 48k.
+    OK = it keeps playing at both; no hang.
+A6  Buffer 64 > Apply. Play for 2 min.  OK = no dropouts or only a few (note
+    "Output glitches"). Back to 256.
+
+Block B - Exclusive
+-------------------
+B1  Panel: Mode Exclusive > Apply.
+    OK = status "Exclusive"; output latency lower than in A1.
+B2  Play for 5 min.  OK = no audible dropouts.
+B3  Stop and resume playback 10 times in a row.
+    OK = it always plays again; the DAW does not reset by itself (this
+    failed before 0.2.2).
+B4  Windows volume.  OK = the level changes.
+B5  YouTube.  OK = YouTube is NOT heard (correct in Exclusive mode).
+B6  Back to Shared.
+
+Block C - Inputs
+----------------
+C1  Panel: Main tab > Input device = microphone. Record 30 s of speech.
+    OK = the voice is heard, without clicks.
+C2  If the microphone is a different device from the output (USB/HDMI):
+    record 5 min of a tone or music through the microphone.
+    OK = no clicks; the status shows "Input drift: +-N ppm (correcting)".
+C3  Enable ASIO Direct Monitoring in the DAW and monitor the track.
+    OK = the voice is heard with little delay; status "Direct monitoring:
+    on".
+
+Block D - Loopback
+------------------
+D1  Panel: Loopback = "Everything except this DAW" > Apply. Create a
+    Loopback L/R input bus. Play YouTube and record 1 min in the DAW.
+    OK = YouTube is recorded; monitoring the track gives no echo.
+D2  Loopback = "All audio of the output device".
+    OK = YouTube is recorded and so is the DAW (do not monitor).
+
+Block E - Stability
+-------------------
+E1  With the DAW playing, unplug and plug back headphones/USB.
+    OK = the DAW reopens the driver by itself; it does not crash.
+E2  Same as E1 but with the panel open.
+    OK = the DAW does not crash (this could crash Cubase before 0.2.2).
+E3  Change the default device in Windows with output "(Windows default)".
+    OK = the audio moves to the new device.
+E4  Open and close the panel 10 times, alternating Apply and Cancel.
+    OK = no hangs; the DAW stays in front.
+E5  Close the DAW with the panel open.
+    OK = the DAW closes normally.
+E6  Long session: 1 hour of playback.
+    OK = no dropouts; note the status counters at the end.
+
+Block F - Other DAWs (optional)
+-------------------------------
+F1  Ableton Live: A1, A2, C1.
+F2  REAPER: A1, A2, C1.
+
+Block G - Meters, load and diagnostics (0.3.0)
+----------------------------------------------
+G1  Play a project with the panel open.
+    OK = the "Outputs" bars move with the music; the white line holds the
+    peak ~1.5 s; unused channels in gray.
+G2  Speak into the microphone (input active in the DAW) and, with Loopback
+    on, play YouTube.  OK = the "Inputs" bars of the microphone and of
+    Loopback L/R move.
+G3  Raise the DAW master to +6 dB and play.  OK = the red clip indicator of
+    the outputs lights up and stays on after lowering the master. Click the
+    meters: OK = it turns off.
+G4  "DSP load" during playback.  OK = reasonable values (note now/max).
+    Load several heavy plugins: OK = the value rises.
+G5  "Reset counters" during playback.
+    OK = max load, glitches, timeouts, input counters and clips go back to
+    0; the audio does not stop; the DAW does not reset.
+G6  Exclusive, buffer 64, play for 2 min and force load (open heavy
+    programs, move windows).  OK = if dropouts are heard, "Output glitches"
+    increases (before 0.3.0 it stayed at 0 in Exclusive mode). Without
+    audible dropouts in 2 min with buffer 256: note the value (should be 0
+    or almost 0).
+G7  Exclusive: stop and resume 10 times.  OK = "Output glitches" does not
+    increase just by starting (no false positives at start).
+G8  Start menu > WASAPI Driver for ASIO > WASAPI Driver for ASIO
+    Diagnostics.
+    OK = a console opens with the report, says where it saved
+    WasapiDriver-diagnostics.txt and waits for Enter. The report shows the
+    Windows version, the registration "present" in 64-bit and 32-bit with
+    "DLL file: exists", the devices with their Exclusive formats, and the
+    current config.ini and log.txt.
+G9  Uninstall.  OK = the Start menu shortcuts disappear.
+
+Block I - 0.4.0 features
+------------------------
+I1  Profiles: open the panel. OK = the "Profile" combo lists Studio, Laptop
+    and Streaming (new installation or first time).
+I2  Select "Laptop" > Apply.  OK = the status shows Shared and
+    buffer 256; reopen the panel: the combo shows "Laptop".
+I3  Change the buffer to 512 > "Save..." > name "Test" > Save.
+    OK = "Test" appears in the combo. Select another profile and then
+    "Test": the buffer is 512 again. "Delete" with "Test" selected: it
+    disappears.
+I4  "Save..." with the name "a[b]" or "x=y".  OK = invalid name warning,
+    nothing saved.
+I5  Application loopback: play music in Spotify (or the browser). Panel:
+    Loopback = "One application only"; the "Application" row appears;
+    "Refresh" and select the program > Apply. Record Loopback L/R for 30 s
+    with another program playing at the same time (e.g. a video in another
+    browser).
+    OK = only the selected program is recorded.
+I6  Close the selected program and "Apply".  OK = the DAW does
+    not crash; Loopback is silent; log.txt says the program is not running.
+    Open the program again and "Apply": it is recorded again.
+I7  Dither: Exclusive on a 16-bit or 24-bit card (the status shows "int16"
+    or "int24"/"int32" in Output). OK = status "Dither: TPDF". Play silence
+    (empty project): no new noise must be heard. Uncheck Dither > Apply:
+    status "Dither: no".
+I8  Sinc resampling: a microphone on another device (as in C2). Resampler
+    quality = Sinc > Apply.  OK = status "Resampler: sinc"; the reported
+    input latency rises by ~0.3 ms (16 samples at 48 kHz); record 5 min of
+    music or a 15 kHz tone through the microphone: no clicks. Note "DSP
+    load" with Hermite and with Sinc.
+I9  Repeat the automatic test (H1) with Sinc and with an Exclusive profile.
+    OK = PASSED.
+
+Block J - Extra devices and routing (beta 0.5.0)
+------------------------------------------------
+Needs two output devices (e.g. built-in speakers + USB or Bluetooth
+headphones) and, for J4, two input devices.
+J1  Panel: main output device = A; Extra devices & monitoring tab, "Extra devices": select B under
+    Outputs > Apply.  OK = the DAW shows outputs "1:Out L",
+    "1:Out R", "2:Out L", "2:Out R"; the status has the line
+    "Output 2: B ...".
+J2  Route one track to 2:Out L/R and another to 1:Out L/R; play for 10 min.
+    OK = both play without clicks; "Output 2" with stable drift (note the
+    ppm) and underflow/overflow at 0 (or 1 at start).
+J3  With J2 playing, unplug B (USB/Bluetooth).  OK = the DAW reopens the
+    driver; A keeps working; the 2:* channels exist but are silent. Plug B
+    back: the DAW reopens again and B plays again.
+J4  Inputs: select a second microphone under Inputs > Apply.  OK = inputs
+    "2:In ..." before Loopback; record 1 min of both at once: no clicks;
+    status "Input 2" correcting drift.
+J5  Select 4 outputs.  OK = the fourth cannot be selected (beep).
+J6  Routing: (if an extra device was just selected without applying, the
+    dialog says so and already shows the new channels). "Output
+    routing..." on a 2-channel output: Channel 1 <- 2, Channel 2 <- 1 > OK >
+    Apply.  OK = left and right swapped. "Identity" > OK > Apply: back to
+    normal.
+J7  Routing with one channel on "Silence".  OK = that side is silent.
+J8  Save a profile with extra devices and routing and "Include devices"
+    checked, select another profile and come back.  OK = the selections and
+    the routing come back.
+J9  Automatic test (H1) with an extra device selected.  OK = PASSED with T9
+    PASSED; note the "stop:" line of the log with the counters.
+J10 Input alignment: "Align devices" on. Record through the main microphone
+    and an extra one at the same time, placed together, a clap or sharp
+    knocks (or the metronome through the speakers).  OK = in the DAW the
+    transients of both tracks match within ~1 ms (zoom to sample level).
+    Note the difference. Repeat with alignment off: the difference must be
+    larger.
+J11 Output alignment: metronome sent to 1:Out and 2:Out at the same time,
+    speakers next to each other.  OK = a single click is heard (not a
+    double one). Turn alignment off: a double click is heard (the extra
+    device later). Status: "Alignment" and "own latency" lines with
+    reasonable values.
+
+Block K - Panel window (0.5.1)
+------------------------------
+K1  Cubase: Studio Setup > WASAPI Driver for ASIO > Control Panel. With the
+    panel open, switch to another program (Alt+Tab or the taskbar) and back
+    to Cubase.  OK = the panel stays in front of Studio Setup; if it is not
+    visible, it has its own taskbar and Alt+Tab entry and comes back with a
+    click. Close the panel: Studio Setup responds again.
+    Repeat with "Save..." and "Output routing..." open before switching
+    programs.  OK = the dialog stays in front of the panel.
+K2  "Copy status" and paste into Notepad.  OK = the status text appears
+    (with the version on the first line and the extra device lines).
+K3  (Optional) Settings > Privacy & security > Microphone: turn off access
+    for desktop apps; reopen the driver with an input selected.  OK = the
+    DAW does not crash, the output plays, the status says "Input blocked by
+    Windows privacy settings" and log.txt explains it. Turn access back on.
+
+Block L - New name, interface and profiles (0.6.0)
+--------------------------------------------------
+L1  With 0.5.1 (WasapiBridge) installed, install 0.6.1 on top.  OK = the
+    DAW lists "WASAPI Driver for ASIO" and no longer "WasapiBridge"; the
+    WasapiBridge folder is gone from %ProgramFiles%; the Start menu has the
+    "WASAPI Driver for ASIO" folder and not the old one; Settings > Apps no
+    longer lists WasapiBridge. Select the driver in the DAW once.
+L2  Open the panel.  OK = the previous settings are kept (output, input,
+    buffer, profiles) and %APPDATA%\WASAPI Driver for ASIO\config.ini
+    exists; %APPDATA%\WasapiBridge still exists (it is not deleted). The old
+    factory profiles now appear as Studio, Laptop and Streaming; your own
+    profiles keep their names.
+L3  Diagnostics (Start menu).  OK = "Driver registration" present in 64-bit
+    and 32-bit with the new name; "Leftovers of the previous version:
+    None."
+L4  Interface: dark window and title bar; ASIO Compatible logo at the top
+    right; tabs Main / Advanced / Devices / Status / About.  OK = every
+    control readable (light text on a dark background, dark combos and
+    lists), buttons highlight on hover, toggles switch with a click, with a
+    fast double click (two changes) and with Space.
+L5  Keyboard: Ctrl+Tab and Ctrl+Shift+Tab.  OK = they move to the next /
+    previous tab; after switching, Tab moves through the controls of the
+    visible tab only.
+L6  Meters: play and speak.  OK = the bars use the full height of the card,
+    inputs on the left and outputs on the right, a single scale without
+    overlapping labels, green-yellow-red gradient, peak line and clip. With
+    a device of 8 or more channels the bars get narrower and the numbers do
+    not overlap.
+L7  "Live" tiles: latencies in ms, DSP load with a bar (force load: amber
+    above 80 %, red above 100 %), glitches (red if > 0).
+L8  "About": name with (R), version, logo, the text "ASIO is a registered
+    trademark of Steinberg Media Technologies GmbH." and the GPLv3 license.
+L9  Scaling: Windows at 125 % or 150 %.  OK = nothing cut off or
+    overlapping. With two monitors at different scaling, drag the panel from
+    one to the other.  OK = it resizes and stays sharp, nothing cut off,
+    the values on screen are kept.
+L10 Profiles: with Input device = (None - no inputs) and an output selected, select the profile
+    "Laptop" > Apply.  OK = output and input do NOT change. "Save..." a new
+    profile with "Include devices" unchecked: change the output, select that
+    profile: the output does not change. Save another with the option
+    checked: when selected, output and input return to the saved ones.
+    "Save..." over that second profile: the option starts checked; uncheck
+    it and Save: the confirmation warns that the devices will be removed.
+L11 Portable install: copy the files to a folder whose path contains ")"
+    (e.g. "C:\Test (x86)\Driver"), run install.bat.  OK = it registers
+    without errors and prints the path; uninstall.bat removes it.
+
+Block M - 0.7.0 features
+------------------------
+[IFACE] = needs an audio interface with inputs and outputs on the same device
+(e.g. a USB audio interface with 2 inputs and 2 outputs); [CABLE] = needs a cable from output 1 to input 1;
+[2DEV] = needs a second device (USB microphone, headset). Note for Cubase:
+Cubase may stop the audio by itself while its own Studio Setup dialog is
+open; for M1-M4 open the panel from the monitor window (M5) instead.
+M1  Live settings: play a project. In the panel change Gain to -6 dB >
+    Apply.  OK = the level drops at once, the audio never stops, the bottom
+    bar says "Applied live.", the DAW does not restart the driver (no
+    "reset" line in log.txt). Repeat with Dither and with Output routing
+    (swap L/R): same result.
+M2  Reset settings: change the Buffer (marked with a dot) > Apply.  OK = the
+    bottom bar says "The DAW will restart the driver."; the DAW reopens the
+    driver by itself within ~2 s; the panel stays open and usable; the
+    status shows the new buffer.
+M3  Close without Apply: change Gain, press Close, reopen the panel.  OK =
+    the old value is shown and nothing changed.
+M4  Panel while playing: open the panel during playback and leave it open
+    1 minute.  OK = no dropouts ("Output glitches" stays 0).
+M5  Monitor window: Main tab > "Floating monitor window" > Apply.  OK = a
+    small dark window appears without taking the focus from the DAW (typing
+    in the DAW still works), meters move, DSP load / dropouts / latencies /
+    one-line summary are filled. Resize and move it, close the DAW, open it
+    again: same size and position. Pin: stays above the DAW. Settings: opens
+    the panel while the audio runs. Close: the window disappears and the
+    option is off in the panel. Move it to a second monitor with another
+    scaling (if available): it rescales, nothing cut off.
+M6  Monitor position off-screen: with the window placed on a second
+    monitor, close the DAW, disconnect that monitor, open the DAW.  OK = the
+    window appears on the main screen (top right).
+M7  [CABLE] Latency offset: run "Latency test (cable)", answer y to
+    "Save ... as a latency offset?".  OK = config.ini has
+    OutputLatencyOffsetMs = the printed value; running the test again shows
+    a difference within +-1 ms. Advanced tab shows the offset.
+M8  Offset live: with the DAW playing, set Output offset = 100 > Apply.  OK
+    = "Applied live."; the DAW shows the latency 100 ms larger (Cubase:
+    Studio Setup > the driver's latency values) without a restart, or (if
+    the DAW does not support it) restarts the driver once. Set it back to 0.
+M9  [IFACE] Direct monitoring from the panel: Extra devices & monitoring tab >
+    Direct monitoring: Enabled, Input channels In 1-2, Output channels Out 1-2, Level 0 dB > Apply; speak into the
+    microphone with headphones.  OK = you hear yourself without the DAW
+    monitoring the track; Level -12 and Pan -100 / +100 change smoothly
+    (no clicks, also when pressing Mute and when disabling); the output
+    meters move with your voice. Note the latency you feel (not zero).
+M10 [IFACE] Loaded DAW: with M9 active, load heavy plugins until DSP load is
+    above 100 %.  OK = the monitored voice keeps playing (the program may
+    break up, the monitor must not).
+M11 [IFACE] ASIO Direct Monitoring in Cubase: enable it in Studio Setup >
+    VST Audio System, arm a track with monitoring on.  OK = the input is
+    heard, track volume and pan change it smoothly, disarming fades it out.
+M12 [2DEV] Monitoring across devices: input = USB microphone, output =
+    built-in (drift correction active) > enable direct monitoring.  OK = you
+    hear the microphone for 10 minutes without clicks or growing delay.
+M13 No input: Main tab > Input device = (None - no inputs) > Apply.  OK = direct monitoring is off (the
+    note says "No device input is open"), no error.
+M14 Clip safety: Level +6 dB, sing loudly with a hot input gain.  OK = no
+    harsh wrap-around distortion on the output (soft limiting), the output
+    clip LED may light.
+M15 Microphone privacy: Settings > Privacy & security > Microphone > turn
+    off "Let desktop apps access your microphone"; run Diagnostics.  OK =
+    "VERDICT: desktop apps CANNOT use recording devices"; the panel's Extra
+    devices & monitoring tab and the Main tab (under Input device, with "Set
+    to None") show the same warning. Turn it back on: "can use".
+M16 Crash reports (no crash expected): run Diagnostics.  OK = section
+    "Crash reports" says "No crash marker." and "No minidumps." (or lists
+    existing ones with sizes and dates, paths shown as %LOCALAPPDATA%).
+M17 Safe mode (only if a crash happened): after a crash, open the DAW.  OK
+    = the panel and the monitor window show "Recovered from a crash in the
+    previous session - safe settings used."; the status shows Shared,
+    default output, no input, buffer 512; config.ini still has your
+    settings. "Use my settings again": the DAW restarts the driver with
+    your settings and the banner disappears.
+M18 Automatic test (H1).  OK = PASSED; T2 shows "ASIOTime:
+    bufferSwitchTimeInfo N, bufferSwitch 0; null 0, no samplePosition 0, no
+    systemTime 0, bad sampleRate 0".
+
+Block N - 0.7.1 panel behavior (Cubase 15 recommended)
+-----------------------------------------------------
+N1  Cubase: Studio Setup > WASAPI Driver for ASIO > Control Panel. Click on
+    Studio Setup, then on the Cubase project window, then back.  OK = the
+    panel stays visible above Studio Setup and the project window the whole
+    time (it may be inactive, but never hidden behind them).
+N2  With the panel open, switch to another program (e.g. the browser) with
+    Alt+Tab.  OK = the other program covers the panel normally (the panel is
+    not on top of other applications). Switch back to Cubase: the panel is
+    above Cubase again within half a second.
+N3  With the panel open, open "Save..." (profile name) and "Output
+    routing..." and repeat N1.  OK = the dialog stays above Studio Setup;
+    an overwrite prompt (save over an existing profile) also stays visible.
+N4  Close Studio Setup (or minimize Cubase) while the panel is open.  OK =
+    the panel stays open and visible, Cubase does not hang, nothing
+    crashes; Cubase's windows stay usable while the panel is open (they are
+    not disabled); the panel always has a taskbar button.
+N5  Rebind: change the Buffer (a dot setting) > Apply while the DAW plays.
+    OK = the bottom bar shows "Restarting driver..." for a moment, then
+    "The DAW restarted the driver. The panel now controls the new driver.";
+    the panel stays open on the same tab with the same values; the Status
+    tab shows the new buffer; a second Apply (e.g. Gain) says "Applied
+    live." and works.
+N6  Release without reload: open the panel, then in Cubase choose another
+    ASIO driver (or "No Driver").  OK = after about 5 s the bottom bar says
+    "The DAW released the driver. Settings were saved."; Apply still saves
+    (config.ini changes) and Close closes the panel normally. Select the
+    driver again in Cubase: the panel rebinds by itself.
+N7  Monitor window (MonitorWindow on, Pin on): click Cubase windows.  OK =
+    the monitor stays above Cubase, but not above other programs. Pin off:
+    it behaves like a normal window. Its Settings button with the panel
+    already open brings the open panel to the front (no second panel).
+N8  Labels: Main tab shows "Output device" and "Input device"; the input
+    list starts with "(None - no inputs)", then "(Windows default)". The
+    third tab is "Extra devices & monitoring" with "Input channels" /
+    "Output channels" for direct monitoring.  OK = as described; choosing
+    (None - no inputs) > Apply gives no input channels in the DAW (only
+    Loopback if enabled).
+N9  Privacy row: turn off microphone access for desktop apps (Settings >
+    Privacy & security > Microphone), open the panel.  OK = under "Input
+    device": "Windows blocks recording - choose (None - no inputs) or allow
+    microphone access" and a "Set to None" button; pressing it selects
+    (None - no inputs) (Apply to use it). Turn access back on: the row
+    disappears within a few seconds.
+N10 Small screen: set Windows scaling to 150 % on a 1366x768 (or 1280x720)
+    screen, open the panel.  OK = the whole panel fits, the bottom bar with
+    "Apply" and "Close" is fully visible (text slightly smaller is fine).
+    Repeat at 100 % and 125 %. Move the panel to another monitor with a
+    different scaling: still fully visible.
+
+Block O - 0.8.0 features (Cubase 15 recommended; a Bluetooth headset helps)
+---------------------------------------------------------------------------
+O1  Channel names: after the update config.ini contains DeviceChannelNames=0
+    and the port names are unchanged. Set DeviceChannelNames=1, restart the
+    DAW, open Studio > Audio Connections.  OK = the driver's ports are named
+    after the device, e.g. "<device> In 1",
+    "<device> L" / "<device> R", "Loopback L"; no two ports have the same
+    name. If old connections show as missing, reassign them once (expected,
+    see README section 31). DeviceChannelNames=0 + restart of the DAW: the
+    old names ("In 1", "Out L") come back.
+O2  Tray icon: play audio.  OK = a green dot in the notification area (look
+    in the overflow arrow if needed); hovering shows version, mode, rate,
+    buffer, DSP load and dropouts. Left click: the monitor window appears;
+    left click again: it disappears.
+O3  Tray menu: right click the dot.  OK = Open settings (opens the panel;
+    a second time brings the open panel to the front), Show monitor window
+    (checked while it is shown), Reset counters, Copy status (paste into a
+    text editor: status text without your user name), About (a small
+    window with the version). The menu closes when clicking elsewhere.
+O4  Tray lifetime: in Cubase select another driver (or close the project's
+    audio engine), then close Cubase.  OK = the icon disappears when the
+    driver is released, and no dead icon is left after Cubase closes.
+    Restart Windows Explorer (Task Manager > Windows Explorer > Restart)
+    while the DAW plays: the icon comes back within a few seconds.
+O5  Tray colors: set the buffer to 32 in Exclusive mode (or load the CPU)
+    until dropouts are counted.  OK = the dot turns red (amber first if
+    the load goes above 80 %); tray menu > Reset counters: green again.
+    Main tab > "Tray icon" off > Apply: the icon disappears; on > Apply: it
+    comes back.
+O6  Limiter: Advanced > Limiter on, Ceiling -6 > Apply, play a loud track
+    (or raise Gain to +12).  OK = no audible break; the panel meters show
+    "Limiter -x.x dB" in amber; the output meters never go above about
+    -6 dB. Ceiling -1: louder again, still no distortion bursts. Limiter
+    off: the label disappears. Gain cap on with 0 dB and Gain +12: the
+    level stays as with Gain 0.
+O7  Bluetooth output: select the Bluetooth headphones as output device >
+    Apply.  OK = BLUETOOTH badge in the Live card and in the monitor
+    window; under the device combos "Bluetooth: use buffer N or more..."
+    and, if the buffer is smaller, "Use recommended": one click sets the
+    buffer and the DAW restarts the driver; the button then disappears.
+    Advanced > Latency offsets shows "Bluetooth: try about +150"; the
+    offset field itself is unchanged until you type a value.
+O8  Protect A2DP: Bluetooth headset as output AND its microphone as input >
+    Apply.  OK = the music stays in stereo quality; the Main tab says
+    "Headset microphone not opened..."; the DAW shows no device inputs
+    (only Loopback if on). Advanced > Protect A2DP off > Apply: the
+    microphone opens and the headset switches to call quality (expected).
+    Turn the option back on.
+O9  Follow Windows rate: Shared mode, Advanced > Initial sample rate >
+    "Follow Windows (Shared)" > Apply. Windows Sound settings > output
+    device > Properties > Advanced: change 48000 Hz to 44100 Hz.  OK = the
+    driver asks Cubase to restart it, Cubase shows or adopts 44.1 kHz (or
+    keeps its project rate: then the Status tab shows the project rate and
+    the sound is still correct); no crash, no hang. With a fixed rate (e.g.
+    48000) the same Windows change only causes the usual short restart and
+    the rate stays 48000.
+O10 Program profile: Advanced > Profile for this program: choose a profile
+    (e.g. "Laptop") > Apply; restart Cubase.  OK = the panel shows the
+    profile's settings, the Live card shows PROGRAM PROFILE and log.txt has
+    "Host profile: <program>.exe -> Laptop". "All programs" lists it;
+    Remove deletes it; after the next restart the normal settings are used.
+O11 Diagnostics (Start menu > Diagnostics).  OK = every endpoint shows a
+    "Bluetooth: yes/no" line; the Bluetooth headset says yes.
+O12 Silent install: in an administrator console run
+    WASAPI-Driver-for-ASIO-0.9.8-Setup.exe /S.  OK = no window asks
+    anything, the driver appears in the DAW afterwards.
+
+Block P - panel visuals (0.8.1, speed and frame rate updated in 0.8.2)
+----------------------------------------------------------------------
+P1  Open the panel.  OK = a dark plasma clearly flows (smoothly, not in
+    jumps) in the header, the margins and between the cards; all text and controls look exactly as
+    before (no flicker in combo boxes, edit fields or lists while the
+    effect runs; open a combo list: it does not flicker either).
+P2  About tab.  OK = a wavy text scroller with stars runs above the
+    "Visuals" row; the text says "WASAPI DRIVER FOR ASIO 0.8.1 - FREE
+    SOFTWARE UNDER GPLV3 - GREETINGS TO EVERYONE WHO MAKES MUSIC".
+P3  Visuals: choose each effect (Starfield, Copper bars, Tunnel,
+    Audio-reactive mix).  OK = it changes at once and clearly moves: stars
+    fly past, the bars sweep up and down, the tunnel flies forward, the
+    scroller text moves at an easy reading speed; Off gives the plain
+    panel; Apply then Close and reopen: the choice is kept.
+P4  Intensity: drag the slider to 0, then 100, then back to 35.  OK = 0 =
+    effect invisible, 100 = clearly visible but text still readable.
+P5  Audio-reactive mix while the DAW plays.  OK = the effect speeds up and
+    gets brighter with louder music; the audio is unchanged (no dropouts:
+    the DSP load tile and dropout counters stay as without the effect).
+P6  Load: Task Manager, the DAW's CPU with the panel open and Plasma vs
+    Off.  OK = a small difference only (a few percent of one core at most);
+    the DAW's own UI stays smooth.
+P7  Minimize the panel, then restore it.  OK = no CPU use from the effect
+    while minimized; it continues after restoring.
+P8  Windows Settings > Accessibility > Visual effects > Animation effects
+    Off, reopen the panel.  OK = a still picture, no movement. Turn it back
+    on.
+P9  "Also in the monitor window" on > Apply, with the monitor window open.
+    OK = the same effect very faintly behind the meters; meters stay
+    clearly readable. Off > Apply: plain again.
+P11 Speed: drag the Speed slider fully left, then fully right, then to the
+    middle.  OK = slow motion, very fast, normal; Apply, reopen: kept.
+P12 Status tab while the panel is open with an effect.  OK = a line
+    "Visuals: Plasma, NN fps, N.NN ms/frame, throttled: no" with NN about
+    60 (at least 30) and ms/frame well under 6; with "throttled: yes" the
+    movement keeps the same speed, only less smooth.
+P10 Move the panel to a monitor with another scaling (or change scaling).
+    OK = the effect still fills the background, no stretched band or gap.
+
+Block Q - 0.9.0 themes, effects, updates, languages
+---------------------------------------------------
+Q1  Interface tab > Theme: choose each theme.  OK = the whole panel changes
+    at once (and the monitor window, if open); all text is easy to read;
+    combo boxes and lists match (dark or light); Close without Apply
+    restores the previous theme; Apply keeps it after reopening.
+Q2  Retro Blue (16-bit), Retro 8-bit, Green Terminal.  OK = the title at the
+    top is drawn with square dots; nothing else is cut or overlapping.
+Q3  Visuals: Metaballs, Fire, Vector, Twister.  OK = each moves smoothly;
+    Status tab line "Visuals: ..., NN fps" about 60 (at least 30).
+Q4  Language: Español, Português (Brasil), Français, Deutsch, then
+    Automatic.  OK = every tab, button and message changes language at once;
+    no text is cut off in a way that hides its meaning (a few may end with
+    "..." or use a smaller font); Status > Copy status still pastes English.
+Q5  Language Automatic on a Spanish (or other) Windows.  OK = the panel opens
+    in that language; on a Japanese (any untranslated) Windows: English.
+Q6  Updates, fresh install.  OK = the weekly option is off; the button says
+    "Update source not configured yet" (until the project is published) and
+    nothing is downloaded; no network activity from the driver (Resource
+    Monitor > Network shows none for the DAW because of the driver).
+Q7  (Only when a repository is configured) "Check for updates now".  OK =
+    within a few seconds: "You have the latest version" or "New version
+    available"; Download shows "Downloaded and verified"; Install asks to
+    close the DAW first and only then starts the Setup with its own pages.
+Q8  Installer in Spanish: run the Setup on a Spanish Windows.  OK = the
+    installer pages are in Spanish (the license text stays English); on an
+    English Windows they are English.
+Q9  Tray icon right-click menu and tooltip follow the language; dot colors
+    are the same in every theme.
+
+Block R - 0.9.1 release candidate: accessibility, installer, soak, fixes
+--------------------------------------------------------------------------
+R1  Narrator (Ctrl+Win+Enter) with the panel open: Tab through every tab.
+    OK = each control is announced with a name; toggles as "check box,
+    checked / not checked" and Space changes the state and Narrator says
+    the new state; Intensity and Speed as "slider" with a value that
+    changes with the arrow keys; the Status text box is reachable and
+    readable; buttons by their text.
+R2  Keyboard only (no mouse), from opening the panel to Apply: Tab and
+    Shift+Tab reach every control of every tab; Ctrl+Tab changes tab; press
+    Alt: one letter of each tab name and of Apply / Close is underlined and
+    Alt+that letter works; Enter on a toggle switches it (it must NOT apply
+    the settings); Enter on a button presses it; Esc closes.  OK = all
+    settings can be changed and applied without the mouse, and the focused
+    control always shows a visible ring (try Dark, Light and Neon).
+R3  High contrast: Settings > Accessibility > Contrast themes > any theme >
+    Apply while the panel (and the monitor window) are open.  OK = both
+    switch to the Windows colors at once, no background effect, flat
+    meters, all text readable, focus ring visible; the Interface tab note
+    says high contrast is on; turning it off restores the chosen theme.
+R4  Installer: the first page shows the ASIO Compatible logo on a dark
+    background next to "WASAPI Driver for ASIO(R) <version>" and the sentence
+    "ASIO is a registered trademark of Steinberg Media Technologies GmbH.";
+    the other pages show the logo at the top right; the logo is not
+    stretched.  Start menu has "Soak test (60 min)" and "Quick start".
+R5  Soak test: Start menu > "Soak test (60 min)" with the DAW closed.
+    During the hour: unplug and plug the output device once, change the
+    Windows default output once, sleep and wake the computer once.  OK =
+    one line per minute, each event followed by "recovered after N s",
+    "RESULT: PASSED", WasapiDriver-soak.txt written. Also run
+    WasapiDriverTest.exe --soak 20 --soak-cycle once.
+R6  SampleRate=Auto (Advanced > Initial sample rate > Follow Windows) in
+    Cubase: change the Windows format of the output (48000 -> 44100) while
+    playing.  OK = Cubase restarts the driver ONCE (log.txt: one
+    "kAsioResetRequest (Windows sample rate changed)"), then runs at 44100.
+R7  Panel rebind with a dialog open: open Save... (profile name dialog),
+    then make Cubase restart the driver (change the buffer in another
+    program window or toggle Exclusive in Studio Setup).  OK = no crash;
+    after closing the dialog the panel shows "Reconnected" (rebind happens
+    after the dialog).
+R8  Theme preview: choose Neon without Apply, with the monitor window open,
+    then Close.  OK = panel and monitor window return to the saved theme.
+R9  (Only with a configured repository) Update download and Install: OK as
+    Q7; while downloading, close the panel: the download stops (no file
+    left in %LOCALAPPDATA%\WASAPI Driver for ASIO\updates except a
+    finished one).
+R10 Fill in COMPATIBILITY.txt for your configuration and send it with the
+    test and soak reports.
+
+Block S - 0.9.2 help tips
+-------------------------
+S1  Hover: rest the mouse on controls of every tab, the bottom bar, the
+    Save... and Routing... dialogs and the monitor window.  OK = after about
+    half a second a tip appears near the cursor, next to (not over) small
+    controls, never cut off at the screen edge; it says what the control
+    does, and for settings "Applies live" or "DAW restarts the driver"
+    (the latter exactly for the settings marked with a dot). The four
+    status tiles, the meters and the monitor window's two text lines have
+    tips too.
+S2  The tip hides when the mouse leaves the control, on a click, on a key,
+    on the mouse wheel and by itself after 15 s; switching tab hides it.
+S3  Keyboard: Tab to a control, press F1 (and Shift+F1).  OK = the tip of
+    that control appears below or above it; Esc hides it without closing
+    the panel; works in the dialogs too.
+S4  Narrator: Tab through the Main and Advanced tabs.  OK = after the name
+    and state Narrator reads the tip as the description (Caps Lock+F also
+    reads it on demand).
+S5  Interface > "Show help tips" off (no Apply).  OK = no tip appears on
+    hover at once, F1 still works; Apply, reopen the panel: still off; the
+    monitor window has no tips either. Turn it on again.
+S6  High contrast on: the tip uses the Windows colors and is readable;
+    themes Dark, Light, Retro Blue: tip colors follow the theme.
+S7  Languages: Español, Português, Français, Deutsch.  OK = every tip and
+    tag is translated, nothing is cut (tips wrap within about 360 points).
+S8  Different display scaling (125 %, 150 %) or moving the panel to a
+    monitor with another scaling: the tip text has the size of the panel's.
+
+Block T - 0.9.3 application icon and tray states
+------------------------------------------------
+T1  Open the panel.  OK = the title bar shows the driver's icon (dark tile,
+    teal arch between two dots), also on the taskbar button and in
+    Alt+Tab; same for the Save... and Routing... dialogs and the monitor
+    window. Move the panel to a monitor with another scaling: the icon is
+    sharp there too.
+T2  About tab.  OK = the icon sits under the ASIO Compatible logo with
+    space between them; nothing overlaps.
+T3  A message box of the panel (Delete a profile) shows the icon on the
+    taskbar / Alt+Tab.
+T4  Explorer: WasapiDriverDiag.exe, WasapiDriverTest.exe and the Setup show
+    the icon; their console windows show it while they run (the command
+    prompt gets its own icon back afterwards). Start menu shortcuts and
+    Settings > Apps > WASAPI Driver for ASIO show it.
+T5  Tray: with the DAW running the tray shows the icon with a green dot;
+    hover: the tooltip ends with "OK". Stop the audio engine: gray dot,
+    "Stopped".
+T6  Raise the DSP load above 80 % (small buffer, heavy plugins): amber dot,
+    "High load".
+T7  Cause a dropout (buffer 64, open a heavy program or unplug the device
+    briefly): red dot, "Dropouts", for at least 10 s after the last dropout,
+    then back to green.
+T8  Light and dark taskbar (Settings > Personalization > Colors): the dot
+    is readable on both (dark outline). Change the display scaling: the
+    tray icon is rebuilt at the new size, not blurry.
+
+Block U - 0.9.4 low-latency engine at any rate (Cubase recommended)
+-------------------------------------------------------------------
+Windows Sound settings > output device > Properties > Advanced: note the
+Default Format (usually 48000 Hz). Panel: Shared, "Low latency in Shared"
+on, Resampler Sinc, buffer 128. Keep the panel's Status tab open.
+U1  WasapiDriverDiag.exe: for the output (and the input) device note the
+    line "Shared engine (IAudioClient3)" (min period) and "Low-latency
+    period below the default: available / not available".
+U2  Cubase project at 48 kHz (same as Windows).  OK = Status "Engine: low
+    latency (IAudioClient3), period N frames (X ms) at 48000 Hz; no
+    conversion", with N = the minimum period of U1 (if "available"). Note
+    the input and output latency Cubase shows (Studio Setup > driver).
+U3  Same project switched to 44.1 kHz (Project Setup).  OK = the driver
+    restarts, Status "... at 48000 Hz; internal rate conversion
+    44100->48000 Hz (sinc)", the same engine period as U2. Note the
+    latencies again: OK = output about 1-2 ms more than U2 (converter),
+    much less than 0.9.3 at 44.1 kHz if the device offers a short period
+    (0.9.3 used the 10 ms engine at 44.1 kHz).
+U4  Automatic test (H1) once with the project rate 48 kHz and once with
+    44.1 kHz (Cubase closed; the test uses the driver's initial rate: set
+    Advanced > Initial sample rate to 44100 for the second run).  OK =
+    PASSED both times; the T2 line "Engine: ..." shows the period and "no
+    conversion" / "internal rate conversion 44100->48000 Hz (sinc)"; note
+    the T2 timing line (callback interval min/max).
+U5  Cable loop (output 1 -> input 1 of the same device), Initial sample
+    rate 44100, Cubase closed: WasapiDriverTest.exe --latency (T8 runs at
+    the initial rate since 0.9.4).  OK = the difference between the
+    measured round trip and the reported latency is within 1 ms (the
+    converted input on the same device is aligned to the output clock).
+    Repeat with 48000. Answer n to "Save ... as a latency offset?".
+U6  44.1 kHz session in Cubase: play a 10-minute project with plugins and
+    record 2 minutes from the microphone.  OK = no dropouts, "Output
+    glitches" 0, input dropouts 0; the recording is clean (no clicks) and,
+    with a click track through the cable, lines up with the grid.
+U7  Same session with buffer 32 and buffer 1024.  OK = plays; at 32 note
+    whether the DSP load / glitches rise compared with 48 kHz.
+U8  Resampler Hermite > Apply (44.1 kHz).  OK = the engine line says
+    "(Hermite)"; the DSP load is a bit lower; sound is clean. A project at
+    96 kHz on a 48 kHz device (rate going down) stays "(sinc)": Hermite is
+    only used when the rate goes up.
+U9  Direct monitoring (ASIO Direct Monitoring in Cubase) at 44.1 kHz with
+    the microphone on the same device as the output.  OK = monitoring is
+    heard. With a microphone on another device (at another rate) the log
+    says "Direct monitoring: not available with this rate combination",
+    Cubase offers no ASIO Direct Monitoring (the driver reports it as not
+    present) and the panel's direct-monitoring card shows the note "Not
+    available now..." (expected). Switching between the two microphones
+    makes the driver ask Cubase to reset once.
+U10 "Low latency in Shared" off > Apply (44.1 kHz).  OK = "Engine:
+    standard Shared, ...; Windows converts the rate" (the 0.9.3 path).
+U11 A device without a short period (Diag U1 "not available"), 44.1 kHz.
+    OK = plays, engine period 480 frames, internal conversion; the
+    reported output latency is about the same as 0.9.3.
+U12 OutputMap: route an extra output's channel (e.g. 3:1) to the main
+    output at 44.1 kHz.  OK = it is heard (every channel is converted).
+
+Block V - 0.9.5 sample rate kept across driver resets (Cubase, Bluetooth)
+-------------------------------------------------------------------------
+Reproduces the 0.9.4 bug. Needs Bluetooth headphones and speakers.
+V1  Panel: Advanced > Initial sample rate 96000 > Apply (config.ini now says
+    SampleRate=96000). Output device "(Windows default)", Windows default =
+    the Bluetooth headphones. Cubase project at 44.1 kHz, playing.  OK = the
+    log says "Sample rate 44100 Hz (source: host ...)" after Cubase's
+    setSampleRate, and config.ini has LastHostRate=44100.
+V2  Switch the headphones off (or remove them in Bluetooth settings) while
+    playing.  OK = playback moves to the speakers; Cubase does NOT show "The
+    ASIO Sample Rate has changed"; Studio Setup shows 44.1 kHz; the log
+    shows "source: host" after the reset.
+V3  Switch the headphones on again.  OK = playback comes back to them, still
+    44.1 kHz, no rate message.
+V4  Close Cubase, start it again with the same project.  OK = no rate
+    message; the log line at init says "source: last host" (or "host" once
+    Cubase has set it).
+V5  Panel: Initial sample rate 48000 > Apply (Cubase restarts the driver).
+    OK = Cubase reports the ASIO rate change (expected: the user chose it);
+    LastHostRate is removed from config.ini; with a 48 kHz project no
+    message appears.
+V6  Automatic test (H1).  OK = T10 PASSED ("re-created instance reports
+    44100" or 48000).
+V7  Sleep / resume while playing at 44.1 kHz.  OK = still 44.1 kHz, no rate
+    message.
+
+Block W - 0.9.6 checks (microphone warning, sinc conversion, installer)
+-----------------------------------------------------------------------
+W1  Windows: Settings > Privacy & security > Microphone > "Let desktop apps
+    access your microphone" OFF. Panel, Main tab: Input device "(None - no
+    inputs)" and no extra input selected.  OK = no "Windows blocks
+    recording" warning and no "Set to None" button.
+W2  Same setting, choose an input device (or only an extra input).  OK = the
+    warning appears at once (before Apply); "Set to None" sets Input to
+    (None), clears the extra inputs and the warning disappears. Turn the
+    Windows setting back ON afterwards.
+W3  Cubase project at 44.1 kHz, Windows device at 48 kHz, Low latency on.
+    OK = log.txt shows "Output: rate conversion 44100 -> 48000 Hz, 2
+    channels: sinc (12 M MAC/s, budget 150 M)" with ResamplerQuality Hermite
+    AND with Sinc (the setting no longer changes this line).
+W4  Keep Cubase open with the project playing (the driver is loaded) and run
+    WASAPI-Driver-for-ASIO-0.9.8-Setup.exe.  OK = after Install, a message
+    says the file is in use and asks to close the audio programs (Cubase,
+    DaVinci Resolve, Ableton Live...) with Retry / Cancel. Cancel: Setup
+    stops and the installed version still works. Close Cubase, run Setup
+    again, Retry if asked: it finishes and the DAW shows 0.9.8
+    (getDriverVersion 980 in the test report).
+W5  Same as W4 with Settings > Apps > WASAPI Driver for ASIO > Uninstall
+    while Cubase is open.  OK = the same message; Cancel removes nothing.
+
+Block X - 0.9.7 checks (public beta packaging)
+----------------------------------------------
+X1  Interface tab > Updates, with the official build of the Releases page.
+    OK = "Check for updates now" answers (up to date, or a newer version).
+    With a build made before the owner was filled in, OK = the text
+    "Update source not configured yet" and no network request (no
+    "Update check:" line in log.txt).
+X2  Install WASAPI-Driver-for-ASIO-0.9.7-Setup.exe over 0.9.6.  OK = the DAW
+    shows 0.9.7 (getDriverVersion 970 in the test report); settings, profiles
+    and channel names are unchanged.
+
+Block Y - 0.9.8 checks (hardening, tracing)
+------------------------------------------
+Y1  Automatic test (H1).  OK = T11 PASSED and every later test as in 0.9.7.
+    If T11 fails, its line names each call that returned an unexpected code:
+    send WasapiDriver-test.txt.
+Y2  Install WASAPI-Driver-for-ASIO-0.9.8-Setup.exe over 0.9.7.  OK = the DAW
+    shows 0.9.8 (getDriverVersion 980 in the test report); settings,
+    profiles and channel names are unchanged; the Start menu has "Start
+    trace", "Stop trace" and "Tracing guide".
+Y3  Start menu > "... Start trace" (accept the administrator prompt).
+    OK = a blue window says "Tracing started". Open the DAW, play 30 s,
+    change the buffer size in the panel (Apply), play 10 s, close the DAW.
+    Start menu > "... Stop trace".  OK = a yellow window says "Trace saved"
+    and WasapiDriver-<date>-<time>.etl is on the Desktop.
+Y4  Open the .etl in Windows Performance Analyzer (or run tracerpt on it, see
+    TRACING.txt section 5).  OK = provider WASAPIDriverForASIO with events
+    DriverCreated, AsioInit, AsioCall (createBuffers, start, stop,
+    disposeBuffers ...), DevicesResolved, OutputOpen, Stats (every 10 s
+    while playing), ResetRequest (after the buffer change), DriverDestroyed;
+    no event contains audio data, a file path, your user name or your
+    computer name (search the XML for them).
+Y5  Run "Start trace" twice in a row.  OK = the second one says a trace is
+    already running (no crash); "Stop trace" then saves normally.
+Y6  Play for 30 minutes with NO trace running and compare the DSP load in the
+    panel with 0.9.7 on the same project.  OK = no measurable difference
+    (tracing costs nothing when no trace runs).
+
+Useful data for the report
+--------------------------
+- Brand/model of the sound card or interface and of the microphone.
+- A screenshot of the panel's Status tab during playback ("Copy status").
+- log.txt and log-previous.txt.
+- WasapiDriver-diagnostics.txt (test G8).
+- WasapiDriver-test.txt (block H).
+- WasapiDriver-soak.txt (R5) and your COMPATIBILITY.txt line (R10).
+- For dropouts, resets or hangs (0.9.8): a trace (.etl, zipped), see
+  TRACING.txt.
+- For a crash: the newest .dmp from %LOCALAPPDATA%\WASAPI Driver for ASIO\crash (send it privately).

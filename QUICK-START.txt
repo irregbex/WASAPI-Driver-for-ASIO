@@ -1,0 +1,63 @@
+WASAPI Driver for ASIO(R) 0.9.8 - Quick start (one page)
+========================================================
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+Full manual: README.txt. Questions: FAQ.txt.
+
+1. INSTALL
+   Download WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the Releases page:
+   https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
+   Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.8-Setup.exe (SmartScreen:
+   "More info" > "Run anyway" if the Setup is not signed). Accept the UAC
+   prompt, then Next / I Agree / Install. Windows on ARM: Yes = native ARM64
+   DAW, No = x64 DAW. No reboot is needed.
+   Without the Setup: Portable-Install\install.bat (keep that folder where
+   it is; the registry points to it).
+
+2. SELECT THE DRIVER IN YOUR DAW
+   Cubase / Nuendo  Studio > Studio Setup > Audio System > ASIO Driver:
+                    "WASAPI Driver for ASIO". Then Studio > Audio
+                    Connections (F4): check the output and input buses.
+   Ableton Live     Preferences > Audio > Driver Type: ASIO > Audio Device:
+                    "WASAPI Driver for ASIO". "Hardware Setup" opens the
+                    panel.
+   REAPER           Preferences > Audio > Device > Audio system: ASIO >
+                    Driver: "WASAPI Driver for ASIO". "ASIO Configuration..."
+                    opens the panel.
+   FL Studio        Options > Audio settings > Device: "WASAPI Driver for
+                    ASIO". "Show ASIO panel" opens the panel.
+   A 32-bit DAW uses the 32-bit driver automatically (both are installed).
+
+3. OPEN THE CONTROL PANEL
+   From the DAW (see 2). Main tab: Output device, Input device, Mode,
+   Buffer, then "Apply". The DAW restarts the driver for these settings
+   (1-2 s of silence). Status tab: what is really running.
+   Not sure what a control does? Rest the mouse on it (or press F1) for a
+   help tip.
+
+4. RECOMMENDED SETTINGS
+   Bluetooth headphones or speakers
+     Mode Shared; buffer 512 or more ("Use recommended" on the Main tab);
+     Advanced > Latency offsets > Output about +150 ms so recordings land
+     in time; keep "Protect A2DP" on (music quality). Expect 150-250 ms of
+     delay: fine for listening and mixing, not for playing live.
+   USB / audio interface or built-in sound
+     Start with Shared, "Low latency in Shared" on, buffer 128 or 256.
+     Any project rate works with low latency (0.9.4: the driver converts
+     if it differs from Windows); the same rate as Windows (Sound settings
+     > device > Format, usually 48 kHz) saves the conversion.
+     For the lowest latency: Mode Exclusive (Windows sounds on that device
+     are muted while the DAW runs), buffer 64-128. Crackles: raise the
+     buffer one step.
+   HDMI (monitor or TV speakers)
+     Shared, buffer 256-512; the same rate as Windows (usually 48 kHz)
+     avoids a conversion.
+   Microphone input not working: FAQ.txt question 1.
+
+5. UNINSTALL
+   Settings > Apps > Installed apps > "WASAPI Driver for ASIO" > Uninstall
+   (portable: Portable-Install\uninstall.bat). Your settings stay in
+   %APPDATA%\WASAPI Driver for ASIO (delete that folder to remove them).
+
+Something wrong? Start menu > WASAPI Driver for ASIO > Diagnostics, and
+the panel's Status tab > "Copy status": attach both to your report
+(FAQ.txt question 9).

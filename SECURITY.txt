@@ -1,0 +1,59 @@
+WASAPI Driver for ASIO(R) - Security policy
+===========================================
+
+Supported versions
+------------------
+Only the latest release receives fixes (currently 0.9.8). Older versions,
+including those named WasapiBridge (0.5.x and earlier), are not supported:
+please upgrade.
+
+Reporting a vulnerability
+-------------------------
+Please report security problems privately, not in a public issue:
+  GitHub private vulnerability reporting (repository > Security tab >
+  "Report a vulnerability"):
+  https://github.com/irregbex/WASAPI-Driver-for-ASIO/security/advisories/new
+  The report is visible only to you and the maintainers until a fix is
+  published. Do not open a public issue for a security problem.
+Include the version, Windows version and architecture, the host (DAW) used,
+steps to reproduce, and the impact you expect. A WasapiDriverDiag.exe report
+helps (it masks user paths and device Ids by default). Do not attach a crash
+minidump to a public report: send it privately (it contains process memory).
+You will get an acknowledgement as soon as possible; a fix and a coordinated
+disclosure date will be agreed with you. Please give reasonable time to fix
+the problem before disclosing it.
+
+Scope
+-----
+The driver is an in-process COM DLL loaded by audio hosts; it runs with the
+host's privileges. It opens no network connection unless the user starts
+the optional update check (0.9.0, off by default; see PRIVACY.txt). Relevant reports are,
+for example: memory corruption reachable through config.ini content or
+through the ASIO/COM interface, unsafe file handling in the user's settings
+folder, or installer issues (it runs elevated). Crashes caused by a host
+misusing the ASIO API are bugs, not vulnerabilities, but are welcome too.
+
+Update check (0.9.0, hardened in 0.9.1)
+---------------------------------------
+Design: HTTPS only with Windows' default certificate validation (never
+disabled); redirects may not downgrade to HTTP; downloads only from
+https://github.com/ URLs of the configured repository's release; size limits
+and timeouts; the Setup is accepted only when its SHA-256 matches the
+release's SHA256SUMS.txt, and refused when it carries an Authenticode
+signature that does not verify; it is started only after the user
+confirms, and (0.9.1) from a read-only handle that denies writers: the
+SHA-256 and the signature are checked again on that handle and it is closed
+only once the Setup process exists, so the file that runs is the file that
+was checked. The download is written, hashed, renamed and signature-checked
+through one handle opened without sharing. Redirects must end on
+api.github.com (check) or github.com, objects.githubusercontent.com,
+release-assets.githubusercontent.com (downloads); total deadlines 2 / 10
+minutes; closing the panel cancels a running job. Limits, stated honestly: the
+checksum file comes from the same release as the Setup, so it protects
+against corrupted or swapped downloads, not against a compromised release
+account; an unsigned Setup can only be checked by its checksum (see
+SIGNING.txt); revocation is not checked (WTD_REVOKE_NONE). Reports about
+this code path (JSON parsing, URL handling, file handling in the updates
+folder) are in scope.
+
+This document is provided for information only and is not legal advice.

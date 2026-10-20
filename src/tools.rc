@@ -1,0 +1,50 @@
+// WASAPI Driver for ASIO - resources of WasapiDriverDiag.exe and WasapiDriverTest.exe (0.9.6)
+// Copyright (C) 2026 The WASAPI Driver for ASIO contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// This program is free software: you can redistribute it and/or modify it under the terms of the GNU General
+// Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+// option) any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License (LICENSE.txt) for more details.
+//
+// ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+//
+// The application icon (scripts/make_icon.py). ID 1 is the first icon group: Explorer, the Start menu
+// shortcuts and the console window (conicon.h) use it.
+1 ICON "res/app.ico"
+
+#include <winver.h>   // VOS_* / VFT_* constants of the version block (0.9.6)
+// 0.9.6: version information for both tools (Explorer > Properties > Details shows the version; before 0.9.6
+// only the DLLs had it). build-test.sh passes -DWB_TOOL_TEST to windres, so each tool gets its own description.
+// Keep the numbers in step with WB_VERSION_* in common.h and with src/WasapiDriver.rc.
+#ifdef WB_TOOL_TEST
+#define WB_TOOL_DESC "WASAPI Driver for ASIO - Automatic test\0"
+#define WB_TOOL_FILE "WasapiDriverTest.exe\0"
+#else
+#define WB_TOOL_DESC "WASAPI Driver for ASIO - Diagnostics\0"
+#define WB_TOOL_FILE "WasapiDriverDiag.exe\0"
+#endif
+1 VERSIONINFO
+FILEVERSION 0,9,8,0
+PRODUCTVERSION 0,9,8,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", WB_TOOL_DESC
+      VALUE "OriginalFilename", WB_TOOL_FILE
+      VALUE "ProductName", "WASAPI Driver for ASIO\0"
+      VALUE "FileVersion", "0.9.8\0"
+      VALUE "ProductVersion", "0.9.8\0"
+      VALUE "LegalCopyright", "GPL-3.0-or-later. ASIO is a registered trademark of Steinberg Media Technologies GmbH.\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

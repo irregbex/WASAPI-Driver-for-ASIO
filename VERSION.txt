@@ -1,0 +1,911 @@
+WASAPI Driver for ASIO 0.9.8 (public beta)
+==========================================
+Build: 2026-10-19 UTC
+  x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
+  x86:   mingw-w64 GCC 13.2 i686, -O2, static linking
+  ARM64: Zig 0.16.0 (clang), aarch64-windows-gnu, -O2 (UCRT)
+  Diagnostics: WasapiDriverDiag.exe, mingw-w64 GCC 13.2 x64, console, static
+  Test: WasapiDriverTest.exe, mingw-w64 GCC 13.2 x64, console, static
+  Installer: NSIS 3.09 (makensis), solid LZMA, Modern UI 2 (English, Spanish)
+  CI: .github/workflows/build.yml (ubuntu-latest); releases:
+      .github/workflows/release.yml (tags v*, see RELEASING.txt); third-party
+      actions pinned to commit SHAs; 0.9.8: no release job runs unless every
+      offline test passed (tests/run_all.sh)
+  Offline tests (18, tests/run_all.sh): resampler, sink, dmix, live, limiter,
+                 channel names, visuals, timeinfo, strings, themes, update
+                 helpers, instance registry, icon, fixed-ratio conversion and
+                 scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
+                 untrusted data), ASIO argument validation, trace encoder
+                 (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
+getDriverVersion() = 980
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Changelog
+=========
+
+0.9.8 (changes from 0.9.7) - "Hardening"; no new user features
+---------------------------------------------------------------
+Requested by an external review (Windows audio / MIDI engineering): the driver
+must withstand untrusted, buggy or malicious data from host applications and
+from its dependencies without crashing or compromising the host process, be
+covered by fuzz and unit tests that gate every release, and be observable
+with TraceLogging. Valid calls and the audio engine behave as in 0.9.7.
+Every finding is listed in CODE-REVIEW.txt ("0.9.8 hardening review",
+H1-H32); the design is ARCHITECTURE.txt section 58.
+Summary of all changes:
+- Exception barrier (H1): every function the host or Windows calls (all
+  IASIO and IUnknown methods, the class factory and the four DLL exports,
+  every window procedure, hook and enumeration callback, the device and
+  volume notification callbacks, every thread procedure, the destructor and
+  the panel's message loop) catches any C++ exception and returns that
+  boundary's error (ASE_HWMalfunction / ASE_NoMemory, ASIOFalse, E_FAIL /
+  E_OUTOFMEMORY, DefWindowProc, ...). Contained exceptions are logged (first
+  16) and traced. The real-time path allocates nothing; the audio thread is
+  guarded at its thread procedure only (no cost).
+- Host argument validation (H3, H4, H13-H17): new src/asiocheck.h (pure,
+  tested offline) with the call-order rules (Created / Initialized /
+  Prepared / Running) and every argument rule: null pointers, channel
+  indices, isInput values, numChannels <= 0 or above the channel count,
+  duplicate channels, buffer sizes outside 32..4096, missing callbacks,
+  NaN / infinite / negative / non-standard sample rates, clock sources,
+  future() selectors with a null or wrong argument. Host structures are read
+  once and copied (the callbacks too), so changing them concurrently cannot
+  bypass a check. createBuffers checks everything before it disposes the
+  previous buffers. Return codes that changed: start() before init and
+  queries before init -> ASE_NotPresent; setSampleRate / controlPanel from
+  inside a callback -> ASE_InvalidMode; QueryInterface with a null pointer
+  -> E_POINTER. disposeBuffers (in any state) and setClockSource(0) keep
+  answering ASE_OK as in 0.9.7. The test tool's private engine-information
+  selector now needs a header (a 0.9.7 test tool shows no engine line with
+  this driver).
+- Use after free (H2, H19): the device and volume notification objects
+  detach under a lock, so the driver can be destroyed while Windows delivers
+  a notification; a release on any thread marks the object as dying.
+- Untrusted device data (H5-H7, H10): device mix formats, periods,
+  latencies and buffer sizes are range-checked (no write past a frame, no
+  undefined float-to-integer conversion, no size overflow on the 32-bit
+  build); at most 256 capture packets are read per wake-up.
+- No unbounded waits (H8, H9): start() waits at most 10 s for an exiting
+  audio thread (then handles it as stuck, like stop()); the audio thread
+  ends with a reset request after 10 s without a render event while the
+  device position stays frozen (device stalled without a notification; a
+  device whose position still moves, e.g. right after a resume from Modern
+  Standby, keeps the stream) and on a failed wait. Every remaining
+  wait is listed with its bound in ARCHITECTURE.txt 58.4.
+- config.ini and other parsers (H11, H12, H23-H25): the value parser,
+  normalization, UTF-16 decoding, profile lists, host profiles and OutputMap
+  moved to pure headers (src/parse.h, src/cfgtypes.h) and are fuzzed;
+  fixed an integer overflow (DirectMonitorInput / Output = -2147483648) and
+  undefined swscanf overflow in OutputMap; temporary file names include the
+  thread id; the profile-API lists are walked within the reported length.
+- Data races removed (H18): getSamplePosition's fallback values, the
+  callback counter and the init flag are atomics.
+- TraceLogging (new): the DLL is the ETW provider "WASAPIDriverForASIO"
+  {52b9f111-957d-5973-b76d-97bdf8f813df} (name-hash GUID, never a Microsoft
+  name or GUID). Events: driver load / unload / create / destroy, init,
+  every IASIO call outcome (non-real-time threads), device resolution,
+  stream opening (mode, rates, period, buffer, format, conversion), resets
+  and reasons, device notifications, errors with HRESULT, contained
+  exceptions, a 10 s statistics summary (counters only, from the host
+  thread), crash protection, panel and update-check results. Never audio
+  data, paths, user or computer names. Disabled tracing costs one atomic
+  read per event. Encoder: src/tlg.h (Microsoft's TraceLoggingDynamic.h
+  does not compile with mingw-w64, see ARCHITECTURE.txt 58.7).
+- Tracing kit: trace/WasapiDriver.wprp (own EventCollector and buffer budget
+  for the driver at level 5; Microsoft-Windows-Audio at level 4 in a
+  separate collector; memory and file profiles), "Start trace.bat" (color
+  B1) and "Stop trace.bat" (color E1), and TRACING.txt (how to record,
+  what is and is not recorded, how to attach it to a GitHub issue). The
+  Setup installs them in "Tracing" with Start menu shortcuts; the release
+  folder has them in Tools. PRIVACY.txt describes tracing.
+- Tests: tests/run_all.sh runs all 18 offline tests; new fuzz_test (180000
+  deterministic iterations over every parser of untrusted data),
+  asiocheck_test (validation rules, 200000 random host calls, read-once
+  property) and trace_test (SHA-1, name-hash GUID, exact event bytes), all
+  with AddressSanitizer + UndefinedBehaviorSanitizer + libstdc++
+  assertions. WasapiDriverTest.exe: new T11 "Bad host calls" (invalid
+  arguments and wrong order against the real driver, no audio; runs right
+  after T1 so every later test shows the driver survived).
+- CI: build.yml runs tests/run_all.sh; release.yml has a "tests" job that
+  every other job needs, so nothing is built, signed or published unless all
+  tests passed.
+- Dead code removed (H32): unused interface strings S_ABOUT and
+  S_STATUS_TITLE (5 languages), WasapiBridge::recommendedBuffer, the
+  never-read member monWas, a duplicated null check in getClockSources,
+  KnownRate and the swscanf OutputMap loop (replaced); duplicated helpers
+  now exist once in parse.h.
+- Portable install.bat / uninstall.bat colors 4A / 8B.
+- Independent review of 0.9.8 (CODE-REVIEW.txt R1-R7, all fixed):
+  getErrorMessage copies only the message and its terminator again;
+  disposeBuffers and setClockSource(0) are lenient as in 0.9.7; the stall
+  detection checks that the device position is frozen; install.bat,
+  uninstall.bat, "Start trace.bat" and "Stop trace.bat" check administrator
+  rights with fltmc, relaunch themselves elevated only once (marker
+  argument) and the trace helpers treat any non-zero wpr result (HRESULTs
+  are negative) as a failure; "Stop trace.bat" saves to the signed-in user's
+  Desktop (decided before elevation) and prints the full path; the update
+  worker's trace event is inside its exception barrier; comment fixes.
+
+0.9.7 (changes from 0.9.6) - public beta; prepared for publication on GitHub
+-----------------------------------------------------------------------------
+No change to the audio engine, the settings or the control panel's
+behaviour; DLLs and tools are rebuilt with the new version number.
+- Repository: the source tree is the root of the public GitHub repository
+  WASAPI-Driver-for-ASIO. The owner (GitHub account) is not known yet: an
+  owner token is used in the update source (src/common.h WB_UPDATE_REPO),
+  the documents (Releases page, issues, security reporting), the issue
+  chooser (.github/ISSUE_TEMPLATE/config.yml) and the winget manifests,
+  now in the winget-pkgs layout
+  manifests/<letter>/<owner>/WASAPIDriverForASIO/0.9.7/. RELEASING.txt step
+  0 describes how it is filled in and how to create the repository and the
+  first release from the web interface (100 files per upload, no empty
+  folders) or with GitHub Desktop.
+- Update check: upd::IsPlaceholderRepo also treats an owner containing
+  "PLACEHOLDER" (any letter case, owner part only) as not configured, so a
+  build made before the owner is filled in never contacts GitHub ("Update
+  source not configured yet"). tests/update_test.cpp covers it.
+- release.yml refuses a tag build while the owner token is still present.
+- Privacy: documents, comments and tests no longer name the developer's
+  own hardware or Windows build; KNOWN-ISSUES.txt and COMPATIBILITY.txt use
+  generic device descriptions (Bluetooth earbuds, USB audio interface, HDMI
+  monitor audio, Windows 11 Insider build). The channel-name examples and
+  test inputs use fictional devices ("Nordvik AX-22", "Kestrel E10") that
+  exercise the same rules; tests/chnames_test.cpp adds the exact 31-byte
+  boundary cases.
+- .gitattributes: line endings kept as stored (CRLF Windows text files,
+  LF shell scripts and YAML) so the GitHub Actions runners can run the
+  build scripts. SPDX headers added to the workflows, issue forms, winget
+  manifests, .gitignore, src/strings_ids.inc and src/WasapiBridge.def.
+- README: where to get the program (GitHub Releases); SECURITY.txt: GitHub
+  private vulnerability reporting; CONTRIBUTING.txt: repository, issues and
+  pull requests.
+- Portable install.bat / uninstall.bat colors 9A / 70.
+
+0.9.6 (changes from 0.9.5) - release candidate; fixes from real use
+--------------------------------------------------------------------
+Real hardware with 0.9.5: KI-3 verified fixed (Bluetooth earbuds put in
+their case while Cubase played a 44.1 kHz project: no
+rate dialog). Fixes for the open items of KNOWN-ISSUES.txt and the notes of
+the 0.9.5 documentation pass (CODE-REVIEW.txt D1-D12).
+- KI-4: the panel's microphone-privacy warning ("Windows blocks recording
+  ... Set to None") appears only when an input is selected (Input device or
+  an extra input) and Windows denies microphone access; with Input "(None -
+  no inputs)" and no extra inputs it stays hidden. It follows the selection
+  before Apply. "Set to None" also clears the extra inputs. The
+  direct-monitoring note and the diagnostics verdict use the same rule.
+- KI-5: the fixed-ratio converter uses sinc whenever the CPU budget
+  (150 M MAC/s) allows, also when the rate goes up, independent of
+  ResamplerQuality (which now only selects the drift resampler). Hermite
+  only above the budget going up; Windows converts above the budget going
+  down. Log: "Output: rate conversion 44100 -> 48000 Hz, 2 channels: sinc
+  (12 M MAC/s, budget 150 M)". The decision (fr::Choose) and its log text
+  (fr::Describe) are pure functions checked by tests/fixedratio_test.cpp.
+- Installer and uninstaller (KI-2): before changing anything they check
+  that the installed DLLs and tools are not in use; if one is locked (a DAW
+  or a hung host has the driver loaded) a message asks to close the audio
+  programs (Cubase, DaVinci Resolve, Ableton Live, ...) with Retry /
+  Cancel. Stock NSIS only (FileOpen for write access); silent mode cancels.
+- Code-review notes D1-D12 (CODE-REVIEW.txt): crash handler comment (5 s),
+  events closed when the dump thread cannot start, session files store the
+  process creation time (reused pid) and a protected live process counts as
+  alive, "nan" rejected for SampleRate / Gain / LastHostRate, a profile no
+  longer resets UpdateLastCheck, no settings folder at the drive root when
+  AppData is unavailable, no 3 s wait of the panel when launching a
+  downloaded Setup, diagnostics read the real end of a large log, T6 reads
+  the registry view of its own bitness, T8 recognizes the Loopback input by
+  its exact name; wrong comments corrected.
+- WasapiDriverDiag.exe and WasapiDriverTest.exe carry version information
+  (0.9.6) like the DLLs.
+- Independent review of 0.9.6 (CODE-REVIEW.txt R1-R7): the converter CPU
+  budget is shared by all converters of a session (output first, then the
+  inputs; log "Output: converter CPU budget left for inputs ..."); a
+  launched update Setup stays locked against replacement until it is idle,
+  without blocking the panel; the dump thread owns its events; crash
+  session check tries query-only access before assuming a process is
+  alive; the installer clears a read-only attribute before its in-use
+  check; the direct-monitoring note follows the input selection at once;
+  the diagnostics microphone verdict reads the driver's inputs from
+  config.ini and uses the driver's settings-folder fallback.
+- Portable install.bat / uninstall.bat colors 0A / 8F.
+
+0.9.5 (changes from 0.9.4) - release candidate; one fix from real use
+-----------------------------------------------------------------------
+Real hardware with 0.9.4: automatic test PASSED (IAudioClient3 period 480 at
+48 kHz, internal 96k->48k sinc), more than 2 hours of use, DaVinci Resolve
+OK, sleep/resume OK, Bluetooth headphones removed -> output moved to the
+speakers without stopping and came back. One bug: config.ini said
+SampleRate=96000, Cubase ran a 44.1 kHz project (setSampleRate 44100); when
+the Bluetooth device disappeared the driver's reset re-created the instance,
+which started at 96000 from config.ini, and Cubase reported "The ASIO
+Sample Rate has changed: ASIO 96 kHz, Project 44.1 kHz".
+- The rate set with setSampleRate is now kept across every reset the driver
+  causes, across a release + re-creation of the instance in the same process
+  (per-process memory block that survives a DLL unload) and, as config.ini
+  LastHostRate (written on setSampleRate), in the next process.
+- Precedence (src/ratepolicy.h): host rate of this process > SampleRate=Auto
+  > LastHostRate (not in crash safe mode) > the panel's SampleRate. A Sample
+  rate changed in the panel clears the remembered rate; with Auto a change
+  of the Windows rate clears the process value so its reset follows Windows.
+  The log names the source ("host", "last host", "panel", "auto").
+- tests/ratepolicy_test.cpp (new): the field bug and every precedence rule.
+- WasapiDriverTest T10: sets 44100 (48000 if already 44100), releases the
+  driver, lets COM unload it, re-creates and checks the rate (also after
+  createBuffers); restores the start rate (stored as LastHostRate).
+- Portable install.bat / uninstall.bat colors 6C / 2D.
+
+0.9.4 (changes from 0.9.3) - release candidate; low-latency engine at any rate
+------------------------------------------------------------------------------
+Suggested by Microsoft's Windows music team: use IAudioClient3 for low
+latency. Until 0.9.3 the low-latency Shared engine was used only when the
+ASIO rate equaled the Windows mix rate; a DAW at 44.1 kHz on Windows at
+48 kHz always got the standard 10 ms engine plus Windows' own converter.
+- Main output, Shared, LowLatencyShared=1: always opened at the device's mix
+  format and rate. Fallback chain: IAudioClient3 at the minimum engine
+  period -> IAudioClient3 at the default period -> standard Shared at the
+  mix rate (own conversion) -> standard Shared at the ASIO rate with
+  AUTOCONVERTPCM (the 0.9.3 path, last resort).
+- Internal fixed-ratio conversion (src/fixedratio.h) when the ASIO rate
+  differs from the device rate: exact rational ratio (44.1 -> 48 kHz =
+  147/160), integer phase stepping, no drift and no control loop (the device
+  is the clock master). Polyphase windowed sinc (Kaiser, 64 taps per side at
+  the lower rate, one exact coefficient set per phase); ResamplerQuality=
+  Hermite selects a 4-point Hermite for low CPU. No allocation on the audio
+  thread (all buffers sized when the stream opens).
+- ASIO callbacks on demand: the audio thread wakes on the device event,
+  asks the converter how many ASIO frames it needs for the device period
+  and calls bufferSwitch only for those; samplePosition still advances by
+  exactly the buffer size per callback and systemTime is the block's
+  estimated time (anchored to the wake-ups, src/sched.h).
+- Low-latency output keeps two engine periods queued (or one period plus one
+  ASIO block, if longer) instead of the whole buffer; this also lowers the
+  latency of the 0.9.3 equal-rate low-latency path.
+- Inputs (main and extra) open at their own mix rate as well (IAudioClient3
+  when available), converted by the driver. An input on the output's clock
+  is delivered with a fixed delay so the round trip equals the reported
+  latencies; inputs on another clock keep the drift PI on top of the
+  conversion. Loopback and Exclusive mode are unchanged. Extra outputs keep
+  the standard Shared stream (see CODE-REVIEW.txt AI3).
+- getLatencies: device stream latency + frames kept queued + converter
+  delay, converted to ASIO frames, plus the user offsets.
+- Panel Status, Copy status and the log show the engine line, e.g.
+  "Engine: low latency (IAudioClient3), period 144 frames (3.00 ms) at
+  48000 Hz; internal rate conversion 44100->48000 Hz (sinc)". The Diag tool
+  says per device whether a low-latency period below the default exists;
+  WasapiDriverTest T2 prints the engine line (private ASIOFuture selector).
+- Direct monitoring with a converted output: from the capture packets when
+  the input runs at the output device's rate (same device); not available
+  when it does not (logged).
+- tests/fixedratio_test.cpp (new): quality (SNR, pass band, stop band, CPU)
+  and the timing model (10 simulated minutes per case, measured round trip).
+  tests/sink_test.cpp: low-latency master cases and a PASSED/FAILED result.
+- Portable install.bat / uninstall.bat colors 3A / 5B.
+- Review fixes before release (CODE-REVIEW.txt AJ1-AJ7): input latency of a
+  converted aligned input no longer counts the ASIO block twice (one shared
+  formula, sched::ReportLatencies, checked by the model); every ASIO output
+  channel is converted (OutputMap routes from extra-device channels);
+  kAsioCanInputMonitor reports "not present" when monitoring is impossible
+  and a change asks the host to reset, with a note in the panel; CPU budget
+  of 150 M MAC/s (Hermite above it when the rate goes up, Windows converts
+  when it goes down), sinc always used when the rate goes down, sinc loop
+  2.4x faster; a failed input converter falls back to Windows conversion;
+  IAudioClient3 retries longer periods when one period plus one ASIO block
+  does not fit the buffer.
+
+0.9.3 (changes from 0.9.2) - release candidate; feature-freeze exception (interface only)
+----------------------------------------------------------------------------------------
+Real test of 0.9.2 on Windows: the panel is liked; two complaints: the
+panel's title bar showed no icon, and the tray icon was a plain dot that
+said nothing about the driver.
+- Application icon (original artwork, scripts/make_icon.py): dark rounded
+  tile, two nodes joined by a teal-to-cyan arch ("bridge"); src/res/app.ico
+  with 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px (256 as PNG; 16-32
+  hand-tuned), src/res/icon-256.png. Options B and C were made as previews
+  only.
+- Used by the control panel (title bar: the panel and its dialogs no longer
+  use WS_EX_DLGMODALFRAME, which hid the icon), its dialogs, the monitor
+  window, the panel's message boxes (taskbar / Alt+Tab, CBT hook), the
+  About tab (under the ASIO Compatible logo with 24 px of clear space),
+  WasapiDriverDiag.exe and WasapiDriverTest.exe (file icon and console
+  window icon, restored on exit), the Setup and uninstaller (MUI_ICON /
+  MUI_UNICON), the Start menu shortcuts and Settings > Apps (DisplayIcon).
+  Window icons are loaded at the DPI of the window (GetSystemMetricsForDpi
+  at run time) and cached for the life of the DLL.
+- Tray icon: the application icon with a status dot (40 % of the icon, 1 px
+  dark outline) built at run time for the tray icon size; green OK, amber
+  DSP load above 80 %, red dropouts in the last 10 s (held 10 s), gray
+  stopped; the four icons are cached, rebuilt when the size or the display
+  / theme settings change and destroyed with the window. The tooltip ends
+  with the state (OK, High load, Dropouts, Stopped; 4 new strings).
+- tests/icon_test.cpp: icon sizes and formats; the dot of all four states
+  on the real 16/20/24/32 px images (bottom-right quadrant only, state
+  color, dark outline); the state rules.
+- WasapiDriverDiag.exe now also imports user32 (console icon).
+- Portable install.bat / uninstall.bat colors 4C / 1C.
+
+0.9.2 (changes from 0.9.1) - release candidate; feature-freeze exception (UI help only)
+--------------------------------------------------------------------------------------
+- Help tips: every control of the panel (all tabs, bottom bar), of the
+  profile name and routing dialogs and of the floating monitor window, plus
+  the four status tiles, the meters, the tabs and the monitor window's text
+  lines: 1-3 short lines, a recommendation where useful and a tag "Applies
+  live" or "DAW restarts the driver" (same classification as NeedsReset).
+- Own tip window (no comctl32): theme colors (system colors in high
+  contrast), at most 360 logical pixels wide with word wrap, DPI aware,
+  next to the cursor, kept on the monitor work area and off small controls.
+  600 ms hover; hides on leave, click, key, wheel, tab switch, rebuild, DPI
+  change and after 15 s. F1 / Shift+F1 show the tip of the focused control,
+  Esc hides it. Host-thread timer and WM_SETCURSOR tracking, no new thread,
+  nothing on the audio thread.
+- Interface > "Show help tips" (HelpTips=0|1, default 1, LIVE).
+- The tip is also each control's accessible description (Direct Annotation;
+  toggles and sliders through their IAccessible wrapper).
+- 87 new strings in English, Spanish, Portuguese, French and German (356
+  in all); tests/strings_test.cpp requires a tip for every control and at
+  most 220 characters per tip.
+- Control ids moved to src/panel_ids.h; tip table src/tips.h.
+- Portable install.bat / uninstall.bat colors 2C / 7D.
+
+0.9.1 (changes from 0.9.0) - release candidate, feature freeze until 1.0
+-----------------------------------------------------------------------
+Review of 0.9.0: 12 defects fixed (CODE-REVIEW.txt, AF1-AF12):
+- AF1 Updater: the Setup is hashed, its signature checked and it is started
+  through one read-only handle that denies writers until the process exists
+  (ShellExecuteExW + WaitForInputIdle); the download stays open without
+  sharing from the first byte to the signature check and is renamed through
+  that handle (SetFileInformationByHandle).
+- AF2 Updater: the DLL reference is taken before the worker thread exists
+  (and released if CreateThread fails); running jobs count in g_objects.
+- AF3 Instance registry locked (SRWLOCK); the panel's rebind gets its
+  reference under the lock and never an instance whose count reached 0.
+- AF4 Updater: cancel on panel close (aborts the open request) and total
+  deadlines (2 minutes for a check, 10 for a download).
+- AF5 Updater: the final host after redirects must be api.github.com (check)
+  or github.com / objects.githubusercontent.com /
+  release-assets.githubusercontent.com (downloads).
+- AF6 SampleRate=Auto: a Windows rate change sends only kAsioResetRequest;
+  the new rate is reported after the reset (getSampleRate, getLatencies and
+  ASIOTime stay those of the running stream until then).
+- AF7 The panel does not rebind to a new driver instance while one of its
+  dialogs or message boxes is open.
+- AF8 Pre-release versions compared per SemVer (rc.10 > rc.9).
+- AF9 Channel names: a long name no longer becomes empty; cuts never split a
+  double-byte character.
+- AF10 sign.sh: the certificate password goes through a 0600 file
+  (-readpass), never the command line.
+- AF11 Workflows: third-party actions pinned to commit SHAs; the ARM64X DLL
+  (continue-on-error job) is published unsigned and never signed.
+- AF12 A theme previewed but not applied is dropped on every way the panel
+  closes, and every monitor window of the process is re-themed.
+Release polish:
+- B1 Accessibility: toggles are check boxes for screen readers (state and
+  default action), sliders are sliders with a value, every control has a
+  name; Enter and Space activate the focused button or toggle (Enter no
+  longer applies from a toggle); Alt+letter for the tabs, Apply and Close;
+  focus ring with its own contrasting color in every theme; status texts
+  reachable with Tab; Windows high contrast: system colors, no visuals,
+  gradients or dark styles (switches live). The white ASIO Compatible logo
+  gets a dark plate on light backgrounds (Light theme, high contrast).
+- B2 Installer: welcome page and page header with the ASIO Compatible logo
+  (proportions kept, dark background) next to the product name, with the
+  attribution sentence.
+- B3 Soak test: WasapiDriverTest.exe --soak <minutes> [--soak-cycle]; one
+  line per minute (callbacks, timing, overloads, ASIOTime, memory, handles,
+  GDI/USER), device events with recovery time (reset requests, device
+  changes, sleep and resume, stalls), leak-trend verdict;
+  WasapiDriver-soak.txt; Start menu "Soak test (60 min)".
+- B4 QUICK-START.txt, FAQ.txt and COMPATIBILITY.txt; new release folder
+  layout (Docs, Legal, Portable-Install, Tools, Source-Code).
+- B5 Stable and beta features marked in the README (section 36) and on the
+  About tab. 269 interface strings.
+- Portable install.bat / uninstall.bat colors 6A / 3C.
+
+0.9.0 (changes from 0.8.3)
+--------------------------
+Real test of 0.8.3: automatic test PASSED with 0 invalid ASIOTime fields in
+every phase, diagnostics OK. User requests:
+H1 - Themes
+- Dark, Retro Blue (16-bit), Retro 8-bit, Green Terminal, Neon, Light
+  (src/themes.h): every color of the panel, dialogs, monitor window, meters
+  and visuals; native controls and the title bar switch to the light system
+  style with Light; retro themes draw the title with the 5x7 dot font.
+  Original palettes, no product names in the interface (config keys
+  Dark|RetroBlue|Retro8|Terminal|Neon|Light; Amiga / C64 accepted as
+  aliases). LIVE (preview at once, Apply saves). Contrast >= 4.5:1 for all
+  normal-text pairs (tests/themes_test.cpp). Tray dot colors unchanged.
+H2 - Four more background effects (src/visuals.h)
+- Metaballs, Fire (fixed 60 Hz simulation steps from real time), Vector
+  (rotating wireframe icosahedron, no logo or trademark), Twister. Effect
+  palettes follow the theme (setPalette). Same timing, intensity, speed and
+  throttle rules; visuals_test covers them (bounds, hash, time-based,
+  speed, frame time 0.03-0.47 ms at 320x240).
+H3 - Optional update check (src/update.h, src/update.cpp)
+- Off by default; "Check for updates now" and a weekly option (only when
+  the panel opens). GitHub Releases API over HTTPS (WinHTTP), worker
+  thread, result posted to the panel; Download verifies SHA-256 (BCrypt)
+  against SHA256SUMS.txt and an Authenticode signature if present
+  (WinVerifyTrust); Install only on explicit confirmation. winhttp,
+  bcrypt and wintrust are loaded at run time from System32 (no new
+  imports). Placeholder repository until publication ("Update source not
+  configured yet"); UpdateRepo= overrides. Offline test of the version
+  comparison and the JSON reader (tests/update_test.cpp).
+H4 - Interface languages
+- Language=Auto|en|es|pt|fr|de; string table src/strings.h with
+  strings_en/es/pt/fr/de.h (265 strings); panel, dialogs, monitor window,
+  tray, status texts. Copy status, log.txt, diagnostics, the test tool and
+  the documentation stay English. Runtime layout check (small font or
+  ellipsis when a translation does not fit, logged). Installer pages in
+  English and Spanish (NSIS Modern UI 2). Offline test: every id in every
+  language, no empty strings, identical printf placeholders
+  (tests/strings_test.cpp).
+Other
+- New "Interface" tab (theme, language, visuals, updates); the About tab
+  keeps the text and the scroller.
+- install.bat / uninstall.bat console colors 1A / 5C.
+
+0.8.3 (changes from 0.8.2)
+--------------------------
+Real automatic test of 0.8.2: PASSED, but T7 reported "ASIOTime over the
+whole run: timeInfo calls 12801, plain calls 0, invalid fields 870" while T2
+showed 0 (ASIO rate 44100 from config.ini, Bluetooth output with a 48000
+mix, an extra input configured).
+Cause (test host): the tester compared every callback's sampleRate with one
+global rate. T5 ends by setting 48000 on the first driver instance and the
+global followed; T6 then loads 10 fresh instances, which correctly start at
+the config.ini rate (44100) and report it - so all T6 callbacks (10 cycles x
+0.5 s, about 87 each = 870) were counted as "bad sampleRate". The driver
+reported its own current rate every time. Reproduced offline by
+tests/timeinfo_test.cpp (old rule: 870, new rule: 0).
+Tester fixes (WasapiDriverTest.exe):
+- The expected rate is what the running instance reports with
+  getSampleRate() just before start(), per test phase (T2, T3, T4 per
+  buffer size, T5 per rate, T6, T8, T9); T5 also checks that it equals the
+  rate the tester set.
+- Invalid fields counted per phase and per kind (null, no samplePosition,
+  no systemTime, bad sampleRate with the reported and expected value); an
+  "ASIOTime (<phase>):" line in every test; each test fails when its count
+  is above 0, T7 also on the total. The first 8 invalid callbacks are
+  listed in T7 (phase, callback index, flags, reported and expected rate).
+  Shared logic in src/tichk.h.
+Driver hardening (no behavior change in the test above):
+- The audio thread reads its own copy of the sample rate (rateRun, set in
+  start() before the thread exists). With SampleRate=Auto the host thread
+  sets the new Windows rate in `rate` while the old stream may still run
+  until the host resets; that was a data race and could report the new rate
+  for callbacks of the old stream. Now the running stream always reports the
+  rate it was started with, with kSampleRateValid, kSamplePositionValid and
+  kSystemTimeValid on every callback.
+- install.bat / uninstall.bat console colors 7B / 4D.
+
+0.8.2 (changes from 0.8.1)
+--------------------------
+Real test of 0.8.1: the panel opens and the visuals show, but the
+animation was so slow it barely looked animated.
+Root cause (code review; three effects adding up):
+- The automatic throttle timed the whole WM_PAINT (header, tabs, every
+  visible card, tiles, text and the full-window copy to the screen), not
+  only the background. On a normal panel, and certainly at high display
+  scaling, that exceeds 4 ms, so after 30 frames the effect dropped to
+  15 fps and after 30 more it paused on a static frame, which then changed
+  only when other parts of the panel were repainted.
+- The 33 ms timer fires on the 15.6 ms system tick, i.e. about every 47 ms
+  (about 21 fps) when the audio is not running, and the time came from
+  GetTickCount (15.6 ms steps), so the movement also stuttered.
+- The default speeds were slow (plasma cycle about 9 s, copper sweep about
+  6 s, tunnel about 3 s per texture length).
+Fixes:
+- Renderer time-based: phase = elapsed time (QueryPerformanceCounter, in
+  microseconds) x speed; the stars carry the fractional distance over;
+  the first frame is time 0, steps over 200 ms are clamped. Dropped frames
+  never slow the movement down (offline test: 1 s at 100 fps == 1 s at
+  50 fps).
+- About 3 x faster defaults: plasma cycle ~3 s, starfield ~1 s through the
+  field, copper sweep ~2 s, tunnel one texture length per second, scroller
+  ~120 px/s at 100 % scaling.
+- Speed slider next to Intensity: VisualsSpeed=25..400 (percent, default
+  100, LIVE, logarithmic slider with 100 % in the middle).
+- Dedicated 15 ms animation timer (~60 fps: one frame per system tick;
+  16 ms would round up to two ticks). Only render + blit of the background
+  is measured, averaged over 2 s: above 6 ms -> 31 ms timer (~30 fps),
+  below 3 ms -> back to 60 fps. Never paused except minimized / hidden /
+  Windows animations off.
+- Status tab: "Visuals: <effect>, <fps> fps, <ms> ms/frame, throttled:
+  yes/no".
+- tests/visuals_test.cpp: frame-rate independence and speed scaling checks;
+  frame-time limit 6 ms.
+- install.bat / uninstall.bat console colors 2B / 5D.
+
+0.8.1 (changes from 0.8.0)
+--------------------------
+Panel visuals (user request): an optional animated "demoscene style"
+background for the control panel, written from scratch with classic generic
+techniques (no code, art, music or fonts from existing productions).
+- Effects: Plasma (sum of sines, cycling palette), 3D Starfield, Copper
+  bars, Tunnel (angle / distance lookup table, procedural texture) and an
+  Audio-reactive mix driven by the meter peaks the panel already reads. The
+  About tab adds a sine scroller over a starfield ("WASAPI Driver for ASIO
+  0.8.1 - free software under GPLv3 - greetings to everyone who makes
+  music") drawn with a built-in 5x7 dot font.
+- Portable software renderer src/visuals.h: low-resolution 32-bit buffer
+  (client / 3 or more, at most 320 x 240), integer and table math, no
+  allocation per frame; stretched with COLORONCOLOR into the cached back
+  buffer before the cards and text. Only the background region is
+  invalidated and painted (clip region), children keep WS_CLIPCHILDREN.
+- 30 fps timer; render + paint time is averaged: above 4 ms -> 15 fps, still
+  above -> static frame. Paused while minimized or hidden; static frame when
+  Windows "Show animations" is off; off in a Remote Desktop session unless
+  the Visuals key was chosen by the user.
+- Keys (LIVE, general only): Visuals=Off|Plasma|Starfield|Copper|Tunnel|
+  Reactive (default Plasma), VisualsIntensity=0..100 (default 35),
+  VisualsMonitor=0|1 (default 0: the effect at low intensity behind the
+  monitor window's meters). Controls on the About tab (effect, a slider,
+  monitor toggle).
+- Offline test tests/visuals_test.cpp (bounds-checked build, every effect at
+  several sizes, deterministic hash, intensity 0 = plain background, time
+  per frame); preview PNGs can be produced with --dump.
+- Panel minimum logical height 700 (the layout scale shrinks on small
+  screens).
+- install.bat / uninstall.bat console colors 1D / 6B.
+
+0.8.0 (changes from 0.7.1)
+--------------------------
+Real-hardware result of 0.7.1 (Cubase 15): plays correctly, the floating
+monitor window appears with moving meters.
+G1 - Bluetooth mode
+- Bluetooth endpoints are detected from the device enumerator (BTHENUM,
+  BTHHFENUM, BTHLEDEVICE). BLUETOOTH badge in the panel's Live card and in
+  the monitor window; a Bluetooth flag per endpoint in the diagnostics
+  report and in the status text.
+- Recommended buffer (512, or two device periods if more) with a one-click
+  "Use recommended" button on the Main tab.
+- The panel explains that Windows does not report the real Bluetooth delay
+  and suggests an output latency offset of about +150 ms (Advanced tab);
+  never applied automatically.
+- Protect A2DP (ProtectA2dp=1, default on, RESET): the microphone of the
+  Bluetooth device used as output (same ContainerId) is not opened, as main
+  or extra input, so the headset stays in stereo A2DP; the reason is shown
+  under the input device and logged.
+G2 - Hearing-safety limiter (src/limiter.h)
+- Limiter=0|1 (default 0), LimiterCeilingDb -0.1..-20 (default -1),
+  LimiterGainCap=0|1, LimiterGainCapDb -20..24; all LIVE and stored in
+  profiles. Lookahead-free, soft knee 3 dB under the ceiling, instant
+  attack, 150 ms release, linked channels, last stage of the main output
+  and of every extra output (before integer conversion and dither).
+- Gain reduction in the panel meters and the monitor window.
+- Offline test tests/limiter_test.cpp (no overshoot at any ceiling, bit
+  exact below the knee, linked, no denormals, click-free release). The test
+  found that the release stalled 0.0002 below unity in float; the release
+  now runs on the gain deficit and reaches exactly 1.0.
+G3 - Automatic profile per program
+- [HostProfiles] program.exe=profile (case-insensitive) is applied in
+  init() before any device is opened; logged with the program's file name
+  only (sanitized). Advanced tab card: profile for this program, list of
+  all programs, Remove.
+G4 - Follow the Windows sample rate
+- SampleRate=Auto ("Follow Windows (Shared)"): the initial rate is the
+  Windows mix rate; IMMNotificationClient::OnPropertyValueChanged
+  (PKEY_AudioEngine_DeviceFormat) is queued like the other device events;
+  on the host thread a real change of the output's Windows rate calls
+  sampleRateDidChange and requests a reset. With a fixed rate only a log
+  line is written (Windows converts). The audio thread is not involved.
+G5 - Tray icon
+- TrayIcon=1 (default): notification-area icon (NOTIFYICON_VERSION_4)
+  while buffers exist; tooltip with mode, rate, buffer, DSP load and
+  dropouts; colored dot generated at runtime (gray, green, amber > 80 %,
+  red on dropouts); left click toggles the monitor window; menu: Open
+  settings, Show monitor window, Reset counters, Copy status, About. Added
+  again after TaskbarCreated. Owned by the message-window thread, removed by
+  disposeBuffers and the destructor on that thread.
+G6 - ASIO channel names from the devices
+- DeviceChannelNames (RESET): 1 for a new config.ini, 0 when an existing
+  config.ini lacks the key (upgrade: the DAW's saved port names keep
+  working); the resolved value is written to config.ini at the first load.
+  With 1: "<short device name> <position or
+  number>", e.g. "AX-22 In 1", "Kestrel E10 L", "Loopback L"; at most 31
+  characters, converted to the ANSI code page without best-fit mapping,
+  unique. With 0 the previous names are used. Offline test
+  tests/chnames_test.cpp.
+G7 - Release preparation
+- .github/workflows/release.yml (tag v*: all binaries, tests, Setup,
+  binaries zip, source zip, SHA256SUMS.txt, draft GitHub Release), winget
+  manifest templates (manifests/), issue forms (.github/ISSUE_TEMPLATE),
+  RELEASING.txt.
+G8 - Code-signing preparation
+- scripts/sign.sh (PFX + osslsigncode, RFC 3161 timestamp; no-op without a
+  certificate), NSIS !finalize / !uninstfinalize hooks (-DSIGN_CMD), an
+  optional Azure Trusted Signing job (signtool + dlib), SIGNING.txt.
+G9 - ARM64X
+- Not buildable with the Linux toolchains (no ARM64EC code generation or
+  libraries). Experimental "arm64x" job on a Windows 11 ARM64 runner with
+  MSVC (cl /arm64EC, link /machine:arm64x); not part of the Setup.
+Other
+- Silent install (/S): x64 DLL in the 64-bit view on ARM64 by default.
+- Panel minimum logical height 640 (the layout scale still shrinks to fit).
+- install.bat / uninstall.bat console colors 8E / 3B.
+
+0.7.1 (changes from 0.7.0)
+--------------------------
+Real-hardware result of 0.7.0 (Windows 11 Insider build, Cubase 15): automatic
+test PASSED, diagnostics OK. User feedback addressed:
+A - Panel always findable
+- A 250 ms timer applies a topmost policy to the panel and its dialogs:
+  HWND_TOPMOST only while the foreground window belongs to the host
+  process, HWND_NOTOPMOST otherwise (never covers other programs);
+  SetWindowPos only when the state changes. Same policy for the monitor
+  window when Pin is on.
+- The panel is now an unowned top-level window and no host window is
+  disabled while it is open, so closing the window that opened it (Cubase's
+  Studio Setup) no longer closes the panel. Child dialogs and prompts are
+  owned by the panel. Dialog loops end safely if their window
+  disappears. The panel keeps its taskbar button (WS_EX_APPWINDOW).
+B - Panel survives a driver restart
+- Process-wide registry of initialized driver instances (host thread). When
+  the host releases the panel's instance, the panel rebinds to the new one
+  (AddRef new, Release old), keeping controls and tab; "Restarting
+  driver..." while waiting; after 5 s "The DAW released the driver. Settings
+  were saved." (Apply saves only; polling continues). The panel holds and
+  releases its own reference (controlPanel no longer does). Replaces the
+  0.7.0 "reopen the panel" behavior.
+C - UI clarity
+- Main tab: "Output device" / "Input device"; input list starts with
+  "(None - no inputs)", then "(Windows default)" (config values unchanged).
+  Privacy warning under "Input device" with a "Set to None" button.
+- "Devices" tab renamed "Extra devices & monitoring"; direct monitoring
+  "Input channels" / "Output channels".
+- If the panel does not fit the work area at the current DPI, its layout
+  scale is reduced so the bottom bar (Apply, Close) is always visible
+  (also after moving to another monitor).
+D - install.bat / uninstall.bat console colors 4B / 2A.
+
+0.7.0 (changes from 0.6.1)
+--------------------------
+F1 - Settings without stopping the audio
+- Every setting is LIVE or RESET (table in ARCHITECTURE.txt section 28). LIVE
+  settings (gain, dither, output routing, latency offsets, direct
+  monitoring, monitor window, log, device following) are applied at the next
+  buffer: the host thread publishes them to the audio thread with a
+  lock-free seqlock (src/live.h). RESET settings (devices, mode, buffer,
+  rate, low latency, drift correction, resampler, loopback, channels, extra
+  devices, alignment) are saved and the driver asks the DAW to restart it
+  (kAsioResetRequest, sent from the hidden window, never from inside the
+  panel).
+- The panel stays open after "Apply" and says "Applied live." or "The DAW
+  will restart the driver."; RESET settings are marked with a dot. "Cancel"
+  is now "Close". The panel can be opened while the audio runs (from the
+  monitor window); only one panel at a time.
+F2 - Floating monitor window
+- Optional tool window (MonitorWindow=1): meters, DSP load, dropouts,
+  latencies, a one-line summary, Settings / Reset counters / Pin / Close;
+  resizable, per-monitor DPI, position remembered and clamped to visible
+  monitors, never steals the focus, no owner. Created and refreshed on the
+  host thread (~30 Hz timer) from lock-free data; separate meter consumer so
+  it and the panel both see every peak.
+F4 - Latency offsets
+- OutputLatencyOffsetMs / InputLatencyOffsetMs (-50..+500 ms) added by
+  getLatencies; Advanced tab; live (kAsioLatenciesChanged, or a reset
+  request if the host does not support it).
+- WasapiDriverTest --latency offers to save the measured difference as an
+  output offset (same config writer as the driver).
+F5 - Direct monitoring
+- Panel direct monitoring (input pair or mono input -> output pair, level,
+  pan, mute) and the host's kAsioSetInputMonitor share one mixer: 5 ms
+  click-free gain ramps, constant-power pan / balance, denormal flushing,
+  a soft limiter on the output while monitoring, post-mix output meters.
+  Same-clock inputs are monitored straight from the capture packets;
+  drift-corrected inputs after resampling, so the monitor runs on the output
+  clock. Loopback inputs are excluded; monitoring stops without an input.
+- kAsioCanInputGain / kAsioCanOutputGain are not implemented (the host is
+  told so).
+F8 - Crash protection
+- A vectored exception handler writes a minidump (dbghelp loaded at
+  runtime from System32) and a crash marker for fatal exceptions inside the
+  driver DLL, from a dedicated pre-created thread, then lets the host handle
+  the fault. At most 5 dumps are kept.
+- After a crash the next session starts in safe mode (Shared, default
+  output, no input, no extras, no loopback, no direct monitoring, buffer
+  512) without touching config.ini; banner and "Use my settings again" in
+  the panel and the monitor window; the marker is cleared on request, on
+  Apply, or after a clean safe session.
+- Every pointer and index passed by the host is validated (createBuffers,
+  getChannelInfo, getLatencies and the other getters, kAsioSetInputMonitor).
+- Diagnostics: "Crash reports" section (dumps, marker, how to attach).
+F9 - Small fixes
+- WasapiDriverTest checks the ASIOTime passed to bufferSwitchTimeInfo
+  (samplePosition, systemTime, flags, sampleRate) and reports it in T2/T7.
+- Diagnostics: microphone privacy section with a clear verdict; the panel's
+  Devices tab shows the same verdict when access is denied (0.7.1: tab
+  renamed "Extra devices & monitoring").
+Other
+- install.bat / uninstall.bat console colors 3D / 6E.
+- New offline tests tests/dmix_test.cpp (direct-monitor mixer) and
+  tests/live_test.cpp (live-settings publication), also in CI.
+
+0.6.1 (changes from 0.6.0)
+--------------------------
+Real-hardware result of 0.6.0: automatic test PASSED, diagnostics OK.
+- config.ini: the comment lines are regenerated in English whenever the file
+  is loaded or saved (files migrated from 0.5.x kept their old Spanish
+  comments). Every section, key and unknown key is kept verbatim and in
+  order; only comment and blank lines are replaced. The new file is written
+  to a temporary file and moved over config.ini (MoveFileEx with
+  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), so a crash cannot
+  leave a truncated file; nothing is written when the file is already
+  normalized.
+- Privacy of printed output: the Diagnostics and Test reports, log.txt, the
+  console and the panel's "Copy status" print user folders as %APPDATA%,
+  %LOCALAPPDATA%, %TEMP% or %USERPROFILE% and mask the user name and the
+  computer name. The Diagnostics report shows endpoint Ids and
+  ContainerIds as short FNV-1a hashes by default (--full-ids shows them);
+  the log shows device Ids of change events as hashes.
+- Builds use -ffile-prefix-map / -fmacro-prefix-map and are stripped, so no
+  build-host path is embedded.
+- Build option WB_SHOW_ASIO_LOGO=0 (default 1) removes the ASIO Compatible
+  logo from the panel and the DLL resources (see TRADEMARKS.txt).
+- Legal documents: COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt, TRADEMARKS.txt,
+  DISCLAIMER.txt, PRIVACY.txt, SECURITY.txt, CONTRIBUTING.txt (installed
+  with the program and shipped with the source code). Copyright holder:
+  "The WASAPI Driver for ASIO contributors".
+- install.bat / uninstall.bat console colors 5A / 1B.
+- Remaining legacy Spanish literals (needed only for migration) carry an
+  English comment explaining why.
+
+0.6.0 (changes from 0.5.1)
+--------------------------
+Name and trademark
+- New name "WASAPI Driver for ASIO" (getDriverName, key
+  HKLM\SOFTWARE\ASIO\WASAPI Driver for ASIO in the 64-bit and 32-bit views;
+  same CLSID). Files WasapiDriver64/ARM64/32.dll, WasapiDriverDiag.exe,
+  WasapiDriverTest.exe; folder %ProgramFiles%\WASAPI Driver for ASIO; Start
+  menu folder "WASAPI Driver for ASIO"; settings in
+  %APPDATA%\WASAPI Driver for ASIO (config.ini copied from
+  %APPDATA%\WasapiBridge on first load when the new one does not exist).
+- Steinberg ASIO Usage Guidelines: "ASIO" only to indicate compatibility
+  ("for ASIO"), (R) on the first mention, the attribution "ASIO is a
+  registered trademark of Steinberg Media Technologies GmbH." in the
+  documentation, panel, installer and tools; the ASIO Compatible logo
+  (white, transparent) embedded as RCDATA and shown in the panel.
+Migration from WasapiBridge
+- The installer removes the old ASIO keys (both views), the files and
+  shortcuts of the old installation and then its uninstall entry (both
+  views). The old folder is taken from InstallLocation of the old uninstall
+  entry (64-bit view, then 32-bit view), falling back to
+  %ProgramFiles%\WasapiBridge; only known files are deleted.
+- DllRegisterServer and DllUnregisterServer remove
+  HKLM\SOFTWARE\ASIO\WasapiBridge in both registry views (only that key).
+- install.bat removes the old ASIO keys too. The Diagnostics tool reports
+  any leftovers.
+Control panel
+- New dark UI: DWM dark title bar, dark native controls, rounded cards,
+  owner-drawn buttons and toggles with hover, tabs Main / Advanced /
+  Devices / Status / About, live tiles (latencies, DSP load with colors,
+  glitches), full-height meters with a single dB scale and a gradient, dark
+  dialogs.
+- Keyboard: Ctrl+Tab / Ctrl+Shift+Tab switch tabs; switching tabs moves the
+  focus off hidden controls.
+- Fast double clicks on buttons and toggles are no longer lost
+  (BN_DOUBLECLICKED handled like BN_CLICKED).
+- Per-monitor DPI: on WM_DPICHANGED the panel takes the suggested window
+  rectangle and rebuilds fonts, logos and controls (keeping what is on
+  screen); window size computed with AdjustWindowRectExForDpi when
+  available.
+- Panel owner: the foreground window is used only if it belongs to the
+  calling thread, otherwise the host window.
+Profiles
+- Profiles store engine settings only unless "Include devices" is checked
+  when saving. The option starts with the existing profile's setting when
+  overwriting it, and overwriting a profile that has devices without it asks
+  for confirmation.
+- Profile sections are now [Profile:name] (0.4.0 to 0.5.1 used a Spanish
+  prefix); existing profiles are converted without losing any. The factory
+  profiles are now Studio, Laptop and Streaming; the old factory profiles
+  are renamed and cleaned only while they still look like the factory
+  version (no output, input or extra devices set).
+English release
+- Every user-visible text is in English: panel, dialogs, status report,
+  installer, diagnostics and test tools (PASSED / FAILED / SKIPPED), log
+  messages. Renamed outputs: log-previous.txt, WasapiDriver-diagnostics.txt,
+  WasapiDriver-test.txt; test option --latency; uninstaller Uninstall.exe.
+- Documentation in English: README.txt, VERSION.txt, BUILDING.txt,
+  ARCHITECTURE.txt, CODE-REVIEW.txt, TEST-GUIDE.txt, ROADMAP.txt,
+  NOTICES.txt, install.bat, uninstall.bat. Every source file has a header
+  (purpose, responsibilities, threading, GPLv3 notice) and doc comments.
+Fixes from the 0.6.0 review (see CODE-REVIEW.txt)
+- install.bat: paths are no longer echoed inside ( ) blocks (folders with
+  ")" such as "Program Files (x86)" broke the script).
+- Config migration: the old folder is copied only when the new config.ini is
+  missing (not the folder), and only if SHGetFolderPath succeeded.
+- Meter drawing: minimum bar slot of 1 pixel.
+
+0.5.1 (changes from 0.5.0)
+--------------------------
+- Panel (defect reported in Cubase 15): the owner is the active window of
+  the thread that opens it (Studio Setup), not always the host's main
+  window; that owner is disabled and re-enabled. WS_EX_APPWINDOW + icon:
+  taskbar button and Alt+Tab entry. Name and routing dialogs owned by the
+  panel.
+- "Copy status" button (clipboard, Unicode text).
+- E_ACCESSDENIED on capture streams: Windows privacy message in the log and
+  an "input blocked by privacy settings" line in the status.
+
+0.5.0 (changes from 0.4.0)
+--------------------------
+- Extra devices (beta): ExtraOutputs / ExtraInputs (up to 3 each, substring
+  of the name). Main output = master clock. Channels: main device, then
+  extra devices in order (inputs: Loopback at the end); names "N:Out L"
+  when extra devices exist; at most 32 per direction (truncated, with a log
+  line). A missing extra device keeps 2 silent channels.
+- Extra inputs: InputSource with drift correction (Auto by ContainerId),
+  polled on every wake-up like the main input.
+- Extra outputs: OutputSink without an event (Shared; Exclusive if
+  Mode=Exclusive and it works), own FIFO fed on every bufferSwitch,
+  Hermite/Sinc resampling with a PI controller on FIFO + device queue
+  (position interpolated with IAudioClock when available), underflow ->
+  silence and counter, overflow -> drop and counter; software volume in
+  Exclusive mode without hardware volume.
+- Device following: an extra device disappearing, or a missing one
+  appearing, triggers the usual reset; a sink failure on the audio thread
+  requests one reset per cycle.
+- Device alignment (AlignDevices=1 by default): estimated latency per path,
+  the faster ones are delayed, the common latency is reported.
+- TPDF dither on Exclusive integer extra outputs too.
+- Direct monitoring limited to the channels of the main output.
+- Main output routing: OutputMap=asio:dev,... (1-based), "Output routing..."
+  dialog in the panel; stored in profiles.
+- Panel 776 logical pixels wide (extra devices column); one status line per
+  extra device. Fixed the overlap of the Engine box with Status (0.4.0).
+- Code: common PI controller and write plan in src/drift.h; common
+  resampler ResampleFifo (inputs and sinks).
+- Test: T9 (with extra devices configured). New offline test
+  tests/sink_test.cpp (also in CI).
+
+0.4.0 (changes from 0.3.1)
+--------------------------
+- Profiles in config.ini (one section per profile): factory
+  profiles created once, "Save as..." and "Delete" in the panel, name
+  dialog without resources.
+- Loopback of a single application (process loopback with
+  INCLUDE_TARGET_PROCESS_TREE); the process is looked up by executable name
+  on every open (root of the process tree, or the one with an active audio
+  session); application list from the audio sessions in the panel.
+- TPDF dither on 16/20/24-bit Exclusive integer outputs (scaled by the
+  valid bits; exact 0 stays undithered).
+- Optional polyphase sinc resampler (32 taps x 256 phases, Kaiser beta 8)
+  for drift correction (ResamplerQuality=Sinc).
+- Automatic builds on GitHub Actions (3 DLLs, tools and installer).
+- Offline test tests/resampler_test.cpp.
+
+0.3.1 (changes from 0.3.0)
+--------------------------
+- Automatic ASIO host test WasapiDriverTest.exe (T1-T7) and optional real
+  round-trip latency measurement with a physical cable (T8), with Start menu
+  shortcuts. The driver did not change (version number only).
+
+0.3.0 (changes from 0.2.2)
+--------------------------
+- Per-channel level meters in the panel (peak, 1.5 s hold, latched clip).
+- DSP load meter (now / max) and "Reset counters".
+- Output glitch detection in Exclusive mode (IAudioClock position, with a
+  late wake-up fallback) reported with kAsioOverload.
+- Diagnostics tool WasapiDriverDiag.exe with a Start menu shortcut.
+
+0.2.2 (changes from 0.2.1)
+--------------------------
+- Stability review: 34 defects fixed (see CODE-REVIEW.txt). Resets and
+  device events processed on the host thread through a hidden message
+  window, audio thread with its own COM references, process loopback
+  activation without late writes, continuous timestamps (seqlock),
+  buffer-independent drift control, clipping in Exclusive mode, overload
+  detection without false positives, robust panel.
+
+0.2.1 (changes from 0.2.0)
+--------------------------
+- .exe installer (NSIS) with uninstaller, x86 build, 32-bit registration.
+
+0.2.0 (changes from 0.1.0)
+--------------------------
+- Control panel, loopback inputs, multichannel devices, ASIO direct
+  monitoring, drift correction, device following, ARM64 build.
+
+0.1.0
+-----
+- First version: Shared/Exclusive, 2 inputs / 2 outputs.

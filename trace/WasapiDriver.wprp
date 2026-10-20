@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WASAPI Driver for ASIO - Windows Performance Recorder profile (0.9.8)
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  Records the driver's own TraceLogging provider and, in a separate buffer, the Windows audio service at the
+  Information level. Nothing else (no kernel / CPU / disk / process tracing). See TRACING.txt.
+
+  Start (elevated Command Prompt, in the folder of this file):
+      wpr -start "WasapiDriver.wprp!WasapiDriver"              (memory: circular buffers, keeps the last minutes)
+      wpr -start "WasapiDriver.wprp!WasapiDriver" -filemode    (file: everything from start to stop, for long captures)
+  Stop and save:
+      wpr -stop "%USERPROFILE%\Desktop\WasapiDriver.etl"
+  Cancel without saving:
+      wpr -cancel
+
+  Providers
+    WASAPIDriverForASIO      52b9f111-957d-5973-b76d-97bdf8f813df  this driver (name-hash GUID, see src/trace.h)
+                             Level 5 (everything), own collector and buffer budget.
+    Microsoft-Windows-Audio  ae4bd3be-f36f-45b6-8d21-bdd6fb832853  Windows audio service (audiosrv / audiodg)
+                             Level 4 (Information) on purpose: level 5 is chatty and could evict the driver's
+                             events; it has its own collector so its volume can never use the driver's budget.
+-->
+<WindowsPerformanceRecorder Version="1.0" Author="WASAPI Driver for ASIO contributors" Team="" Comments="WASAPI Driver for ASIO trace profile" Company="" Copyright="GPL-3.0-or-later" Tag="WasapiDriver">
+  <Profiles>
+    <!-- The driver's events: few and small (no per-buffer events; a statistics event every 10 s while running). -->
+    <EventCollector Id="WasapiDriverCollector" Name="WASAPI Driver for ASIO">
+      <BufferSize Value="64" />
+      <Buffers Value="1" PercentageOfTotalMemory="true" MaximumBufferSpace="32" />
+    </EventCollector>
+    <!-- Windows audio stack at Information level, in its own buffer budget. -->
+    <EventCollector Id="WindowsAudioCollector" Name="Windows audio (Information)">
+      <BufferSize Value="128" />
+      <Buffers Value="2" PercentageOfTotalMemory="true" MaximumBufferSpace="64" />
+    </EventCollector>
+
+    <EventProvider Id="TraceLogging/WASAPIDriverForASIO" Name="52b9f111-957d-5973-b76d-97bdf8f813df" Level="5" NonPagedMemory="false" />
+    <EventProvider Id="Microsoft-Windows-Audio" Name="ae4bd3be-f36f-45b6-8d21-bdd6fb832853" Level="4" NonPagedMemory="false" />
+
+    <Profile Id="WasapiDriver.Verbose.Memory" LoggingMode="Memory" Name="WasapiDriver" DetailLevel="Verbose" Description="WASAPI Driver for ASIO (circular memory buffers)">
+      <Collectors>
+        <EventCollectorId Value="WasapiDriverCollector">
+          <EventProviders>
+            <EventProviderId Value="TraceLogging/WASAPIDriverForASIO" />
+          </EventProviders>
+        </EventCollectorId>
+        <EventCollectorId Value="WindowsAudioCollector">
+          <EventProviders>
+            <EventProviderId Value="Microsoft-Windows-Audio" />
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+
+    <Profile Id="WasapiDriver.Verbose.File" LoggingMode="File" Name="WasapiDriver" DetailLevel="Verbose" Description="WASAPI Driver for ASIO (sequential file)">
+      <Collectors>
+        <EventCollectorId Value="WasapiDriverCollector">
+          <EventProviders>
+            <EventProviderId Value="TraceLogging/WASAPIDriverForASIO" />
+          </EventProviders>
+        </EventCollectorId>
+        <EventCollectorId Value="WindowsAudioCollector">
+          <EventProviders>
+            <EventProviderId Value="Microsoft-Windows-Audio" />
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

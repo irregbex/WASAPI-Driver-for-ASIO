@@ -1,0 +1,27 @@
+WASAPI Driver for ASIO(R) - notices
+===================================
+
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+WASAPI Driver for ASIO is a generic ASIO driver on top of WASAPI (the Windows
+audio interface). It is not affiliated with or endorsed by Steinberg. It uses
+the Steinberg ASIO SDK 2.3.4 under its GPLv3 license option. The ASIO
+Compatible logo is shown in the control panel according to the Steinberg ASIO
+Usage Guidelines.
+
+This program is free software under the GNU General Public License v3.0 or
+later (next page). It is distributed WITHOUT ANY WARRANTY.
+
+Upgrading from WasapiBridge: the installer removes the registration, the
+shortcuts and the files of the previous version (WasapiBridge) and registers
+the driver under the new name. Your settings are copied from
+%APPDATA%\WasapiBridge to %APPDATA%\WASAPI Driver for ASIO the first time a
+DAW loads the driver (the old folder is not deleted).
+
+Legal documents installed with the program: LICENSE.txt (GNU GPL v3, next
+page), COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt (the Steinberg ASIO SDK headers
+are used under their GPL version 3 license option; runtime libraries),
+TRADEMARKS.txt, DISCLAIMER.txt (no warranty; hearing safety: an audio driver
+can produce very loud sound), PRIVACY.txt (no network access, no telemetry),
+SECURITY.txt and CONTRIBUTING.txt. They are provided for information only
+and are not legal advice.

@@ -1,0 +1,7 @@
+# WASAPI Driver for ASIO - issue chooser configuration (0.8.0, G7)
+# SPDX-License-Identifier: GPL-3.0-or-later
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/irregbex/WASAPI-Driver-for-ASIO/security/policy
+    about: Please report security problems privately as described in SECURITY.txt.
