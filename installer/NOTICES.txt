@@ -22,6 +22,7 @@ Legal documents installed with the program: LICENSE.txt (GNU GPL v3, next
 page), COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt (the Steinberg ASIO SDK headers
 are used under their GPL version 3 license option; runtime libraries),
 TRADEMARKS.txt, DISCLAIMER.txt (no warranty; hearing safety: an audio driver
-can produce very loud sound), PRIVACY.txt (no network access, no telemetry),
+can produce very loud sound), PRIVACY.txt (no telemetry; optional update
+checks connect only when requested),
 SECURITY.txt and CONTRIBUTING.txt. They are provided for information only
 and are not legal advice.

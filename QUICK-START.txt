@@ -4,14 +4,18 @@ ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 Full manual: README.txt. Questions: FAQ.txt.
 
 1. INSTALL
-   Download WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the Releases page:
+   Once version 0.9.8 is published, download
+   WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the Releases page:
    https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
+   If it is not listed yet, the prebuilt installer is not available; see
+   BUILDING.txt for source-build instructions.
    Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.8-Setup.exe (SmartScreen:
    "More info" > "Run anyway" if the Setup is not signed). Accept the UAC
    prompt, then Next / I Agree / Install. Windows on ARM: Yes = native ARM64
    DAW, No = x64 DAW. No reboot is needed.
-   Without the Setup: Portable-Install\install.bat (keep that folder where
-   it is; the registry points to it).
+   Without the Setup: use Portable-Install\install.bat from the binary ZIP
+   (not the source tree); keep that folder where it is because the registry
+   points to it.
 
 2. SELECT THE DRIVER IN YOUR DAW
    Cubase / Nuendo  Studio > Studio Setup > Audio System > ASIO Driver:

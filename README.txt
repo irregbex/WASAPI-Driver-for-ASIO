@@ -23,7 +23,10 @@ in the installation folder.
 WHERE TO GET IT (0.9.8, public beta)
 ------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  Every version is published there as a GitHub Release. Open the newest one and download, under "Assets":
+  When a version is released, it is published there as a GitHub Release. If
+  no release is listed yet, prebuilt downloads are not available; see
+  BUILDING.txt for source-build instructions. Open the newest release and
+  download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
     SHA256SUMS.txt                               checksums (PowerShell: Get-FileHash <file> -Algorithm SHA256)
@@ -144,9 +147,11 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the Releases page
-     (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases,
-     "Assets"); optionally compare its SHA-256 with SHA256SUMS.txt.
+  0. Once version 0.9.8 is published, download
+     WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the Releases page
+     (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
+     optionally compare its SHA-256 with SHA256SUMS.txt. If it is not listed
+     yet, the prebuilt installer is not available; see BUILDING.txt.
   1. Close the DAW.
   2. Double-click WASAPI-Driver-for-ASIO-0.9.8-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
@@ -823,7 +828,7 @@ COPYRIGHT.txt                 Copyright notice and how to cite
 THIRD-PARTY-NOTICES.txt       ASIO SDK license option and runtime libraries
 TRADEMARKS.txt                ASIO, logo usage and other trademarks
 DISCLAIMER.txt                No warranty; hearing and speaker safety
-PRIVACY.txt                   No network or telemetry; local files
+PRIVACY.txt                   No telemetry; optional update check; local files
 SECURITY.txt                  Reporting vulnerabilities
 CONTRIBUTING.txt              License of contributions, DCO, code rules
 Tracing\                      0.9.8: WasapiDriver.wprp, Start trace.bat, Stop trace.bat,
