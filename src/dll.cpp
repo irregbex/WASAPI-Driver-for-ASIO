@@ -121,15 +121,21 @@ STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv) {
     *ppv = nullptr;
     if (!IsEqualCLSID(clsid, CLSID_WasapiBridge)) return CLASS_E_CLASSNOTAVAILABLE;
     wbtrace::Register();
-    WB_TRACE(wbtrace::kLvlVerbose, wbtrace::kKwLifecycle, "DriverLoaded", wbtrace::Str("Version", WB_VERSION_STR),
-#if defined(__aarch64__) || defined(_M_ARM64)
-             wbtrace::Str("Architecture", "ARM64")
+    // 0.9.9: the architecture is chosen BEFORE the macro call. Preprocessor directives inside the arguments of a
+    // function-like macro are undefined behaviour in C++ ([cpp.replace]); GCC accepts them, MSVC rejects them
+    // (error C2121), which broke the Arm64X build. _M_ARM64EC is tested first because the ARM64EC half of the
+    // Arm64X DLL also defines _M_X64 / _WIN64 (it runs inside emulated x64 hosts).
+#if defined(_M_ARM64EC)
+    static const char* const kArch = "ARM64EC";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    static const char* const kArch = "ARM64";
 #elif defined(_WIN64)
-             wbtrace::Str("Architecture", "x64")
+    static const char* const kArch = "x64";
 #else
-             wbtrace::Str("Architecture", "x86")
+    static const char* const kArch = "x86";
 #endif
-             );
+    WB_TRACE(wbtrace::kLvlVerbose, wbtrace::kKwLifecycle, "DriverLoaded", wbtrace::Str("Version", WB_VERSION_STR),
+             wbtrace::Str("Architecture", kArch));
     return g_factory.QueryInterface(riid, ppv);
 }
 
