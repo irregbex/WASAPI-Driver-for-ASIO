@@ -480,7 +480,7 @@ struct TipState {
 struct PanelState {
     WasapiBridge* drv = nullptr;
     HWND wnd = nullptr;
-    HFONT font = nullptr, fontB = nullptr, title = nullptr, big = nullptr, small = nullptr, mono = nullptr;
+    HFONT font = nullptr, fontB = nullptr, title = nullptr, big = nullptr, fontSmall = nullptr, mono = nullptr;   // 0.9.9: not "small" (rpcndr.h: #define small char under MSVC)
     HWND meter = nullptr;
     MeterSnapshot snap;
     MeterUi mIn[kMaxCh], mOut[kMaxCh];
@@ -752,7 +752,7 @@ static SIZE TipMeasure(PanelState* p, HDC dc, RECT& body, RECT& tag) {
     HGDIOBJ of = SelectObject(dc, p->font);
     DrawTextW(dc, t.text.c_str(), -1, &b, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     RECT g = {0, 0, 0, 0};
-    if (!t.tagText.empty()) { SelectObject(dc, p->small); DrawTextW(dc, t.tagText.c_str(), -1, &g, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX); }
+    if (!t.tagText.empty()) { SelectObject(dc, p->fontSmall); DrawTextW(dc, t.tagText.c_str(), -1, &g, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX); }
     SelectObject(dc, of);
     const int w = (b.right > g.right ? b.right : g.right) + 2 * pad;
     body = {pad, pad, w - pad, pad + b.bottom};
@@ -778,7 +778,7 @@ static LRESULT CALLBACK TipProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode(dc, TRANSPARENT); SetTextColor(dc, g_th.text);
             DrawTextW(dc, p->tip.text.c_str(), -1, &body, DT_WORDBREAK | DT_NOPREFIX);
             if (!p->tip.tagText.empty()) {
-                SelectObject(dc, p->small);
+                SelectObject(dc, p->fontSmall);
                 SetTextColor(dc, p->tip.tag == tips::kReset ? g_th.amber : g_th.accent);
                 DrawTextW(dc, p->tip.tagText.c_str(), -1, &tag, DT_SINGLELINE | DT_NOPREFIX);
             }
@@ -1743,7 +1743,7 @@ static void DrawBars(PanelState* p, HDC dc, HDC gdc, int x0, int x1, int barTop,
                      const wchar_t* name, long n, const MeterUi* ui, const bool* act, uint32_t clip) {
     if (n <= 0) {
         RECT r = {x0, barTop, x1, barBot};
-        TextC(dc, p->small, g_th.dim, T(S_NO_CHANNELS), r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        TextC(dc, p->fontSmall, g_th.dim, T(S_NO_CHANNELS), r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
     const int avail = x1 - x0;
@@ -1769,13 +1769,13 @@ static void DrawBars(PanelState* p, HDC dc, HDC gdc, int x0, int x1, int barTop,
         if (c % every == 0) {
             wchar_t t[8]; swprintf(t, 8, L"%ld", c + 1);
             RECT tr = {l - S(p, 8), labelY, r + S(p, 8), labelY + S(p, 14)};
-            TextC(dc, p->small, act[c] ? g_th.text : g_th.dim, t, tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            TextC(dc, p->fontSmall, act[c] ? g_th.text : g_th.dim, t, tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
         }
     }
     (void)barH;
     wchar_t g[48]; swprintf(g, 48, L"%ls (%ld)", name, n);
     RECT gr = {x0, labelY + S(p, 14), x1, bottom};
-    TextC(dc, p->small, g_th.dim, g, gr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    TextC(dc, p->fontSmall, g_th.dim, g, gr, DT_CENTER | DT_TOP | DT_SINGLELINE);
 }
 
 // Window procedure of the meter area: double-buffered painting of the dB scale and both bar groups; a click clears
@@ -1813,7 +1813,7 @@ static LRESULT CALLBACK MeterProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 if (y - lastY < textH) continue;                                        // do not overlap labels
                 wchar_t t[8]; swprintf(t, 8, L"%d", db);
                 RECT tr = {0, y - textH / 2 - 1, scaleW - S(p, 6), y + textH / 2 + 1};
-                TextC(mem, p->small, g_th.dim, t, tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                TextC(mem, p->fontSmall, g_th.dim, t, tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
                 lastY = y;
             }
             const long nI = p->snap.nIn, nO = p->snap.nOut;
@@ -1832,12 +1832,12 @@ static LRESULT CALLBACK MeterProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             DeleteDC(gdc);
             if (!p->snap.running) {
                 RECT t = {0, 0, rc.right - S(p, 6), S(p, 14)};
-                TextC(mem, p->small, g_th.dim, T(S_STOPPED), t, DT_RIGHT | DT_TOP | DT_SINGLELINE);
+                TextC(mem, p->fontSmall, g_th.dim, T(S_STOPPED), t, DT_RIGHT | DT_TOP | DT_SINGLELINE);
             }
             if (p->snap.limOn) {                       // 0.8.0 (G2): gain reduction of the hearing-safety limiter
                 wchar_t gt[48]; swprintf(gt, 48, T(S_LIM_GR), p->grDisp >= 0.05f ? L"-" : L"", p->grDisp);
                 RECT t = {0, 0, rc.right - S(p, 64), S(p, 14)};
-                TextC(mem, p->small, p->grDisp >= 0.05f ? g_th.amber : g_th.dim, gt, t, DT_RIGHT | DT_TOP | DT_SINGLELINE);
+                TextC(mem, p->fontSmall, p->grDisp >= 0.05f ? g_th.amber : g_th.dim, gt, t, DT_RIGHT | DT_TOP | DT_SINGLELINE);
             }
         }
         BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -2168,7 +2168,7 @@ static void BuildControls(PanelState* p) {
         Btn(p, TAB_MAIN, T(S_SET_NONE), x + 304, y + 192, 94, 28, ID_SETNONE);
         // 0.8.0 (G1): Bluetooth row, same place (UpdateBtRow; hidden while the privacy row is shown)
         HWND bl = Ctl(p, TAB_MAIN, L"STATIC", L"", SS_LEFT | SS_NOPREFIX, x + 16, y + 190, 268, 40, ID_BTLBL);
-        if (bl) { SetPropW(bl, L"wbwarn", (HANDLE)1); SendMessageW(bl, WM_SETFONT, (WPARAM)p->small, TRUE); }
+        if (bl) { SetPropW(bl, L"wbwarn", (HANDLE)1); SendMessageW(bl, WM_SETFONT, (WPARAM)p->fontSmall, TRUE); }
         Btn(p, TAB_MAIN, T(S_USE_RECOMMENDED), x + 290, y + 192, 108, 28, ID_BTREC);
     }
     AddCard(p, TAB_MAIN, 440, kCT, 384, 236, T(S_CARD_LIVE));
@@ -2316,7 +2316,7 @@ static void BuildControls(PanelState* p) {
         for (int i = 0; i < kLangCount; ++i) Add(lg, kNative[i]);
         Btn(p, TAB_UI, T(S_HELP_TIPS), 32, y + 74, 400, 28, ID_HELPTIPS, 3);      // 0.9.2 (LIVE)
         HWND n = Ctl(p, TAB_UI, L"STATIC", g_th.hc ? T(S_HC_NOTE) : T(S_APPEAR_NOTE), SS_LEFT | SS_NOPREFIX, 32, y + 110, 776, 34, ID_APPNOTE);
-        if (n) { SetPropW(n, L"wbdim", (HANDLE)1); SendMessageW(n, WM_SETFONT, (WPARAM)p->small, TRUE); }
+        if (n) { SetPropW(n, L"wbdim", (HANDLE)1); SendMessageW(n, WM_SETFONT, (WPARAM)p->fontSmall, TRUE); }
     }
     AddCard(p, TAB_UI, 16, kCT + 158, 808, 112, T(S_CARD_VISUALS));
     {
@@ -2344,7 +2344,7 @@ static void BuildControls(PanelState* p) {
         Btn(p, TAB_UI, T(S_UPD_DOWNLOAD), 32, y + 116, 220, 30, ID_UPDDL);
         Btn(p, TAB_UI, T(S_UPD_INSTALL), 264, y + 116, 300, 30, ID_UPDRUN);
         HWND n = Ctl(p, TAB_UI, L"STATIC", T(S_UPD_PRIVACY), SS_LEFT | SS_NOPREFIX, 32, y + 154, 776, 36, ID_UPDNOTE);
-        if (n) { SetPropW(n, L"wbdim", (HANDLE)1); SendMessageW(n, WM_SETFONT, (WPARAM)p->small, TRUE); }
+        if (n) { SetPropW(n, L"wbdim", (HANDLE)1); SendMessageW(n, WM_SETFONT, (WPARAM)p->fontSmall, TRUE); }
         HWND l = Ctl(p, TAB_UI, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 32, y + 194, 776, 20, ID_UPDLAST);
         if (l) SetPropW(l, L"wbdim", (HANDLE)1);
     }
@@ -2371,7 +2371,7 @@ static void DrawTile(PanelState* p, HDC dc, RECT r, const wchar_t* title, const 
                      double bar = -1.0, double barMax = -1.0, COLORREF barC = 0) {
     RoundRectC(dc, r.left, r.top, r.right, r.bottom, S(p, 10), g_th.tile, g_th.tile);
     RECT t = {r.left + S(p, 12), r.top + S(p, 8), r.right - S(p, 8), r.top + S(p, 24)};
-    TextC(dc, p->small, g_th.dim, title, t, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    TextC(dc, p->fontSmall, g_th.dim, title, t, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
     RECT v = {r.left + S(p, 12), r.top + S(p, 22), r.right - S(p, 8), r.top + S(p, 54)};
     TextC(dc, p->big, vc, value, v, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     int subTop = r.bottom - S(p, 22);
@@ -2388,7 +2388,7 @@ static void DrawTile(PanelState* p, HDC dc, RECT r, const wchar_t* title, const 
         subTop = bb + S(p, 2);
     }
     RECT s = {r.left + S(p, 12), subTop, r.right - S(p, 8), r.bottom - S(p, 4)};
-    TextC(dc, p->small, g_th.dim, sub, s, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    TextC(dc, p->fontSmall, g_th.dim, sub, s, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Paints the four live tiles of the Main tab (output latency, input latency, DSP load bar, output glitches).
@@ -2408,12 +2408,12 @@ static void DrawTiles(PanelState* p, HDC dc) {
     if (p->stValid) {
         int bx = c.right - pad;
         auto badge = [&](const wchar_t* t, COLORREF col) {
-            SIZE sz = {}; HGDIOBJ of = SelectObject(dc, p->small); GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz); SelectObject(dc, of);
+            SIZE sz = {}; HGDIOBJ of = SelectObject(dc, p->fontSmall); GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz); SelectObject(dc, of);
             const int w = sz.cx + S(p, 14), y0 = c.top + S(p, 10), y1 = y0 + S(p, 18);
             if (bx - w < c.left + S(p, 60)) return;   // no room left next to the card title
             RoundRectC(dc, bx - w, y0, bx, y1, S(p, 9), g_th.tile, col);
             RECT tr = {bx - w, y0, bx, y1};
-            TextC(dc, p->small, col, t, tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            TextC(dc, p->fontSmall, col, t, tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             bx -= w + S(p, 6);
         };
         if (s.outBluetooth) badge(T(S_BADGE_BT), g_th.amber);
@@ -2471,17 +2471,17 @@ static void DrawAbout(PanelState* p, HDC dc, const RECT& card) {
     };
     line(p->title, g_th.text, WB_NAME_W L"\x00AE", 34);
     line(p->fontB, g_th.accent, FmtW(T(S_ABOUT_VERSION), WB_VERSION_W).c_str(), 26);
-    line(p->small, g_th.dim, T(S_ABOUT_BETA), 16);     // 0.9.1 (B5): what is stable and what is still beta
+    line(p->fontSmall, g_th.dim, T(S_ABOUT_BETA), 16);     // 0.9.1 (B5): what is stable and what is still beta
     line(p->font, g_th.text, T(S_ABOUT_DESC), 40);
     y += S(p, 4);
     // The trademark sentence stays in English (Steinberg guidelines); a translated explanation follows it.
     line(p->fontB, g_th.text, L"ASIO is a registered trademark of Steinberg Media Technologies GmbH.", 22);
-    if (Current() != kEn) line(p->small, g_th.dim, T(S_ABOUT_TM_NOTE), 18);
+    if (Current() != kEn) line(p->fontSmall, g_th.dim, T(S_ABOUT_TM_NOTE), 18);
     line(p->font, g_th.dim, T(S_ABOUT_NOTAFFIL), 56);
     y += S(p, 4);
     line(p->fontB, g_th.text, T(S_ABOUT_LICENSE_H), 22);
-    line(p->small, g_th.dim, T(S_ABOUT_LICENSE), 70);
-    line(p->small, g_th.dim, FmtW(T(S_ABOUT_SETTINGS), L"%APPDATA%\\" WB_NAME_W).c_str(), 18);
+    line(p->fontSmall, g_th.dim, T(S_ABOUT_LICENSE), 70);
+    line(p->fontSmall, g_th.dim, FmtW(T(S_ABOUT_SETTINGS), L"%APPDATA%\\" WB_NAME_W).c_str(), 18);
 }
 
 // ---------------------------------------------------------------- panel visuals (0.8.1)
@@ -2698,7 +2698,7 @@ static void LayoutAudit(PanelState* p) {
         };
         HFONT f = (HFONT)SendMessageW(c, WM_GETFONT, 0, 0);
         if (!f || fits(f)) continue;
-        if (f != p->small && p->small && fits(p->small)) { SendMessageW(c, WM_SETFONT, (WPARAM)p->small, TRUE); ++smaller; }
+        if (f != p->fontSmall && p->fontSmall && fits(p->fontSmall)) { SendMessageW(c, WM_SETFONT, (WPARAM)p->fontSmall, TRUE); ++smaller; }
         else ++shortened;
     }
     if (smaller || shortened)
@@ -2957,7 +2957,7 @@ static void PaintPanel(PanelState* p, HDC dc, const RECT& rc) {
         TextC(dc, p->font, g_th.text, L"\x00AE", rr, DT_LEFT | DT_TOP | DT_SINGLELINE);   // the (R) of the first mention
     } else TextC(dc, p->title, g_th.text, WB_NAME_W L"\x00AE", t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     RECT st = {S(p, 20), S(p, 38), S(p, p->cw - 120), S(p, 58)};
-    TextC(dc, p->small, g_th.dim, FmtW(T(S_HDR_SUB), WB_VERSION_W).c_str(), st, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    TextC(dc, p->fontSmall, g_th.dim, FmtW(T(S_HDR_SUB), WB_VERSION_W).c_str(), st, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (p->logoS) DrawLogo(dc, p->logoS, p->logoSW, p->logoSH, S(p, p->cw - 16) - p->logoSW, S(p, 32) - p->logoSH / 2, g_th.bg);
     // Tabs
     HGDIOBJ of = SelectObject(dc, p->fontB);
@@ -3257,14 +3257,14 @@ static void CreateUiResources(PanelState* p) {
         return CreateFontW(-MulDiv(pt, p->dpi, 72), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, f);
     };
     p->font = mk(9, FW_NORMAL, face); p->fontB = mk(9, FW_SEMIBOLD, face); p->title = mk(15, FW_SEMIBOLD, face);
-    p->big = mk(17, FW_SEMIBOLD, face); p->small = mk(8, FW_NORMAL, face); p->mono = mk(9, FW_NORMAL, L"Consolas");
+    p->big = mk(17, FW_SEMIBOLD, face); p->fontSmall = mk(8, FW_NORMAL, face); p->mono = mk(9, FW_NORMAL, L"Consolas");
     p->logoSH = S(p, 40); p->logoS = LoadLogo(p->logoSH, p->logoSW);
     p->logoLH = S(p, 120); p->logoL = LoadLogo(p->logoLH, p->logoLW);
 }
 static void FreeUiResources(PanelState* p) {
-    HGDIOBJ objs[] = {p->font, p->fontB, p->title, p->big, p->small, p->mono, p->logoS, p->logoL, p->grad};
+    HGDIOBJ objs[] = {p->font, p->fontB, p->title, p->big, p->fontSmall, p->mono, p->logoS, p->logoL, p->grad};
     for (HGDIOBJ o : objs) if (o) DeleteObject(o);
-    p->font = p->fontB = p->title = p->big = p->small = p->mono = nullptr;
+    p->font = p->fontB = p->title = p->big = p->fontSmall = p->mono = nullptr;
     p->logoS = p->logoL = p->grad = nullptr; p->gradH = 0;
 }
 
