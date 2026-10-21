@@ -1,10 +1,11 @@
-WASAPI Driver for ASIO(R) 0.9.8 - Third-party notices
+WASAPI Driver for ASIO(R) 0.9.9 - Third-party notices
 =====================================================
 
 This file lists every third-party component that is part of, linked into, or
 used to build the released binaries, and the license each one is used
-under. The linking information below was checked on the 0.9.8 binaries with
-pefile (import tables) and by inspecting the embedded runtime strings.
+under. The linking information below was checked on the 0.9.9 binaries with
+pefile (import tables) and by inspecting the embedded runtime strings; the
+Arm64X DLL (0.9.9, built with MSVC in CI) with dumpbin /dependents in CI.
 
 This document is provided for information only and is not legal advice.
 
@@ -137,7 +138,7 @@ only by its public name and GUID.
 5. NSIS (installer only; 0.9.0: Modern UI 2 and its English and Spanish
 language files, part of NSIS, same license)
 ------------------------
-WASAPI-Driver-for-ASIO-0.9.8-Setup.exe is built with NSIS 3.09 (Nullsoft
+WASAPI-Driver-for-ASIO-0.9.9-Setup.exe is built with NSIS 3.09 (Nullsoft
 Scriptable Install System); the installer contains the NSIS stub and the
 LZMA decompressor. Copyright Nullsoft and the NSIS contributors. License:
 zlib/libpng license. The LZMA code (from the 7-Zip LZMA SDK, Igor Pavlov)
@@ -156,10 +157,13 @@ add an Authenticode signature to the files; a signature is data, no code of
 these tools is included in the program. The release workflow uses the
 GitHub actions actions/checkout, actions/upload-artifact,
 actions/download-artifact and ilammy/msvc-dev-cmd (MIT licenses), and the
-GitHub CLI (MIT). The experimental ARM64X DLL is compiled with Microsoft
-Visual C++ (static runtime, /MT): if that file is distributed, the Visual
-C++ runtime parts linked into it are covered by the Visual Studio license
-terms for redistributable code; it is not part of the Setup.
+GitHub CLI (MIT). The Arm64X DLL (WasapiDriverARM64X.dll) is compiled with
+Microsoft Visual C++ (static runtime, /MT); since 0.9.9 it is part of the
+Setup and of the bin zip. The Visual C++ runtime and Universal CRT parts
+linked into it (vcruntime / libucrt static libraries) are covered by the
+Visual Studio license terms for distributable code; they are runtime
+libraries of the compiler used to build the program (GPL v3 "System
+Libraries"). The DLL imports no Visual C++ runtime DLL (checked in CI).
 The tray icon images are drawn by the program at runtime (no image files).
 0.9.0: themes, translations and the four new effects are original work
 of the project; the optional update check uses only Windows components

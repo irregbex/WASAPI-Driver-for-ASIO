@@ -13,9 +13,14 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation (a
 What is signed
 --------------
   WASAPI-Driver-for-ASIO-<version>-Setup.exe and its uninstaller, the driver DLLs (WasapiDriver64.dll,
-  WasapiDriver32.dll, WasapiDriverARM64.dll / the Arm64X DLL) and the tools (WasapiDriverDiag.exe,
-  WasapiDriverTest.exe). Product name "WASAPI Driver for ASIO" and the product version are set in every binary
-  and are identical for all files of one release.
+  WasapiDriver32.dll, WasapiDriverARM64.dll and, since 0.9.9, WasapiDriverARM64X.dll) and the tools
+  (WasapiDriverDiag.exe, WasapiDriverTest.exe). Product name "WASAPI Driver for ASIO" and the product version are
+  set in every binary and are identical for all files of one release.
+  WasapiDriverARM64X.dll (Arm64X: native ARM64 + ARM64EC code, for Windows on Arm) is compiled with Microsoft
+  Visual C++ by the "arm64x" job of the same workflow on a GitHub-hosted Windows 11 ARM64 runner, checked there
+  with dumpbin (image type, exports, imported DLLs) and handed to the packaging job, which verifies its SHA-256
+  and signs it together with the other DLLs (the arm64x job itself holds no signing secret). It is inside the
+  Setup and the bin zip only (no separate download). A release whose arm64x job failed contains no Arm64X DLL.
   Only files built from this repository's source by its automated build are signed: GitHub Actions
   (.github/workflows/release.yml) builds every release from a version tag of
   https://github.com/irregbex/WASAPI-Driver-for-ASIO after all automated tests have passed. Nothing built on a

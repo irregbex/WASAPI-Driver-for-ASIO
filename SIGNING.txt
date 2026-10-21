@@ -15,8 +15,10 @@ changed after signing. A user-mode ASIO driver needs NO Microsoft driver
 signature (it is not a kernel driver); a normal code signing certificate is
 enough. What is signed by the release workflow: the three driver DLLs,
 WasapiDriverDiag.exe, WasapiDriverTest.exe, the Setup and the uninstaller
-inside it (NSIS !uninstfinalize), and the experimental ARM64X DLL (option A
-only).
+inside it (NSIS !uninstfinalize), and (0.9.9) the Arm64X DLL
+WasapiDriverARM64X.dll when the package contains it (both options: the
+"build" job signs it with the other DLLs after checking its SHA-256 against
+the "arm64x" job, and "package-trusted" signs every DLL of the bin zip).
 
 Timestamping
 ------------

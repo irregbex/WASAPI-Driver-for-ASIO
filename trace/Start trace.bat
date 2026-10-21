@@ -11,7 +11,7 @@ rem argument "elevated"; if it still has no administrator rights it stops instea
 rem Single quotes in paths are doubled for PowerShell's single-quoted strings.
 setlocal DisableDelayedExpansion
 color B1
-title WASAPI Driver for ASIO 0.9.8 - Start trace
+title WASAPI Driver for ASIO - Start trace
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin

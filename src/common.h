@@ -33,9 +33,9 @@
 #define WB_NAME_W      L"WASAPI Driver for ASIO"
 #define WB_OLDNAME_W   L"WasapiBridge"               // name used before 0.6.0 (migration and cleanup only)
 #define WB_FILEBASE_W  L"WasapiDriver"               // file name prefix (WasapiDriver64.dll, WasapiDriverDiag.exe, ...)
-#define WB_VERSION_STR "0.9.8"
-#define WB_VERSION_W   L"0.9.8"
-#define WB_VERSION_NUM 980   // getDriverVersion(): 0.9.8 -> 980
+#define WB_VERSION_STR "0.9.9"
+#define WB_VERSION_W   L"0.9.9"
+#define WB_VERSION_NUM 990   // getDriverVersion(): 0.9.9 -> 990
 // 0.9.4: private ASIOFuture selector of the test tool: receives the engine line of the running stream ("Low-latency
 // engine period ... ; internal rate conversion ..."). Not part of the ASIO SDK. 0.9.8: opt = asiochk::EngineInfo
 // (asiocheck.h: magic, size, char text[256]); any other argument gets ASE_InvalidParameter.

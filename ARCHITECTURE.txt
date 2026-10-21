@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.8 (public beta) - Architecture
+WASAPI Driver for ASIO 0.9.9 (public beta) - Architecture
 =========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -1208,6 +1208,9 @@ continue-on-error and its DLL is a separate experimental download; the
 existing x64 / ARM64 / x86 builds and the Setup are unchanged. Not verified
 yet: that the sources compile with MSVC without changes (they are written
 for GCC/clang; any fix belongs in a later version).
+0.9.9: superseded by section 59 (the sources needed two MSVC fixes; the
+job runs at every push; its DLL is checked with dumpbin and is part of the
+Setup and the bin zip instead of a separate download).
 
 41. PANEL VISUALS (0.8.1)
 -------------------------
@@ -2022,3 +2025,101 @@ CODE-REVIEW.txt "0.9.8 hardening review" (H1-H32).
   in the wrong order (no audio) and checks every error code and that the
   driver still reports what T1 saw; it runs right after T1 so T2..T10 prove
   the driver still plays normally.
+
+59. ARM64X DLL: BUILD, CHECKS AND REGISTRATION (0.9.9)
+------------------------------------------------------
+What it is. WasapiDriverARM64X.dll is one PE image (machine AA64, flagged
+ARM64X) with two code halves compiled from the same sources: native ARM64
+code and ARM64EC code (ARM64 instructions that follow the x64 calling
+convention and data layout, so they interoperate with x64 code in the same
+process). A native ARM64 process sees the image as an ARM64 DLL; an x64
+process running under emulation (Prism) sees, through the ARM64X dynamic
+relocations, an ARM64EC image with its own export table, so its calls land
+in the ARM64EC half and run natively, without emulating the driver. This is
+the target Microsoft recommends for in-process audio components (ASIO
+drivers, plug-ins) on Windows on Arm, because one file and one
+registration serve both kinds of host.
+
+Build (scripts/build-arm64x.ps1, "arm64x" job of build.yml at every push
+and of release.yml; GitHub windows-11-arm runner, MSVC from the image via
+ilammy/msvc-dev-cmd with arch arm64):
+  rc         src\WasapiDriver.rc -> obj\res.res (one resource section)
+  cl         each DLL source twice: native (obj\a64) and /arm64EC
+             (obj\ec); /O2 /EHsc /std:c++17 /W3 /MT /utf-8 /permissive-
+             /Zc:__cplusplus, the same defines as the mingw builds plus
+             _CRT_SECURE_NO_WARNINGS and NOMINMAX
+  link       /dll /machine:arm64x, /defArm64Native:<def> (exports of the
+             native half) and /def:<def> (exports of the EC half), both
+             object sets, the same import libraries as the mingw builds;
+             <def> is obj\WasapiDriverARM64X.def, a copy of
+             src\WasapiBridge.def with "LIBRARY WasapiDriverARM64X" (the
+             real output name; avoids LNK4070), EXPORTS unchanged
+  static CRT (/MT): no Visual C++ runtime DLL is needed on the user's PC.
+The sources needed two portability fixes, both C++ conformance issues that
+GCC and clang accepted (CODE-REVIEW.txt "0.9.9 MSVC / Arm64X"): no
+preprocessor directives inside macro arguments (dll.cpp), and no identifier
+"small" (a macro in rpcndr.h; panel.cpp). In dll.cpp _M_ARM64EC is tested
+before _M_ARM64 / _WIN64 because the EC compiler also defines _M_X64 and
+_WIN64; the DriverLoaded trace event reports "ARM64" or "ARM64EC", which is
+how a test shows which half a host loaded (TEST-GUIDE.txt block Z).
+
+Checks (the script fails when one fails; GitHub then packages nothing):
+  dumpbin /headers     machine line contains ARM64X
+  dumpbin /exports     exactly DllCanUnloadNow, DllGetClassObject,
+                       DllRegisterServer, DllUnregisterServer
+  dumpbin /dependents  no vcruntime*, msvcp*, msvcr*, concrt*, ucrtbase*
+                       (other non-system DLLs are reported as warnings)
+Messages are classified (compiler and LNK1xxx / LNK2xxx errors -> ::error,
+compiler and LNK4xxx warnings -> ::warning, 10 of each) and the script
+always ends with one ::notice annotation (result, machine line, exports,
+imported DLLs, SHA-256): annotations are visible on the public run page,
+the job summary is not. The job outputs ok=true and sha256 only on success.
+Expected warning: LNK4279 (SetFilePointerEx mapped to different icall push
+thunks, static UCRT objects vs update.obj), benign: see CODE-REVIEW.txt.
+
+Packaging. "build" (both workflows) needs "arm64x" and runs under
+!cancelled(), so a failed or skipped arm64x job never blocks it. It
+downloads the DLL only when arm64x reported ok, verifies its SHA-256
+against the job output, and then (release.yml) signs it with the other DLLs
+and stages it next to them: makensis gets -DARM64X=1 and the bin zip takes
+it with *.dll. Otherwise a ::warning "No Arm64X DLL" is written, the
+package is built exactly as in 0.9.8, and the release notes say that the
+package has no Arm64X DLL. package-trusted re-signs every DLL of the bin
+zip and rebuilds the Setup with -DARM64X=1 when the DLL is in it.
+
+Registration. Windows on Arm has two registry views, as x64 Windows: the
+native 64-bit view and WOW6432Node for 32-bit processes (x86 and ARM32).
+Emulated x64 processes are NOT redirected: they read and write the same
+64-bit view as native ARM64 processes. So a single InprocServer32 value in the 64-bit view is what both an ARM64
+host and an emulated x64 host use to load the driver. Before 0.9.9 that
+value could name only one of WasapiDriverARM64.dll (an emulated x64 host
+cannot load a pure ARM64 DLL) or WasapiDriver64.dll (a native ARM64 host
+cannot load an x64 DLL), hence the Setup's question. With the Arm64X DLL the
+same value serves both: the loader maps the native half into an ARM64
+process and the EC half into an x64 process.
+  Setup (installer/WasapiDriver.nsi): ARM64X is defined by -DARM64X=1 or,
+    at compile time, by the presence of ..\WasapiDriverARM64X.dll
+    (-DARM64X=0 forces it off). On a machine where ${IsNativeARM64} is true
+    the DLL is installed and RegCom writes, in the 64-bit view, the same
+    keys as for every other DLL (CLSID default name, InprocServer32 = the
+    Arm64X path, ThreadingModel = Apartment, the ASIO key); no question.
+    The installer writes the keys itself, as it always did; the DLL's
+    DllRegisterServer (which would write the same keys for its own path in
+    the view of the calling process) is not used. RegCom overwrites the
+    InprocServer32 value, so an upgrade from 0.9.8 or earlier, which had
+    registered the ARM64 or the x64 DLL there, leaves exactly one 64-bit
+    registration. The 32-bit view keeps WasapiDriver32.dll. The plain ARM64
+    and x64 DLLs are still installed (unregistered), as a manual fallback.
+    On x64 Windows the Arm64X DLL is not installed. Without ARM64X the
+    0.9.8 code path (question, ARM64 or x64 DLL) is compiled unchanged, and
+    a stale WasapiDriverARM64X.dll in the program folder is deleted. The
+    uninstaller deletes the file and, as before, the keys of both views;
+    WaitFilesFree includes the Arm64X DLL.
+  install.bat: on ARM64, if WasapiDriverARM64X.dll is in its folder it is
+    registered (reg.exe /reg:64) without the 1 / 2 question; the 32-bit
+    registration is unchanged. uninstall.bat needs no change (same keys).
+  Diagnostics: the 64-bit view report shows the Arm64X path; nothing else
+    changes (the tools stay x64; on Windows on Arm they run emulated, so
+    WasapiDriverTest.exe loads the ARM64EC half: it is the x64-host test).
+Status: built and checked in CI; not yet run on real Windows on Arm
+hardware (KNOWN-ISSUES.txt KI-9).

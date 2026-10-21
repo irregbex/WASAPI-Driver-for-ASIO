@@ -1,28 +1,91 @@
-WASAPI Driver for ASIO 0.9.8 (public beta)
+WASAPI Driver for ASIO 0.9.9 (public beta)
 ==========================================
-Build: 2026-10-19 UTC
+Build: 2026-10-21 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
   x86:   mingw-w64 GCC 13.2 i686, -O2, static linking
   ARM64: Zig 0.16.0 (clang), aarch64-windows-gnu, -O2 (UCRT)
+  Arm64X: 0.9.9, MSVC (Visual Studio Build Tools of the GitHub windows-11-arm
+         runner), cl /O2 /MT (native ARM64) + cl /O2 /MT /arm64EC, link
+         /machine:arm64x; checked by dumpbin in CI (scripts/build-arm64x.ps1)
   Diagnostics: WasapiDriverDiag.exe, mingw-w64 GCC 13.2 x64, console, static
   Test: WasapiDriverTest.exe, mingw-w64 GCC 13.2 x64, console, static
   Installer: NSIS 3.09 (makensis), solid LZMA, Modern UI 2 (English, Spanish)
   CI: .github/workflows/build.yml (ubuntu-latest); releases:
       .github/workflows/release.yml (tags v*, see RELEASING.txt); third-party
       actions pinned to commit SHAs; 0.9.8: no release job runs unless every
-      offline test passed (tests/run_all.sh)
+      offline test passed (tests/run_all.sh); 0.9.9: "arm64x" job (Windows
+      11 ARM64 runner, MSVC) at every push and in every release
   Offline tests (18, tests/run_all.sh): resampler, sink, dmix, live, limiter,
                  channel names, visuals, timeinfo, strings, themes, update
                  helpers, instance registry, icon, fixed-ratio conversion and
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 980
+getDriverVersion() = 990
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.9 (changes from 0.9.8) - "Arm64X"; no engine change
+-------------------------------------------------------
+One driver DLL for every 64-bit host on Windows on Arm, built with MSVC in CI.
+Summary of all changes:
+- Arm64X DLL (WasapiDriverARM64X.dll): native ARM64 code and ARM64EC code in
+  one file, as Microsoft recommends for in-process audio components on
+  Windows on Arm. A native ARM64 DAW runs the ARM64 half; an x64 DAW running
+  under emulation runs the ARM64EC half (native speed, no emulation of the
+  driver itself). Built by the "arm64x" job of build.yml (every push) and
+  release.yml on a GitHub windows-11-arm runner with MSVC
+  (scripts/build-arm64x.ps1: cl native + cl /arm64EC, link /machine:arm64x,
+  static runtime /MT). The script checks the image with dumpbin (machine
+  ARM64X, exactly the four COM exports, no Visual C++ runtime DLL imported)
+  and always ends with a ::notice annotation (result, machine line, exports,
+  imported DLLs, SHA-256) that is readable on the public run page without
+  signing in. Compiler / linker messages are classified: errors (Cxxxx,
+  LNK1xxx / LNK2xxx) as ::error, warnings (Cxxxx, LNK4xxx) as ::warning
+  (0.9.9 prep reported linker warnings as errors). LNK4070 fixed (temporary
+  .def with "LIBRARY WasapiDriverARM64X"); LNK4279 documented as benign
+  (CODE-REVIEW.txt "0.9.9 MSVC / Arm64X").
+- Setup on Windows on Arm: when the package contains the Arm64X DLL (CI and
+  release builds whose arm64x job passed; makensis -DARM64X=1), Setup
+  installs it and registers it ONCE in the 64-bit registry view, without
+  the "ARM64 or x64 DAW" question: native ARM64 and emulated x64 processes
+  read the same 64-bit view, so one registration serves both. An upgrade
+  from 0.9.8 or earlier replaces the ARM64 or x64 registration (exactly one
+  registration remains). 32-bit DAWs keep WasapiDriver32.dll (WOW6432Node).
+  The uninstaller removes the file. A package without the Arm64X DLL (local
+  mingw / zig builds, or a release whose arm64x job failed: the release
+  notes say so) behaves exactly as 0.9.8. ARCHITECTURE.txt section 59.
+- Portable install.bat: on ARM64 it registers WasapiDriverARM64X.dll when
+  that file is in its folder (no question); otherwise the 0.9.8 question.
+- Release: the Arm64X DLL is part of the Setup and of the bin zip (signed
+  like the other DLLs when signing is configured); the separate
+  "WasapiDriverARM64X-<version>-experimental-unsigned.dll" download is gone.
+  "build" runs after "arm64x" and uses its DLL only when the job reported
+  success and the SHA-256 matches.
+- MSVC portability fixes (found by the first MSVC build; GCC and clang
+  accepted the code): dll.cpp had preprocessor directives inside the
+  arguments of the WB_TRACE macro (undefined behaviour in C++, MSVC error
+  C2121), now the architecture string is chosen before the call and the
+  ARM64EC half reports "ARM64EC"; panel.cpp had a font field named "small",
+  which rpcndr.h defines as a macro ("char") under MSVC; renamed fontSmall.
+  No behaviour change in the mingw / zig builds.
+- "Stop trace.bat": when it is started already elevated from an
+  administrator window of another account, the trace is saved on the
+  Desktop of the user signed in to the Windows session (owner of
+  explorer.exe in the same session, redirected / OneDrive Desktops
+  honoured), not in the administrator's profile. "Start trace.bat" /
+  "Stop trace.bat" titles carry no version number any more.
+- README restructured: what the driver is, where to get it and the code
+  signing policy come first. New CODE-SIGNING-POLICY.txt (what is signed,
+  by whom, roles, privacy; SignPath Foundation applied for).
+- Documents: KNOWN-ISSUES.txt KI-9 (Arm64X not yet tested on real Windows
+  on Arm hardware), TEST-GUIDE.txt block Z (Windows on Arm), FAQ entry,
+  ARCHITECTURE.txt section 59, CODE-REVIEW.txt "0.9.9 MSVC / Arm64X".
+Not changed: the audio engine, the x64 / x86 / ARM64 DLLs (apart from the
+version number), the tools, the 32-bit registration.
 
 0.9.8 (changes from 0.9.7) - "Hardening"; no new user features
 ---------------------------------------------------------------

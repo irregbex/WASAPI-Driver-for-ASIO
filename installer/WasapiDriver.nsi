@@ -12,13 +12,17 @@
 ;
 ; Installs the three driver DLLs, the diagnostics and test tools and the documentation into
 ; "Program Files\WASAPI Driver for ASIO", registers the COM class and the ASIO key in both registry views
-; (64-bit view: x64 or ARM64 DLL, chosen on ARM64; 32-bit view: x86 DLL for 32-bit hosts), creates Start menu
+; (64-bit view: x64 or ARM64 DLL, chosen on ARM64, or the Arm64X DLL on ARM64 since 0.9.9; 32-bit view: x86 DLL
+; for 32-bit hosts), creates Start menu
 ; shortcuts and an uninstaller. Upgrades from the old name (WasapiBridge, up to 0.5.x) are cleaned up first.
 ; 0.9.6 (KI-2): before anything is changed, Setup and the uninstaller check that the installed DLLs and tools are
 ; not in use (WaitFilesFree below) and ask the user to close the audio programs, with Retry / Cancel.
 ; 0.9.8: also installs the diagnostic tracing kit into "$INSTDIR\Tracing" (WasapiDriver.wprp, Start trace.bat,
 ; Stop trace.bat, TRACING.txt; from ..\trace\ and ..\TRACING.txt) with Start menu shortcuts. The .bat files
 ; ask for administrator rights themselves (Windows Performance Recorder needs them).
+; 0.9.9 (Arm64X): when the package contains WasapiDriverARM64X.dll (CI builds made by the MSVC "arm64x" job; see
+; ARM64X below), Setup installs it on Windows on Arm and registers it ONCE in the 64-bit registry view instead of
+; asking for the ARM64 or the x64 DLL. Without that file (local mingw / zig builds) nothing changes.
 Unicode true
 !include "x64.nsh"
 !include "LogicLib.nsh"
@@ -28,6 +32,25 @@ Unicode true
 !define OLDNAME "WasapiBridge"
 !ifndef VERSION
   !define VERSION "0.0.0"
+!endif
+; 0.9.9: ARM64X is defined when the package contains the Arm64X driver DLL (native ARM64 + ARM64EC code in one
+; file, built with MSVC by the "arm64x" job of build.yml / release.yml). The workflows pass -DARM64X=1 when they
+; staged a verified file; otherwise it is detected here at compile time (the file next to the other DLLs, in the
+; parent folder of this script; makensis runs in the script's folder). -DARM64X=0 forces a package without it.
+; With ARM64X, on Windows on Arm: the file is installed and registered once in the 64-bit view, no question.
+!ifdef ARM64X
+  !if "${ARM64X}" == "0"
+    !undef ARM64X
+  !endif
+!else
+  !if /FileExists "..\${FILEBASE}ARM64X.dll"
+    !define ARM64X 1
+  !endif
+!endif
+!ifdef ARM64X
+  !echo "Package with the Arm64X DLL (Windows on Arm: one registration for ARM64 and emulated x64 hosts)"
+!else
+  !echo "Package without the Arm64X DLL (Windows on Arm: Setup asks for the ARM64 or the x64 DLL)"
 !endif
 !define CLSID "{A63175BD-B872-4FA5-9595-464F0236E1D0}"
 !define UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
@@ -159,6 +182,8 @@ Function ${UN}WaitFilesFree
   Call ${UN}WaitFileFree
   Push "$INSTDIR\${FILEBASE}ARM64.dll"
   Call ${UN}WaitFileFree
+  Push "$INSTDIR\${FILEBASE}ARM64X.dll"   ; 0.9.9 (skipped when the file does not exist)
+  Call ${UN}WaitFileFree
   Push "$INSTDIR\${FILEBASE}Diag.exe"
   Call ${UN}WaitFileFree
   Push "$INSTDIR\${FILEBASE}Test.exe"
@@ -221,6 +246,16 @@ Section "Driver"
   File "..\${FILEBASE}64.dll"
   File "..\${FILEBASE}ARM64.dll"
   File "..\${FILEBASE}32.dll"
+!ifdef ARM64X
+  ; 0.9.9: the Arm64X DLL is only useful (and only loadable) on Windows on Arm. The plain ARM64 and x64 DLLs
+  ; above stay installed there too, unregistered, as a manual fallback (README section 3).
+  ${If} ${IsNativeARM64}
+    File "..\${FILEBASE}ARM64X.dll"
+  ${EndIf}
+!else
+  ; A package without the Arm64X DLL never leaves an older, now unregistered copy behind.
+  Delete "$INSTDIR\${FILEBASE}ARM64X.dll"
+!endif
   File "..\${FILEBASE}Diag.exe"
   File "..\${FILEBASE}Test.exe"
   File "..\README.txt"
@@ -247,6 +282,20 @@ Section "Driver"
   SetOutPath "$INSTDIR"
   ; 64-bit view: x64 or ARM64 (one architecture per machine)
   SetRegView 64
+!ifdef ARM64X
+  ; 0.9.9: Windows on Arm and a package with the Arm64X DLL. Native ARM64 processes and emulated x64 processes
+  ; read the SAME 64-bit registry view (only 32-bit x86 / ARM32 processes are redirected to WOW6432Node), so one
+  ; InprocServer32 entry serves both kinds of host: the loader maps the ARM64 half of the DLL into an ARM64 host
+  ; and the ARM64EC half into an emulated x64 host. No question is asked. RegCom overwrites the InprocServer32
+  ; path, so an upgrade from 0.9.8 or earlier (ARM64 or x64 DLL registered there) leaves exactly one
+  ; registration: this one. The installer writes the keys itself (as for every other DLL); the DLL's own
+  ; DllRegisterServer is not called.
+  ${If} ${IsNativeARM64}
+    !insertmacro RegCom "$INSTDIR\${FILEBASE}ARM64X.dll"
+    DetailPrint "$(L_REG_ARM64X)"
+    Goto reg32
+  ${EndIf}
+!endif
   ${If} ${IsNativeARM64}
     MessageBox MB_YESNO|MB_ICONQUESTION "$(L_ARM64_Q)" /SD IDNO IDNO x64dll
       !insertmacro RegCom "$INSTDIR\${FILEBASE}ARM64.dll"
@@ -303,6 +352,7 @@ Section "Uninstall"
   SetRegView 64
   Delete "$INSTDIR\${FILEBASE}64.dll"
   Delete "$INSTDIR\${FILEBASE}ARM64.dll"
+  Delete "$INSTDIR\${FILEBASE}ARM64X.dll"   ; 0.9.9
   Delete "$INSTDIR\${FILEBASE}32.dll"
   Delete "$INSTDIR\${FILEBASE}Diag.exe"
   Delete "$INSTDIR\${FILEBASE}Test.exe"

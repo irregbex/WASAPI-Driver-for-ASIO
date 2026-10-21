@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.8 - Compatibility table
+WASAPI Driver for ASIO(R) 0.9.9 - Compatibility table
 =====================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -12,8 +12,9 @@ Status values:
   untested      nobody has reported it yet.
 
 Hosts x devices (0.9.5, also valid for 0.9.6, which only fixes the items of KNOWN-ISSUES.txt, for 0.9.7,
-which changes no driver behaviour, and for 0.9.8, which only hardens the driver against invalid calls and data
-(valid calls behave as before; see VERSION.txt);
+which changes no driver behaviour, for 0.9.8, which only hardens the driver against invalid calls and data
+(valid calls behave as before; see VERSION.txt), and for 0.9.9, which only adds the Arm64X DLL for Windows on Arm
+(no Windows on Arm result yet: KNOWN-ISSUES.txt KI-9);
 the 0.9.1 results stand for 0.9.2 and 0.9.3, which change only the interface; 0.9.4 results: automatic test PASSED with IAudioClient3 period 480 at 48 kHz and the
 internal 96k->48k sinc conversion, more than 2 hours of real use; 0.9.5 only changes which sample
 rate an instance starts with)

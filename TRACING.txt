@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.8 - Diagnostic tracing (ETW / Windows Performance Recorder)
+WASAPI Driver for ASIO(R) 0.9.9 - Diagnostic tracing (ETW / Windows Performance Recorder)
 =========================================================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -20,7 +20,11 @@ Driver for ASIO\Tracing). Portable / zip: the Tools folder.
   2. Reproduce the problem in your DAW (start playback, change the buffer,
      plug the device out and in, whatever triggers it).
   3. Run "Stop trace.bat" soon afterwards (a yellow window). It saves
-     WasapiDriver-<date>-<time>.etl on your Desktop (or in your user folder).
+     WasapiDriver-<date>-<time>.etl on your Desktop (or in your user folder)
+     and prints the full path. 0.9.9: also when it is started from an
+     administrator window of ANOTHER account (for example a separate admin
+     account), the file goes to the Desktop of the user signed in to this
+     Windows session, not to the administrator's profile.
   4. Zip the .etl file and attach it to your GitHub issue (Issues > New issue
      > Problem report), together with the steps you did. GitHub accepts
      attachments up to 25 MB; a zipped trace of a few minutes is usually far

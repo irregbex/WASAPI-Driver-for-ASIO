@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.8 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.9 - Frequently asked questions
 ============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -91,7 +91,8 @@ See also QUICK-START.txt and README.txt (section numbers below).
 
 11. Which features are stable and which are beta?
     README section 36 (also on the panel's About tab). Beta: extra devices,
-    "Follow Windows" sample rate, the ARM64X DLL, the update check.
+    "Follow Windows" sample rate, the Arm64X DLL (Windows on Arm, not yet
+    tested on real hardware), the update check.
 
 12. Can I use it with a screen reader or without a mouse?
     Yes: README section 37 (Narrator, keyboard shortcuts, high contrast).
@@ -134,3 +135,15 @@ See also QUICK-START.txt and README.txt (section numbers below).
     contains no audio and no file paths; user and computer names are masked
     in the driver's events. Nothing is recorded unless you start it.
     TRACING.txt explains what is in it.
+
+18. Does it work on Windows on Arm (Snapdragon X and other ARM64 PCs)?
+    Yes, as a beta. Since 0.9.9 the Setup installs one Arm64X DLL there and
+    registers it once, without asking: native ARM64 DAWs and x64 DAWs
+    running under emulation both use it (each loads its own half of the
+    file; the x64 DAW gets native-speed driver code). 32-bit DAWs use the
+    x86 DLL as everywhere. The Arm64X DLL is built and checked automatically
+    but has not run on real Windows on Arm hardware yet (KNOWN-ISSUES.txt
+    KI-9): reports are very welcome (TEST-GUIDE.txt block Z). If a release
+    says it was built without the Arm64X DLL, the Setup asks instead
+    whether your DAW is native ARM64 or x64, as in 0.9.8 (only that kind of
+    DAW sees the driver then).

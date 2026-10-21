@@ -5,9 +5,11 @@ rem Elevation (0.9.8, review R4): "fltmc" succeeds only with administrator right
 rem edition, unlike "net session", which needs the Server service). The elevated copy is started with the marker
 rem argument "elevated"; if it still has no administrator rights it stops instead of asking again (no loop).
 rem Single quotes in paths are doubled for PowerShell's single-quoted strings.
+rem 0.9.9: the keys are the same whichever DLL was registered (x64, ARM64, Arm64X, x86), so this also removes an
+rem Arm64X registration.
 setlocal
 color 8B
-title WASAPI Driver for ASIO 0.9.8 - Uninstall
+title WASAPI Driver for ASIO 0.9.9 - Uninstall
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin

@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.8 - Source code and building
+WASAPI Driver for ASIO 0.9.9 - Source code and building
 =======================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -23,7 +23,7 @@ Building (Linux or WSL, cross-compiling)
 Installer
   Needs installer/lang_en.nsh, lang_es.nsh, header.bmp, welcome.bmp and
   app.ico (a copy of src/res/app.ico) next to the .nsi.
-  makensis -DVERSION=0.9.8 installer/WasapiDriver.nsi (nsis package), with
+  makensis -DVERSION=0.9.9 installer/WasapiDriver.nsi (nsis package), with
   the 3 DLLs, WasapiDriverDiag.exe, WasapiDriverTest.exe, LICENSE.txt and
   the documents README.txt, QUICK-START.txt, FAQ.txt, COMPATIBILITY.txt,
   TEST-GUIDE.txt, COPYRIGHT.txt,
@@ -35,12 +35,22 @@ Installer
   WASAPI-Driver-for-ASIO-<version>-Setup.exe in that parent folder.
   Optional: -DSIGN_CMD="sh <repo>/scripts/sign.sh" signs the Setup and its
   uninstaller (!finalize / !uninstfinalize); see SIGNING.txt.
+  0.9.9: if WasapiDriverARM64X.dll is in that parent folder too, the Setup
+  contains it and registers it on Windows on Arm (one registration, no
+  question); makensis prints which kind of package it builds. -DARM64X=1
+  requires the file, -DARM64X=0 builds without it even if it is there.
+  Without the file the Setup is the same as in 0.9.8.
 
-ARM64X (experimental, 0.8.0)
+ARM64X (0.8.0 experimental; built at every push and packaged since 0.9.9)
   One DLL with native ARM64 and ARM64EC code. Needs MSVC (cl /arm64EC and
   link /machine:arm64x); the Linux toolchains cannot produce ARM64EC code.
-  Built only by the "arm64x" job of .github/workflows/release.yml on a
-  Windows 11 ARM64 runner; see ARCHITECTURE.txt section 40.
+  Built by scripts/build-arm64x.ps1 in the "arm64x" job of
+  .github/workflows/build.yml and release.yml on a Windows 11 ARM64 runner
+  (by hand: a "Developer PowerShell" for arm64 of Visual Studio 2022 with
+  the ARM64 and ARM64EC build tools, from the source root:
+  pwsh scripts\build-arm64x.ps1). The script checks the image with dumpbin
+  (ARM64X machine, the four exports, no Visual C++ runtime DLL) and ends
+  with a ::notice annotation. See ARCHITECTURE.txt section 59.
 
 Offline tests (Linux, plain g++)
   0.9.8: sh tests/run_all.sh builds and runs ALL of them (18) and prints a
@@ -80,7 +90,9 @@ CI
   .github/workflows/build.yml (GitHub Actions, ubuntu-latest) builds the
   three DLLs and both tools, runs every offline test (tests/run_all.sh) and
   builds the installer. release.yml builds nothing until its "tests" job
-  (the same script) has passed.
+  (the same script) has passed. 0.9.9: both workflows also run the
+  "arm64x" job (MSVC, Windows 11 ARM64 runner); the installer job runs
+  after it and includes its DLL only when that job passed every check.
 
 Toolchain details
   C++17. DLL libraries: ole32 uuid avrt winmm shell32 user32 advapi32 gdi32
@@ -242,6 +254,8 @@ manifests/            winget manifest templates, winget-pkgs layout
                       manifests/<letter>/<owner>/WASAPIDriverForASIO/<version>/
                       (InstallerSha256 filled in at release time).
 scripts/sign.sh       Optional Authenticode signing (SIGNING.txt).
+scripts/build-arm64x.ps1
+                      0.9.9: Arm64X build with MSVC (CI; see "ARM64X").
 .gitignore            Build outputs git must not track.
 .gitattributes        Line endings kept as committed (0.9.7): CRLF for the
                       Windows text files, LF for *.sh / *.yml / *.yaml /

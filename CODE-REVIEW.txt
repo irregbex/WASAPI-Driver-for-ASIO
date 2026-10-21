@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.8 - Code review
+WASAPI Driver for ASIO 0.9.9 - Code review
 ==========================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -1101,3 +1101,71 @@ R7 LOW FIXED  Comments: common.h still described the private selector's opt
               as char[256] (now asiochk::EngineInfo); hosttest.cpp described a
               0.9.7 driver as rejecting the new request (it writes over the
               header; the line shows without its first 8 characters).
+
+0.9.9 MSVC / Arm64X (first MSVC build of the sources; 2 defects FIXED, 2 linker warnings)
+------------------------------------------------------------------------------------------
+Found by the "arm64x" CI job (MSVC, cl native ARM64 + cl /arm64EC, link
+/machine:arm64x), which compiled the sources with MSVC for the first time.
+Neither defect affected the mingw / zig builds (GCC and clang accept both
+constructs); the fixes change no behaviour there.
+M1 MED  FIXED  dll.cpp DllGetClassObject: #if / #elif / #else / #endif
+               inside the argument list of the function-like macro WB_TRACE
+               (to pick the "Architecture" string). Directives inside macro
+               arguments are undefined behaviour ([cpp.replace]); MSVC
+               rejects them (error C2121) and the Arm64X build failed. The
+               string is now chosen into a constant before the call.
+               _M_ARM64EC is tested first, because the ARM64EC compiler also
+               defines _M_X64 and _WIN64: the EC half reports "ARM64EC" (not
+               "x64"), so a trace shows which half a host loaded.
+M2 MED  FIXED  panel.cpp PanelState had a font field named "small". Under
+               MSVC the Windows headers include rpcndr.h, which has
+               "#define small char", so the declaration became
+               "HFONT ..., char = nullptr" (syntax errors in every use).
+               Renamed to fontSmall (the declaration and all 27 uses).
+M3 LOW  FIXED  Linker warning LNK4070 ("/OUT:WasapiDriver.dll directive in
+               .EXP differs from output filename"): src/WasapiBridge.def
+               says LIBRARY WasapiDriver (the mingw / zig builds name their
+               output with -o), while this build writes
+               WasapiDriverARM64X.dll. scripts/build-arm64x.ps1 now passes a
+               temporary copy, obj\WasapiDriverARM64X.def, with
+               "LIBRARY WasapiDriverARM64X" and the same EXPORTS, to both
+               /defArm64Native and /def. src/WasapiBridge.def is unchanged.
+M4 INFO        Linker warning LNK4279: 'SetFilePointerEx' mapped to
+               different icall push thunks (libucrt.lib lseek.obj /
+               _flsbuf.obj vs update.obj). Kept, considered benign:
+               an icall push thunk adapts an ARM64EC call through an import
+               whose target may be x64 code; the prebuilt static UCRT
+               objects (/MT) and update.obj requested thunks for the same
+               import separately and the linker could not merge them. Both
+               describe the same signature (HANDLE, LARGE_INTEGER,
+               PLARGE_INTEGER, DWORD). SetFilePointerEx is a kernel32
+               export, which is native (ARM64EC-compatible) code on Windows
+               on Arm, so the call is direct and no push thunk runs. The
+               warning is only possible with the static CRT; the dynamic
+               CRT (/MD) would remove it but would make every host need the
+               Visual C++ redistributable. It is still published as a
+               ::warning annotation (with a pointer to this entry). To be
+               confirmed on real hardware (KNOWN-ISSUES.txt KI-9): the
+               update download (update.cpp Rewind) and the CRT's file
+               functions are the users of that import in the DLL.
+M5 LOW  FIXED  scripts/build-arm64x.ps1 (0.9.9 prep) published every line
+               matching "LNKnnnn", warnings included, as ::error
+               annotations, so a successful build looked failed on the run
+               page. Messages are classified now: "error Cxxxx" / "fatal
+               error", LNK1xxx / LNK2xxx (and RC / D errors) -> ::error;
+               "warning Cxxxx", LNK4xxx -> ::warning; 10 of each. A tool
+               that fails without a classified line still gets an ::error.
+M6 LOW  FIXED  The dumpbin result was only in the job summary, which the
+               public run page does not show without signing in. The script
+               now always ends with one ::notice annotation (result,
+               machine line, exports, imported DLLs, SHA-256) and fails if
+               the image is not ARM64X, the exports are not exactly the four
+               COM entry points, or a Visual C++ runtime DLL is imported.
+Packaging review (no defect): "build" runs after "arm64x" under
+!cancelled() (package-trusted checks needs.build.result explicitly, so a
+failed arm64x job cannot skip it); the DLL is packaged only when the job
+reported ok AND its SHA-256 matches; the release no longer publishes the
+separate experimental-unsigned file (AF11): the DLL is now produced by a
+pinned workflow on a GitHub-hosted runner, verified by hash in the packaging
+job and signed there with the other DLLs, the same chain as every other
+binary.

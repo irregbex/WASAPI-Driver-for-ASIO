@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.8 (public beta) - Test guide
+WASAPI Driver for ASIO 0.9.9 (public beta) - Test guide
 =======================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -11,7 +11,7 @@ the report.
 
 Preparation
 -----------
-P0  Install WASAPI-Driver-for-ASIO-0.9.8-Setup.exe (README section 3).
+P0  Install WASAPI-Driver-for-ASIO-0.9.9-Setup.exe (README section 3).
     OK = it finishes without errors and "WASAPI Driver for ASIO" appears in
     the DAW.
 
@@ -471,7 +471,7 @@ O10 Program profile: Advanced > Profile for this program: choose a profile
 O11 Diagnostics (Start menu > Diagnostics).  OK = every endpoint shows a
     "Bluetooth: yes/no" line; the Bluetooth headset says yes.
 O12 Silent install: in an administrator console run
-    WASAPI-Driver-for-ASIO-0.9.8-Setup.exe /S.  OK = no window asks
+    WASAPI-Driver-for-ASIO-0.9.9-Setup.exe /S.  OK = no window asks
     anything, the driver appears in the DAW afterwards.
 
 Block P - panel visuals (0.8.1, speed and frame rate updated in 0.8.2)
@@ -744,12 +744,12 @@ W3  Cubase project at 44.1 kHz, Windows device at 48 kHz, Low latency on.
     channels: sinc (12 M MAC/s, budget 150 M)" with ResamplerQuality Hermite
     AND with Sinc (the setting no longer changes this line).
 W4  Keep Cubase open with the project playing (the driver is loaded) and run
-    WASAPI-Driver-for-ASIO-0.9.8-Setup.exe.  OK = after Install, a message
+    WASAPI-Driver-for-ASIO-0.9.9-Setup.exe.  OK = after Install, a message
     says the file is in use and asks to close the audio programs (Cubase,
     DaVinci Resolve, Ableton Live...) with Retry / Cancel. Cancel: Setup
     stops and the installed version still works. Close Cubase, run Setup
-    again, Retry if asked: it finishes and the DAW shows 0.9.8
-    (getDriverVersion 980 in the test report).
+    again, Retry if asked: it finishes and the DAW shows 0.9.9
+    (getDriverVersion 990 in the test report).
 W5  Same as W4 with Settings > Apps > WASAPI Driver for ASIO > Uninstall
     while Cubase is open.  OK = the same message; Cancel removes nothing.
 
@@ -790,6 +790,50 @@ Y5  Run "Start trace" twice in a row.  OK = the second one says a trace is
 Y6  Play for 30 minutes with NO trace running and compare the DSP load in the
     panel with 0.9.7 on the same project.  OK = no measurable difference
     (tracing costs nothing when no trace runs).
+
+Block Z - 0.9.9 Windows on Arm (Arm64X DLL; ARM64 PCs only)
+-----------------------------------------------------------
+Only for testers with a Windows 11 on Arm PC (Snapdragon X and similar).
+The Arm64X DLL is built and checked by the CI but has NOT run on real
+hardware yet (KNOWN-ISSUES.txt KI-9): every result helps, also "it works".
+First check that your package contains it: the release notes say so, and
+WasapiDriverARM64X.dll is in the bin zip.
+How to see a process's architecture: Task Manager > Details, right-click a
+column header > Select columns > "Architecture" (ARM64, x64 or x86).
+Z1  Install WASAPI-Driver-for-ASIO-0.9.9-Setup.exe (over 0.9.8 if it was
+    installed).  OK = NO question "native ARM64 or x64 DAW"; the details
+    list says "Registered Arm64X (64-bit view: ...)" and "Registered x86
+    (32-bit view)"; C:\Program Files\WASAPI Driver for ASIO contains
+    WasapiDriverARM64X.dll.
+Z2  Registry (regedit, or in a console:
+      reg query "HKLM\SOFTWARE\Classes\CLSID\{A63175BD-B872-4FA5-9595-464F0236E1D0}\InprocServer32" /reg:64
+      reg query "HKLM\SOFTWARE\Classes\CLSID\{A63175BD-B872-4FA5-9595-464F0236E1D0}\InprocServer32" /reg:32
+    ).  OK = the 64-bit view names ...\WasapiDriverARM64X.dll (and nothing
+    else: no ARM64 or x64 DLL from an earlier version), the 32-bit view
+    names ...\WasapiDriver32.dll. Start menu > Diagnostics shows the same
+    paths, "DLL file: exists", and one "WASAPI Driver for ASIO" key per view.
+Z3  Emulated x64 host: run Start menu > "... Automatic test". The test tool
+    is an x64 program (there is no ARM64 build of the tools), so on Windows
+    on Arm it runs emulated and loads the ARM64EC half of the Arm64X DLL:
+    this IS the x64-host test.  OK = Task Manager shows WasapiDriverTest.exe
+    as x64; every test PASSED as on an x64 PC; send WasapiDriver-test.txt.
+Z4  Native ARM64 host: open a native ARM64 ASIO host (Task Manager shows it
+    as ARM64) and select "WASAPI Driver for ASIO".  OK = the driver is
+    listed, opens, plays and records (Block A, A1-A4), the panel opens.
+    A host that shows x64 here is an emulated host: that is Z5.
+Z5  Emulated x64 DAW (Task Manager shows it as x64): same as Z4.  OK = as
+    Z4, with a DSP load in the panel similar to Z4.
+Z6  Which half was loaded: record a trace (Block Y, Y3) while Z4 and then Z5
+    run. In the trace, the event DriverLoaded has Architecture = "ARM64" for
+    the native host and "ARM64EC" for the emulated x64 host.  OK = both
+    values appear. (A 32-bit host loads WasapiDriver32.dll and reports
+    "x86".)
+Z7  Uninstall (Settings > Apps).  OK = WasapiDriverARM64X.dll is gone and
+    the two reg query commands of Z2 find nothing.
+If Z3, Z4 or Z5 fails: send log.txt, the test report, the Diagnostics
+report and a trace. Workaround until it is fixed: the portable bin zip
+without WasapiDriverARM64X.dll (delete or rename it, then run install.bat:
+it asks for the ARM64 or the x64 DLL as in 0.9.8).
 
 Useful data for the report
 --------------------------

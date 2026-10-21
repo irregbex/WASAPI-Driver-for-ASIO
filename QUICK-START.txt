@@ -1,15 +1,17 @@
-WASAPI Driver for ASIO(R) 0.9.8 - Quick start (one page)
+WASAPI Driver for ASIO(R) 0.9.9 - Quick start (one page)
 ========================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 Full manual: README.txt. Questions: FAQ.txt.
 
 1. INSTALL
-   Download WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the 0.9.8 release:
+   Download WASAPI-Driver-for-ASIO-0.9.9-Setup.exe from the 0.9.9 release:
    https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-   Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.8-Setup.exe (SmartScreen:
+   Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.9-Setup.exe (SmartScreen:
    "More info" > "Run anyway" if the Setup is not signed). Accept the UAC
-   prompt, then Next / I Agree / Install. Windows on ARM: Yes = native ARM64
-   DAW, No = x64 DAW. No reboot is needed.
+   prompt, then Next / I Agree / Install. Windows on ARM: one Arm64X driver
+   serves native ARM64 and x64 DAWs, no question (beta, FAQ.txt question
+   18; a package without it asks: Yes = native ARM64 DAW, No = x64 DAW).
+   No reboot is needed.
    Without the Setup: use Portable-Install\install.bat from the binary ZIP
    (not the source tree); keep that folder where it is because the registry
    points to it.

@@ -8,15 +8,20 @@
 #   tests          0.9.8: Ubuntu, every offline test (tests/run_all.sh: the 15 unit tests plus the fuzz, host
 #                  argument validation and trace encoder tests under AddressSanitizer / UndefinedBehaviorSanitizer).
 #                  Every other job needs it: nothing is built, signed or published unless ALL tests passed.
-#   build          Ubuntu: the same cross build as build.yml (x64, x86, ARM64 DLLs, diagnostics, test host), all
-#                  offline tests, optional signing (scripts/sign.sh: PFX + osslsigncode; does nothing without a
-#                  certificate), Setup (NSIS; Setup and uninstaller signed through !finalize / !uninstfinalize),
-#                  binaries zip and source zip.
-#   arm64x         Experimental, Windows 11 ARM64 runner with MSVC: one ARM64X DLL (native ARM64 + ARM64EC code
-#                  in one file, loadable by native ARM64 and by emulated x64 hosts). It cannot be produced by the
-#                  Linux toolchains (no ARM64EC code generation, see ARCHITECTURE.txt "ARM64X"). continue-on-error:
-#                  a failure here never blocks a release; the file is published as a separate, UNSIGNED download
-#                  (0.9.1, fix 11: artifacts of continue-on-error jobs are never signed).
+#   arm64x         Windows 11 ARM64 runner with MSVC: one Arm64X DLL (native ARM64 + ARM64EC code in one file,
+#                  loadable by native ARM64 and by emulated x64 hosts). It cannot be produced by the Linux
+#                  toolchains (no ARM64EC code generation, see ARCHITECTURE.txt section 59). scripts/build-arm64x.ps1
+#                  checks the image with dumpbin (ARM64X machine, the four exports, no Visual C++ runtime DLL) and
+#                  sets the job outputs ok / sha256 only when every check passed. continue-on-error: a failure
+#                  here never blocks a release.
+#   build          Ubuntu, after tests and arm64x: the same cross build as build.yml (x64, x86, ARM64 DLLs,
+#                  diagnostics, test host), all offline tests, optional signing (scripts/sign.sh: PFX +
+#                  osslsigncode; does nothing without a certificate), Setup (NSIS; Setup and uninstaller signed
+#                  through !finalize / !uninstfinalize), binaries zip and source zip. 0.9.9: when arm64x passed,
+#                  its DLL (checked against the SHA-256 the arm64x job reported) is signed like the other DLLs and
+#                  goes INTO the Setup (makensis -DARM64X=1) and the binaries zip; otherwise both are built as
+#                  before 0.9.9 and a warning annotation says so. The separate
+#                  "WasapiDriverARM64X-<version>-experimental-unsigned.dll" download of 0.8.0 - 0.9.8 is gone.
 #   package-trusted  Only when the repository variable WB_SIGNING is "trusted": rebuilds the Setup on Windows
 #                  and signs everything with Azure Trusted Signing (signtool + dlib). Replaces the files of "build".
 #   release        Tag runs only: SHA256SUMS.txt and a DRAFT GitHub Release with all files. A maintainer reviews the
@@ -50,12 +55,24 @@ jobs:
         run: sh tests/run_all.sh
 
   build:
-    needs: tests
+    # 0.9.9: after arm64x, so the Setup and the bin zip can contain the Arm64X DLL. Runs whatever arm64x did
+    # (failed, skipped), but only when every offline test passed. !cancelled() rather than always(): a cancelled
+    # run builds nothing.
+    needs: [tests, arm64x]
+    if: ${{ !cancelled() && needs.tests.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      arm64x: ${{ steps.a64x.outputs.included }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Arm64X DLL from the arm64x job (only when it passed every check)
+        if: ${{ needs.arm64x.outputs.ok == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: arm64x
+          path: arm64x
       - name: Version
         id: ver
         run: |
@@ -90,13 +107,29 @@ jobs:
       - name: Offline tests (again, on the exact tree that is packaged)
         run: sh tests/run_all.sh
 
+      - name: Arm64X DLL into the package (0.9.9)
+        id: a64x
+        run: |
+          # Only the file the arm64x job checked (same SHA-256). It is copied next to the other DLLs, so the signing
+          # step, the Setup (-DARM64X=1 below) and the bin zip (*.dll) all take it.
+          if [ -f arm64x/WasapiDriverARM64X.dll ] && echo "${{ needs.arm64x.outputs.sha256 }}  arm64x/WasapiDriverARM64X.dll" | sha256sum -c -; then
+            cp arm64x/WasapiDriverARM64X.dll .
+            echo "included=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "included=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No Arm64X DLL::This package is built without WasapiDriverARM64X.dll (arm64x job failed or its file did not verify); Windows on Arm keeps the ARM64 / x64 choice"
+          fi
+
       - name: Sign binaries (no-op without a certificate)
         env:
           WB_SIGN_PFX_BASE64: ${{ secrets.WB_SIGN_PFX_BASE64 }}
           WB_SIGN_PFX_PASSWORD: ${{ secrets.WB_SIGN_PFX_PASSWORD }}
           WB_SIGN_TIMESTAMP: ${{ vars.WB_SIGN_TIMESTAMP }}
           WB_SIGN_URL: ${{ vars.WB_SIGN_URL }}
-        run: sh scripts/sign.sh WasapiDriver64.dll WasapiDriver32.dll WasapiDriverARM64.dll WasapiDriverDiag.exe WasapiDriverTest.exe
+        run: |
+          # 0.9.9: the Arm64X DLL is part of the package now and is signed like every other DLL (when present).
+          A64X=; [ -f WasapiDriverARM64X.dll ] && A64X=WasapiDriverARM64X.dll
+          sh scripts/sign.sh WasapiDriver64.dll WasapiDriver32.dll WasapiDriverARM64.dll $A64X WasapiDriverDiag.exe WasapiDriverTest.exe
 
       - name: Setup (signed through !finalize / !uninstfinalize when a certificate is configured)
         env:
@@ -108,13 +141,15 @@ jobs:
           VERSION=${{ steps.ver.outputs.version }}
           mkdir -p stage/installer
           cp WasapiDriver64.dll WasapiDriver32.dll WasapiDriverARM64.dll WasapiDriverDiag.exe WasapiDriverTest.exe LICENSE.txt stage/
+          # 0.9.9: Arm64X DLL (step "Arm64X DLL into the package"); the Setup registers it on Windows on Arm
+          ARM64X=; [ -f WasapiDriverARM64X.dll ] && cp WasapiDriverARM64X.dll stage/ && ARM64X=-DARM64X=1
           # documents: pkg2/ in the development tree, the repository root in the published source tree
           DOC=pkg2; [ -d pkg2 ] || DOC=.
           for f in README QUICK-START FAQ COMPATIBILITY TEST-GUIDE COPYRIGHT THIRD-PARTY-NOTICES TRADEMARKS DISCLAIMER PRIVACY SECURITY CONTRIBUTING TRACING; do cp $DOC/$f.txt stage/; done
           # 0.9.8: tracing kit (Windows Performance Recorder profile and the two helpers)
           mkdir -p stage/trace && cp trace/WasapiDriver.wprp "trace/Start trace.bat" "trace/Stop trace.bat" stage/trace/
           cp installer/WasapiDriver.nsi installer/NOTICES.txt installer/lang_en.nsh installer/lang_es.nsh installer/header.bmp installer/welcome.bmp src/res/app.ico stage/installer/
-          cd stage/installer && makensis -DVERSION=$VERSION "-DSIGN_CMD=sh $GITHUB_WORKSPACE/scripts/sign.sh" WasapiDriver.nsi
+          cd stage/installer && makensis -DVERSION=$VERSION $ARM64X "-DSIGN_CMD=sh $GITHUB_WORKSPACE/scripts/sign.sh" WasapiDriver.nsi
 
       - name: Zips (binaries + documentation, and the source tree)
         run: |
@@ -133,19 +168,25 @@ jobs:
 
   arm64x:
     needs: tests            # 0.9.8: built only after every offline test passed
-    # Experimental (G9). GitHub-hosted Windows 11 ARM64 runner; MSVC from the image (Visual Studio Build Tools
-    # with the ARM64 / ARM64EC compilers). Two compilations of the same sources (native ARM64 and ARM64EC) linked
-    # with /machine:arm64x into one DLL with the same exports for both halves.
+    # G9, packaged since 0.9.9. GitHub-hosted Windows 11 ARM64 runner; MSVC from the image (Visual Studio Build
+    # Tools with the ARM64 / ARM64EC compilers). Two compilations of the same sources (native ARM64 and ARM64EC)
+    # linked with /machine:arm64x into one DLL with the same exports for both halves. No signing secret here: the
+    # "build" job signs the DLL together with the others. ok / sha256 are set only when every check passed.
     runs-on: windows-11-arm
     continue-on-error: true
+    outputs:
+      ok: ${{ steps.arm64x.outputs.ok }}
+      sha256: ${{ steps.arm64x.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: arm64
       - name: Build ARM64X DLL
-        # 0.9.9: shared with build.yml; compiles every file (ARM64 + ARM64EC), reports every MSVC error as an
-        # annotation and in the job summary, links /machine:arm64x and checks the image with dumpbin.
+        # 0.9.9: shared with build.yml; compiles every file (ARM64 + ARM64EC), reports MSVC errors and warnings as
+        # annotations and in the job summary, links /machine:arm64x and checks the image with dumpbin (final
+        # ::notice: result, machine, exports, imported DLLs, SHA-256).
+        id: arm64x
         shell: pwsh
         run: ./scripts/build-arm64x.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -157,8 +198,12 @@ jobs:
     # Azure Trusted Signing (G8). Runs only when the repository variable WB_SIGNING is "trusted". Signs the
     # binaries built by "build" with signtool + the Trusted Signing dlib, then rebuilds the Setup with NSIS on
     # Windows so that the uninstaller is signed too (!uninstfinalize) and signs the Setup (!finalize).
+    # 0.9.9: the explicit build result is needed because "build" itself runs under !cancelled() after the
+    # experimental arm64x job; the implicit success() would skip this job whenever arm64x failed.
+    # The bin zip already contains the Arm64X DLL when "build" packaged it: it is signed with the other *.dll
+    # files below and the Setup is rebuilt with -DARM64X=1.
     needs: build
-    if: vars.WB_SIGNING == 'trusted'
+    if: ${{ !cancelled() && needs.build.result == 'success' && vars.WB_SIGNING == 'trusted' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -190,7 +235,9 @@ jobs:
           # 0.9.8: the tracing kit and its guide are in the bin zip (trace\, TRACING.txt); the Setup takes them from there
           Copy-Item installer\WasapiDriver.nsi, installer\NOTICES.txt, installer\lang_en.nsh, installer\lang_es.nsh, installer\header.bmp, installer\welcome.bmp, src\res\app.ico stage\installer\
           Push-Location stage\installer
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "-DVERSION=$v" "-DSIGN_CMD=$sign" WasapiDriver.nsi
+          # 0.9.9: same Arm64X decision as the "build" job (the DLL is in the bin zip only when it was packaged)
+          $a64x = if (Test-Path ..\WasapiDriverARM64X.dll) { '-DARM64X=1' } else { '-DARM64X=0' }
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "-DVERSION=$v" $a64x "-DSIGN_CMD=$sign" WasapiDriver.nsi
           if ($LASTEXITCODE) { exit 1 }
           Pop-Location
           Move-Item -Force stage\WASAPI-Driver-for-ASIO-$v-Setup.exe dist\
@@ -203,8 +250,8 @@ jobs:
 
   release:
     needs: [tests, build, arm64x, package-trusted]
-    # Runs for tags when "build" succeeded; "arm64x" (experimental) and "package-trusted" (optional) may be
-    # failed or skipped.
+    # Runs for tags when "build" succeeded; "arm64x" (experimental; without it the package has no Arm64X DLL) and
+    # "package-trusted" (optional) may be failed or skipped.
     if: always() && startsWith(github.ref, 'refs/tags/v') && needs.tests.result == 'success' && needs.build.result == 'success' && needs.package-trusted.result != 'failure'
     runs-on: ubuntu-latest
     permissions:
@@ -216,14 +263,10 @@ jobs:
           path: artifacts
       - name: Collect files and checksums (no signing secrets in this job)
         run: |
-          VERSION=${{ needs.build.outputs.version }}
           mkdir -p out
           if [ -d artifacts/release-files-trusted ]; then cp artifacts/release-files-trusted/* out/; else cp artifacts/release-files/* out/; fi
-          # 0.9.1 (fix 11): the ARM64X DLL comes from a continue-on-error job and is NEVER signed: it is published
-          # as an unsigned experimental download, clearly named, and is not part of the Setup.
-          if [ -f artifacts/arm64x/WasapiDriverARM64X.dll ]; then
-            cp artifacts/arm64x/WasapiDriverARM64X.dll out/WasapiDriverARM64X-$VERSION-experimental-unsigned.dll
-          fi
+          # 0.9.9: the Arm64X DLL is inside the Setup and the bin zip (job "build"); it is no longer published as a
+          # separate "experimental-unsigned" file (0.9.1, fix 11), so artifacts/arm64x is not copied.
           cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Draft release
         env:
@@ -233,4 +276,10 @@ jobs:
           DOC=pkg2; [ -d pkg2 ] || DOC=.
           sed -n "/^$VERSION /,/^[0-9]\+\.[0-9]\+\.[0-9]\+ /p" $DOC/VERSION.txt | sed '$d' > notes.txt || true
           [ -s notes.txt ] || echo "WASAPI Driver for ASIO $VERSION. See VERSION.txt." > notes.txt
+          # 0.9.9: say whether this package contains the Arm64X DLL (Windows on Arm)
+          if [ "${{ needs.build.outputs.arm64x }}" = "true" ]; then
+            printf '\nThis package contains WasapiDriverARM64X.dll (Setup and bin.zip): on Windows on Arm the Setup registers it once for native ARM64 and emulated x64 hosts. Not yet tested on real Windows on Arm hardware (KNOWN-ISSUES.txt KI-9).\n' >> notes.txt
+          else
+            printf '\nThis package does NOT contain the Arm64X DLL (the arm64x build failed); on Windows on Arm the Setup asks for the ARM64 or x64 DLL as in 0.9.8.\n' >> notes.txt
+          fi
           gh release create "$GITHUB_REF_NAME" out/* --draft --title "WASAPI Driver for ASIO $VERSION" --notes-file notes.txt

@@ -1,4 +1,4 @@
-# WASAPI Driver for ASIO - automatic build (3 DLLs, tools and installer)
+# WASAPI Driver for ASIO - automatic build (3 DLLs, tools and installer; 0.9.9: Arm64X DLL with MSVC)
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: build
 
@@ -12,9 +12,22 @@ on:
 
 jobs:
   build:
+    # 0.9.9: runs after "arm64x" so the installer artifact contains the Arm64X DLL whenever that job produced a
+    # verified one (output ok == 'true', see scripts/build-arm64x.ps1). "arm64x" is experimental: its failure
+    # never stops this job (!cancelled() instead of the implicit success()); the installer is then built without
+    # the Arm64X DLL, exactly as before 0.9.9.
+    needs: arm64x
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Arm64X DLL from the arm64x job (only when it passed every check)
+        if: ${{ needs.arm64x.outputs.ok == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: arm64x
+          path: arm64x
       - name: Dependencies
         run: |
           sudo apt-get update
@@ -45,7 +58,15 @@ jobs:
           for f in README QUICK-START FAQ COMPATIBILITY TEST-GUIDE COPYRIGHT THIRD-PARTY-NOTICES TRADEMARKS DISCLAIMER PRIVACY SECURITY CONTRIBUTING TRACING; do cp $DOC/$f.txt stage/; done
           mkdir -p stage/trace && cp trace/WasapiDriver.wprp "trace/Start trace.bat" "trace/Stop trace.bat" stage/trace/   # 0.9.8
           cp installer/WasapiDriver.nsi installer/NOTICES.txt installer/lang_en.nsh installer/lang_es.nsh installer/header.bmp installer/welcome.bmp src/res/app.ico stage/installer/
-          cd stage/installer && makensis -DVERSION=$VERSION WasapiDriver.nsi
+          # 0.9.9: the Arm64X DLL goes into the Setup only if the downloaded file is the one the arm64x job checked
+          # (same SHA-256); makensis then gets -DARM64X=1 (Windows on Arm: one registration for ARM64 and x64 hosts).
+          ARM64X=
+          if [ -f arm64x/WasapiDriverARM64X.dll ] && echo "${{ needs.arm64x.outputs.sha256 }}  arm64x/WasapiDriverARM64X.dll" | sha256sum -c -; then
+            cp arm64x/WasapiDriverARM64X.dll stage/ && ARM64X=-DARM64X=1
+          else
+            echo "::warning title=No Arm64X DLL::The installer is built without WasapiDriverARM64X.dll (arm64x job failed or its file did not verify)"
+          fi
+          cd stage/installer && makensis -DVERSION=$VERSION $ARM64X WasapiDriver.nsi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -56,20 +77,27 @@ jobs:
             WasapiDriverARM64.dll
             WasapiDriverDiag.exe
             WasapiDriverTest.exe
+            stage/WasapiDriverARM64X.dll
             stage/*-Setup.exe
 
   arm64x:
     # 0.9.9: Arm64X driver DLL (native ARM64 + ARM64EC in one file) built with MSVC on a Windows 11 ARM64 runner
-    # at every push, so MSVC compile errors show up on the public run page (annotations + job summary).
-    # Experimental until it has passed on real hardware: it never makes the workflow fail.
+    # at every push, so MSVC compile errors show up on the public run page (annotations; the final ::notice gives
+    # the result, the dumpbin machine line, exports, imported DLLs and the SHA-256).
+    # Experimental until it has passed on real hardware: it never makes the workflow fail. The outputs ok and
+    # sha256 are set only when the DLL passed every check of the script; "build" packages it only then.
     runs-on: windows-11-arm
     continue-on-error: true
+    outputs:
+      ok: ${{ steps.arm64x.outputs.ok }}
+      sha256: ${{ steps.arm64x.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: arm64
       - name: Build ARM64X DLL
+        id: arm64x
         shell: pwsh
         run: ./scripts/build-arm64x.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

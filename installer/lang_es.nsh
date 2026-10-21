@@ -11,6 +11,8 @@ LangString L_ARM64_Q ${LANG_SPANISH} "Se detectó Windows en ARM64.$\r$\n$\r$\nS
 LangString L_REG_ARM64 ${LANG_SPANISH} "ARM64 registrado (vista de 64 bits)"
 LangString L_REG_X64 ${LANG_SPANISH} "x64 registrado (vista de 64 bits)"
 LangString L_REG_X86 ${LANG_SPANISH} "x86 registrado (vista de 32 bits)"
+; 0.9.9: Windows on Arm with the Arm64X DLL in the package (one registration for ARM64 and emulated x64 hosts)
+LangString L_REG_ARM64X ${LANG_SPANISH} "Arm64X registrado (vista de 64 bits: hosts ARM64 nativos y x64 emulados)"
 LangString L_WELCOME_TEXT ${LANG_SPANISH} "El programa instala ${NAME} ${VERSION}: un driver ASIO para cualquier dispositivo de audio de Windows (WASAPI Compartido y Exclusivo).$\r$\n$\r$\nCierra tu DAW antes de continuar.$\r$\n$\r$\n${ATTRIB}"
 LangString L_WELCOME_TITLE ${LANG_SPANISH} "${NAME}® ${VERSION}"
 ; 0.9.6 (KI-2): files in use (WaitFileFree in WasapiDriver.nsi)

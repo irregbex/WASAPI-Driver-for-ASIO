@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.8 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+WASAPI Driver for ASIO(R) 0.9.9 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
 =====================================================================================================================
 
 A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
@@ -6,13 +6,15 @@ devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cuba
 DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
 earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
 
-WHERE TO GET IT (0.9.8, public beta)
+WHERE TO GET IT (0.9.9, public beta)
 ------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.8. Open its release (or a newer
+  The current public beta is version 0.9.9. Open its release (or a newer
   release) and download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
+  0.9.9: both contain WasapiDriverARM64X.dll for Windows on Arm (one driver for native ARM64 and emulated
+  x64 DAWs, section 3; beta, not yet tested on real hardware: KNOWN-ISSUES.txt KI-9).
     SHA256SUMS.txt                               checksums (PowerShell: Get-FileHash <file> -Algorithm SHA256)
   "Source code (zip)" / "WASAPI-Driver-for-ASIO-<version>-src.zip" contain the complete source tree.
   Versions marked "Pre-release" are betas. Download only from this page; copies elsewhere are not checked.
@@ -28,14 +30,15 @@ in the installation folder.
 
 RELEASE FOLDER LAYOUT
 ---------------------
-  WASAPI-Driver-for-ASIO-0.9.8-Setup.exe  Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
+  WASAPI-Driver-for-ASIO-0.9.9-Setup.exe  Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
   README.txt          This file (complete manual).
   Docs\               QUICK-START.txt (one page), FAQ.txt, COMPATIBILITY.txt (tested hosts and devices),
                       VERSION.txt (changelog), TEST-GUIDE.txt (test plan), ROADMAP.txt, TRACING.txt
                       (diagnostic tracing).
   Legal\              LICENSE.txt, COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt, TRADEMARKS.txt, DISCLAIMER.txt,
                       PRIVACY.txt, SECURITY.txt, CONTRIBUTING.txt.
-  Portable-Install\   The three driver DLLs with install.bat / uninstall.bat (no Setup; section 3, option B).
+  Portable-Install\   The three driver DLLs with install.bat / uninstall.bat (no Setup; section 3, option B);
+                      0.9.9: plus WasapiDriverARM64X.dll in packages built by the CI (Windows on Arm).
   Tools\              WasapiDriverDiag.exe (diagnostics) and WasapiDriverTest.exe (automatic, latency and
                       soak test); 0.9.8: WasapiDriver.wprp, "Start trace.bat", "Stop trace.bat" and
                       TRACING.txt (diagnostic tracing, section 42).
@@ -153,21 +156,32 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.8-Setup.exe from the 0.9.8 release
+  0. Download WASAPI-Driver-for-ASIO-0.9.9-Setup.exe from the 0.9.9 release
      (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
      optionally compare its SHA-256 with SHA256SUMS.txt. For a newer version,
      use that version's release assets.
   1. Close the DAW.
-  2. Double-click WASAPI-Driver-for-ASIO-0.9.8-Setup.exe.
+  2. Double-click WASAPI-Driver-for-ASIO-0.9.9-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
      not digitally signed).
   4. UAC: Yes. Welcome > Next. Notices > Next. License: I Agree. Folder: keep
      the suggested one > Install.
-  5. On Windows on ARM64 it asks: Yes = native ARM64 DAW, No = x64 DAW
-     (emulated).
+  5. Windows on ARM64 (0.9.9): no question. Setup installs the Arm64X DLL
+     (WasapiDriverARM64X.dll) and registers it once; native ARM64 DAWs and
+     x64 DAWs running under emulation both use it (each loads its own half
+     of the file). Only a package built without the Arm64X DLL (the release
+     notes say so) asks as in 0.9.8: Yes = native ARM64 DAW, No = x64 DAW
+     (emulated); only that kind of 64-bit DAW then sees the driver.
   It installs into %ProgramFiles%\WASAPI Driver for ASIO and registers:
-    64-bit view: WasapiDriver64.dll (or WasapiDriverARM64.dll on ARM64)
+    64-bit view: WasapiDriver64.dll on x64 Windows; on ARM64
+                 WasapiDriverARM64X.dll (0.9.9), or WasapiDriverARM64.dll /
+                 WasapiDriver64.dll after the question above
     32-bit view: WasapiDriver32.dll
+  On ARM64 the plain ARM64 and x64 DLLs are installed too but not
+  registered. If the Arm64X DLL does not work for you (please report it,
+  KNOWN-ISSUES.txt KI-9): uninstall, then use option B without
+  WasapiDriverARM64X.dll (delete or rename it first): install.bat then
+  asks for the ARM64 or the x64 DLL.
   Start menu > "WASAPI Driver for ASIO": Diagnostics, Automatic test,
   Latency test (cable), Soak test (60 min), Quick start.
   Uninstall: Settings > Apps > WASAPI Driver for ASIO > Uninstall.
@@ -180,7 +194,10 @@ Option A - Installer (recommended)
 Option B - Portable (no installer)
   1. Put the Portable-Install folder in its final location (the registry
      stores the path; install.bat registers the DLLs of its own folder).
-  2. Double-click install.bat (asks for UAC).
+  2. Double-click install.bat (asks for UAC). On Windows on ARM64 it
+     registers WasapiDriverARM64X.dll when that file is in its folder
+     (0.9.9, no question); otherwise it asks: 1 = native ARM64 DAW, 2 = x64
+     DAW. WasapiDriver32.dll is registered for 32-bit DAWs in every case.
   3. To uninstall: uninstall.bat.
   Use A or B, not both at the same time (the last one run sets the path).
 
@@ -770,7 +787,7 @@ Diagnostic traces (.etl, 0.9.8) are written only when you record one, where
 "Stop trace.bat" saves it (your Desktop); see section 42 and TRACING.txt.
 
 ----------------------------------------------------------------------
-20. KNOWN LIMITATIONS 0.9.8
+20. KNOWN LIMITATIONS 0.9.9
 ----------------------------------------------------------------------
 - Extra devices (beta): up to 3 extra outputs and 3 extra inputs, 32
   channels per direction in total. Alignment is based on estimated
@@ -783,16 +800,19 @@ Diagnostic traces (.etl, 0.9.8) are written only when you record one, where
 - Glitches in Exclusive mode: depends on the sound card driver reporting the
   position correctly (IAudioClock); without IAudioClock a less exact timing
   criterion is used.
-- On Windows on ARM64 only one 64-bit architecture is registered at a time
-  (an ARM64X DLL that serves both is built experimentally by the release
-  workflow and is not part of the Setup yet; ARCHITECTURE.txt section 40).
+- Windows on ARM64 (0.9.9): the Arm64X DLL that serves native ARM64 and
+  emulated x64 DAWs with one registration is built and checked by the CI
+  but has not run on real Windows on Arm hardware yet (KNOWN-ISSUES.txt
+  KI-9; ARCHITECTURE.txt section 59). Packages without it (local builds, or
+  a release whose Arm64X build failed) register one 64-bit architecture at
+  a time, as before.
 - Bluetooth: Windows does not report the real delay of Bluetooth devices;
   use the output latency offset (section 26).
 - If the host calls init() on a thread without a message loop (rare),
   automatic resets are not delivered.
 - No Authenticode signature unless a release was built with a certificate
   (SIGNING.txt); unsigned files make SmartScreen warn.
-- Features from 0.2.x to 0.9.8 have not been fully tested on real hardware
+- Features from 0.2.x to 0.9.9 have not been fully tested on real hardware
   yet (see TEST-GUIDE.txt and COMPATIBILITY.txt). Beta features are listed
   in section 36.
 
@@ -820,6 +840,8 @@ Release folder: see "RELEASE FOLDER LAYOUT" at the top of this file.
 Installation folder (%ProgramFiles%\WASAPI Driver for ASIO):
 WasapiDriver64.dll            x64 driver
 WasapiDriverARM64.dll         ARM64 driver
+WasapiDriverARM64X.dll        0.9.9, Windows on Arm only: Arm64X driver (native ARM64 and
+                              emulated x64 DAWs; section 3)
 WasapiDriver32.dll            x86 driver (32-bit DAWs)
 WasapiDriverDiag.exe          Diagnostics tool (section 8)
 WasapiDriverTest.exe          Automatic, latency and soak test (sections 9, 38)
@@ -869,6 +891,11 @@ See VERSION.txt for the detailed changelog.
        release; diagnostic tracing (ETW) with a Windows Performance
        Recorder profile. No new user features; valid calls and the sound
        are unchanged.
+0.9.9  Arm64X: one driver DLL for native ARM64 and emulated x64 DAWs on
+       Windows on Arm, built with MSVC in CI and registered once by the
+       Setup (no question; beta, KNOWN-ISSUES.txt KI-9); two MSVC
+       portability fixes; "Stop trace.bat" saves to the signed-in user's
+       Desktop; code signing policy. No engine change.
 0.9.5  Release candidate: the sample rate set by the DAW survives every
        restart caused by the driver (device and Bluetooth changes), a
        re-created driver instance and the next session.
@@ -1204,7 +1231,8 @@ The update check is beta until the project has a public release.
 36. STABLE AND BETA FEATURES
 ----------------------------------------------------------------------
 0.9.1 to 0.9.6 are release candidates and 0.9.7 is the first public beta;
-0.9.8 hardens it (robustness, tests, diagnostic tracing):
+0.9.8 hardens it (robustness, tests, diagnostic tracing) and 0.9.9 adds the
+Arm64X DLL for Windows on Arm:
 no new features until 1.0, only fixes
 (0.9.2 adds help tips and 0.9.3 the application icon, accepted as exceptions:
 interface only, no audio change; 0.9.4 extends the low-latency engine to
@@ -1220,7 +1248,8 @@ Beta (works in the tests, little real-world use yet):
 - "Follow Windows" sample rate, SampleRate=Auto (section 29);
 - the internal rate conversion of the low-latency engine (0.9.4, section
   41) until it has been tested on real hardware;
-- the ARM64X DLL (experimental, unsigned, not in the Setup);
+- the Arm64X DLL for Windows on Arm (0.9.9: in the Setup, registered
+  once for ARM64 and x64 DAWs; not yet tested on real hardware, KI-9);
 - the update check, until a real public release exists (section 35).
 The About tab of the panel shows the same summary.
 

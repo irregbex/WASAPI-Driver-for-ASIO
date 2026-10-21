@@ -236,3 +236,32 @@ What changed
     test tool.
 If a host shows an error message that it did not show with 0.9.7, record a
 trace (TRACING.txt): the AsioCall events show the call and the code returned.
+
+
+KI-9  Arm64X DLL not yet tested on real Windows on Arm hardware (0.9.9)
+-----------------------------------------------------------------------
+Status: OPEN - testers with a Windows on Arm PC welcome.
+
+What is known
+  - WasapiDriverARM64X.dll (native ARM64 + ARM64EC code in one file) is
+    built with MSVC by the CI on a GitHub Windows 11 ARM64 runner and checked
+    there with dumpbin: the image is ARM64X, it exports exactly the four COM
+    entry points and imports no Visual C++ runtime DLL (static runtime). The
+    result is the ::notice annotation of the "arm64x" job of every run.
+  - It has NOT been loaded by a real ASIO host yet: neither by a native ARM64
+    host (ARM64 half) nor by an emulated x64 host (ARM64EC half). The x64,
+    x86 and plain ARM64 DLLs are unchanged and keep their test status.
+  - Linker warning LNK4279 (SetFilePointerEx, icall push thunks) is expected
+    and considered benign (CODE-REVIEW.txt "0.9.9 MSVC / Arm64X"); a real
+    run confirms it (the update download and the diagnostics' file writes
+    use that function).
+What to do
+  - Testers: TEST-GUIDE.txt block Z (install, registry, automatic test as
+    an emulated x64 host, a native ARM64 host, a trace that shows which half
+    was loaded). Report the results in a GitHub issue, also when everything
+    works.
+  - Workaround if the Arm64X DLL fails: the portable bin zip without
+    WasapiDriverARM64X.dll (delete or rename it, then run install.bat as
+    administrator): it registers the plain ARM64 or x64 DLL after the 0.9.8
+    question, one architecture at a time. Run uninstall.bat (or uninstall
+    the Setup) first.

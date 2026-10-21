@@ -7,9 +7,14 @@ rem argument "elevated"; if it still has no administrator rights it stops instea
 rem Single quotes in paths are doubled for PowerShell's single-quoted strings.
 rem Paths are only ever echoed outside ( ) blocks or inside quotes, so folders such as
 rem "C:\Program Files (x86)\..." or names containing ")" cannot break the script.
+rem 0.9.9 (Arm64X): on Windows on ARM64, if WasapiDriverARM64X.dll is in this folder it is registered ONCE in the
+rem 64-bit view, without a question: native ARM64 and emulated x64 processes read the same 64-bit registry view,
+rem and the loader maps the ARM64 half of that DLL into ARM64 DAWs and its ARM64EC half into emulated x64 DAWs.
+rem Without that file (or after renaming it) the 0.9.8 question (native ARM64 or x64 DAW) is asked. 32-bit DAWs
+rem keep WasapiDriver32.dll in the 32-bit view (WOW6432Node), as before.
 setlocal
 color 4A
-title WASAPI Driver for ASIO 0.9.8 - Install
+title WASAPI Driver for ASIO 0.9.9 - Install
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin
@@ -32,6 +37,12 @@ set "ARCH=%PROCESSOR_ARCHITECTURE%"
 if defined PROCESSOR_ARCHITEW6432 set "ARCH=%PROCESSOR_ARCHITEW6432%"
 if /i not "%ARCH%"=="ARM64" goto :check
 echo Windows ARM64 detected.
+if not exist "%HERE%WasapiDriverARM64X.dll" goto :askarm
+set "DLL=%HERE%WasapiDriverARM64X.dll"
+echo Arm64X DLL found: one registration for native ARM64 and emulated x64 DAWs.
+goto :check
+
+:askarm
 echo   1 = native ARM64 DAW
 echo   2 = x64 DAW (emulated)
 choice /c 12 /n /m "DAW architecture [1/2]: "

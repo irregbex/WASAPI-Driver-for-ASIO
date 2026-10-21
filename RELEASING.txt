@@ -137,6 +137,12 @@ release is built unsigned; the workflow log then says "files left unsigned".
 3.2 GitHub > Actions > "release": wait for the jobs. "build" must succeed;
     "arm64x" is experimental and may fail without blocking the release;
     "package-trusted" runs only with Trusted Signing configured.
+    0.9.9: "build" starts after "arm64x". Check the run's annotations: the
+    ::notice "Arm64X build OK" (machine ARM64X, the four exports, imported
+    DLLs, SHA-256) means the Setup and the bin zip contain
+    WasapiDriverARM64X.dll; a ::warning "No Arm64X DLL" from "build" means
+    they do not (the release notes then say so automatically). Decide
+    whether to publish without it or to fix the arm64x build first.
 3.3 A dry run without a tag: Actions > release > "Run workflow" builds
     everything and keeps the files as workflow artifacts (no release).
 
@@ -147,9 +153,12 @@ release is built unsigned; the workflow log then says "files left unsigned".
       WASAPI-Driver-for-ASIO-<version>-Setup.exe
       WASAPI-Driver-for-ASIO-<version>-bin.zip   (portable files)
       WASAPI-Driver-for-ASIO-<version>-src.zip   (git archive of the tag)
-      WasapiDriverARM64X-<version>-experimental-unsigned.dll  (only if
-      arm64x passed; never signed: it comes from a continue-on-error job)
       SHA256SUMS.txt
+    0.9.9: the Arm64X DLL is inside the Setup and the bin zip (signed with
+    the other DLLs when signing is configured); the separate
+    WasapiDriverARM64X-<version>-experimental-unsigned.dll of 0.8.0 - 0.9.8
+    is no longer published. The notes end with a line saying whether the
+    package contains it.
 4.2 Download the Setup, check it against SHA256SUMS.txt
     (PowerShell: Get-FileHash <file> -Algorithm SHA256), install it on a
     test machine, run TEST-GUIDE.txt H1.

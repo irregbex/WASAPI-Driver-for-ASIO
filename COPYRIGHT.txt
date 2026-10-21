@@ -32,7 +32,7 @@ TRADEMARKS.txt.
 
 How to cite
 -----------
-  WASAPI Driver for ASIO, version 0.9.8. The WASAPI Driver for ASIO
+  WASAPI Driver for ASIO, version 0.9.9. The WASAPI Driver for ASIO
   contributors, 2026. Free software under the GNU General Public License
   version 3 or later.
 
