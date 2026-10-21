@@ -57,3 +57,24 @@ jobs:
             WasapiDriverDiag.exe
             WasapiDriverTest.exe
             stage/*-Setup.exe
+
+  arm64x:
+    # 0.9.9: Arm64X driver DLL (native ARM64 + ARM64EC in one file) built with MSVC on a Windows 11 ARM64 runner
+    # at every push, so MSVC compile errors show up on the public run page (annotations + job summary).
+    # Experimental until it has passed on real hardware: it never makes the workflow fail.
+    runs-on: windows-11-arm
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: arm64
+      - name: Build ARM64X DLL
+        shell: pwsh
+        run: ./scripts/build-arm64x.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: arm64x
+          path: WasapiDriverARM64X.dll
+          if-no-files-found: ignore

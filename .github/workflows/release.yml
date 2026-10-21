@@ -144,16 +144,10 @@ jobs:
         with:
           arch: arm64
       - name: Build ARM64X DLL
-        shell: cmd
-        run: |
-          mkdir obj\a64 obj\ec
-          rc /nologo /i src /fo obj\res.res src\WasapiDriver.rc || exit /b 1
-          set CF=/nologo /c /O2 /EHsc /std:c++17 /W3 /MT /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /D_CRT_SECURE_NO_WARNINGS /utf-8 /Ithird_party\asiosdk
-          set SRC=src\dll.cpp src\driver.cpp src\config.cpp src\panel.cpp src\crash.cpp src\update.cpp src\trace.cpp
-          cl %CF% /Foobj\a64\ %SRC% || exit /b 1
-          cl %CF% /arm64EC /Foobj\ec\ %SRC% || exit /b 1
-          link /nologo /dll /machine:arm64x /defArm64Native:src\WasapiBridge.def /def:src\WasapiBridge.def /out:WasapiDriverARM64X.dll obj\a64\*.obj obj\ec\*.obj obj\res.res ole32.lib uuid.lib avrt.lib winmm.lib shell32.lib user32.lib advapi32.lib gdi32.lib || exit /b 1
-          dumpbin /headers WasapiDriverARM64X.dll | findstr /i "machine"
+        # 0.9.9: shared with build.yml; compiles every file (ARM64 + ARM64EC), reports every MSVC error as an
+        # annotation and in the job summary, links /machine:arm64x and checks the image with dumpbin.
+        shell: pwsh
+        run: ./scripts/build-arm64x.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: arm64x

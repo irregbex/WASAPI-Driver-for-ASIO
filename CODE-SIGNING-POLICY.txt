@@ -1,0 +1,52 @@
+WASAPI Driver for ASIO(R) - Code signing policy
+===============================================
+ASIO is a registered trademark of Steinberg Media Technologies GmbH.
+
+Status
+------
+The Windows binaries of the public beta (0.9.x pre-releases) are NOT code-signed yet: Windows SmartScreen may
+warn before the Setup runs ("More info" > "Run anyway"). The project has applied for a free code signing
+certificate from SignPath Foundation. Once approved, every Windows release will be signed as described below.
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation (after approval).
+
+What is signed
+--------------
+  WASAPI-Driver-for-ASIO-<version>-Setup.exe and its uninstaller, the driver DLLs (WasapiDriver64.dll,
+  WasapiDriver32.dll, WasapiDriverARM64.dll / the Arm64X DLL) and the tools (WasapiDriverDiag.exe,
+  WasapiDriverTest.exe). Product name "WASAPI Driver for ASIO" and the product version are set in every binary
+  and are identical for all files of one release.
+  Only files built from this repository's source by its automated build are signed: GitHub Actions
+  (.github/workflows/release.yml) builds every release from a version tag of
+  https://github.com/irregbex/WASAPI-Driver-for-ASIO after all automated tests have passed. Nothing built on a
+  developer's computer is signed. Third-party code is limited to the Steinberg ASIO SDK headers (used under their
+  GPL v3 option, see THIRD-PARTY-NOTICES.txt) and Windows system libraries.
+
+Team roles
+----------
+  Authors (committers):        irregbex - https://github.com/irregbex
+  Reviewers (review changes from anyone who is not a committer, i.e. every pull request):
+                               irregbex - https://github.com/irregbex
+  Approvers (approve every signing request manually):
+                               irregbex - https://github.com/irregbex
+  The current member list is the list of collaborators of the GitHub repository. All team members use
+  multi-factor authentication on GitHub and on SignPath.
+
+Privacy
+-------
+  See PRIVACY.txt. In short: no telemetry. The only network access is the optional update check (off by default,
+  only to api.github.com / github.com of this project, can be turned off at any time in the control panel,
+  Interface tab). The installer shows the privacy notice and offers a complete uninstallation.
+
+Verifying a signed file
+-----------------------
+  Right-click the file > Properties > Digital Signatures, or in PowerShell:
+    Get-AuthenticodeSignature .\WASAPI-Driver-for-ASIO-<version>-Setup.exe
+  Compare the SHA-256 with SHA256SUMS.txt of the release (Get-FileHash <file> -Algorithm SHA256). Download only
+  from https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases.
+
+Reporting a problem
+-------------------
+  If you find a signed file that you believe was not built from this project, or that behaves maliciously, do not
+  run it and report it privately: GitHub > Security > "Report a vulnerability" (see SECURITY.txt). Include the
+  file's SHA-256 and where you downloaded it.

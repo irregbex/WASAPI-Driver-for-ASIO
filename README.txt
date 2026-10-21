@@ -1,3 +1,31 @@
+WASAPI Driver for ASIO(R) 0.9.8 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+=====================================================================================================================
+
+A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
+devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cubase, Nuendo, Ableton Live,
+DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
+earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
+
+WHERE TO GET IT (0.9.8, public beta)
+------------------------------------
+Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
+  The current public beta is version 0.9.8. Open its release (or a newer
+  release) and download, under "Assets":
+    WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
+    WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
+    SHA256SUMS.txt                               checksums (PowerShell: Get-FileHash <file> -Algorithm SHA256)
+  "Source code (zip)" / "WASAPI-Driver-for-ASIO-<version>-src.zip" contain the complete source tree.
+  Versions marked "Pre-release" are betas. Download only from this page; copies elsewhere are not checked.
+Source code and problem reports: https://github.com/irregbex/WASAPI-Driver-for-ASIO
+  (Issues > New issue; security problems privately as described in SECURITY.txt).
+
+Code signing policy: CODE-SIGNING-POLICY.txt (signing via SignPath Foundation applied for; current beta
+builds are not signed yet). Privacy: PRIVACY.txt (no telemetry; optional update check, off by default).
+
+New here? Read QUICK-START.txt first (one page: install, select the driver in your DAW, recommended
+settings, uninstall), then FAQ.txt for the common questions. Both are in Docs\ of the release folder and
+in the installation folder.
+
 RELEASE FOLDER LAYOUT
 ---------------------
   WASAPI-Driver-for-ASIO-0.9.8-Setup.exe  Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
@@ -15,26 +43,6 @@ RELEASE FOLDER LAYOUT
                       CODE-REVIEW, RELEASING, SIGNING).
 The Setup installs the program, the tools and all documents into one folder:
 %ProgramFiles%\WASAPI Driver for ASIO (Start menu > WASAPI Driver for ASIO).
-
-New here? Read QUICK-START.txt first (one page: install, select the driver in your DAW, recommended
-settings, uninstall), then FAQ.txt for the common questions. Both are in Docs\ of the release folder and
-in the installation folder.
-
-WHERE TO GET IT (0.9.8, public beta)
-------------------------------------
-Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.8. Open its release (or a newer
-  release) and download, under "Assets":
-    WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
-    WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
-    SHA256SUMS.txt                               checksums (PowerShell: Get-FileHash <file> -Algorithm SHA256)
-  "Source code (zip)" / "WASAPI-Driver-for-ASIO-<version>-src.zip" contain the complete source tree.
-  Versions marked "Pre-release" are betas. Download only from this page; copies elsewhere are not checked.
-Source code and problem reports: https://github.com/irregbex/WASAPI-Driver-for-ASIO
-  (Issues > New issue; security problems privately as described in SECURITY.txt).
-
-WASAPI Driver for ASIO(R) 0.9.8 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
-=====================================================================================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
