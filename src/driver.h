@@ -234,7 +234,7 @@ struct StatusInfo {
     int    engineKind;
     double outDevRate, mixRate;
     int    monAvail;                  // 0.9.4: direct monitoring possible with the open streams (1/0; -1 unknown/no input)     // stream rate of the main output; Windows mix rate when opened
-    bool   outConv, convSinc;
+    bool   outConv, convSinc, convSoxr;     // 0.9.10: convSoxr = the soxr engine converts the main output
     long   nIn, nOut;
     uint32_t outGlitches, timeouts;
     uint32_t inUnderruns, inDrops, inGlitches;

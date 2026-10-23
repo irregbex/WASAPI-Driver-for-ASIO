@@ -269,3 +269,37 @@ What to do
     administrator): it registers the plain ARM64 or x64 DLL after the 0.9.8
     question, one architecture at a time. Run uninstall.bat (or uninstall
     the Setup) first.
+
+KI-10 soxr rate conversion adds about 8-10 ms of latency per direction (0.9.10)
+------------------------------------------------------------------------------
+Status: BY DESIGN (only when soxr is selected; reported exactly; the default
+Auto keeps the low-latency sinc).
+
+What is known
+  - Since 0.9.10 the internal rate conversion (DAW rate different from the
+    device rate, "Low latency" on) can use the SoX Resampler library (soxr
+    HQ). It is used ONLY when Advanced tab > Rate conversion is set to
+    "soxr (best quality, +8-10 ms)" (FixedRatioEngine=Soxr); the default
+    "Auto (Sinc, low latency)" behaves exactly as 0.9.9 and has none of the
+    delay described here. Its quality is higher than the
+    built-in sinc (about 130 dB SNR instead of 115, no aliasing at all), but
+    it filters in FFT blocks, so it must look further ahead: 429 input frames
+    (9.7 ms) at 44.1 -> 48 kHz instead of 64 (1.45 ms), about 8.3 ms more on
+    the output and the same again on a converted input (round trip about
+    +16 ms). Example: 44.1 kHz project, 48 kHz device, buffer 128, 3 ms
+    engine period: output latency 20.1 ms instead of 11.9 ms. The look-ahead
+    depends on the rate pair: about 8-10 ms for every pair between 44.1 and
+    192 kHz, more at 16-32 kHz (48 -> 16 kHz 15.6 ms, 16 -> 44.1 kHz
+    26.8 ms, 44.1 -> 22.05 kHz 19.2 ms; sinc 2.9-4 ms there).
+  - The extra delay is part of the latencies the driver reports, so
+    recording stays in time (offline model: measured round trip = reported
+    within 0.5 frame). Only live monitoring through the DAW feels it.
+  - Not affected: the DAW at the device's own rate (no conversion), Exclusive
+    mode, extra devices and drift correction (they do not use this
+    converter).
+What to do
+  - For the lowest latency with conversion: keep Rate conversion at "Auto
+    (Sinc, low latency)" (the default) or "Sinc (low latency)", or set
+    Windows and the DAW to the same rate (no conversion at all).
+  - The Arm64X DLL is the only build whose soxr code is compiled by MSVC; it
+    is built in CI only (see KI-9 for its test status).

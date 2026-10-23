@@ -1,32 +1,118 @@
-WASAPI Driver for ASIO 0.9.9 (public beta)
-==========================================
-Build: 2026-10-21 UTC
+WASAPI Driver for ASIO 0.9.10 (public beta)
+===========================================
+Build: 2026-10-23 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
   x86:   mingw-w64 GCC 13.2 i686, -O2, static linking
   ARM64: Zig 0.16.0 (clang), aarch64-windows-gnu, -O2 (UCRT)
-  Arm64X: 0.9.9, MSVC (Visual Studio Build Tools of the GitHub windows-11-arm
-         runner), cl /O2 /MT (native ARM64) + cl /O2 /MT /arm64EC, link
-         /machine:arm64x; checked by dumpbin in CI (scripts/build-arm64x.ps1)
+  Arm64X: since 0.9.9, MSVC (Visual Studio Build Tools of the GitHub
+         windows-11-arm runner), cl /O2 /MT (native ARM64) + cl /O2 /MT
+         /arm64EC, link /machine:arm64x; checked by dumpbin in CI
+         (scripts/build-arm64x.ps1)
+  0.9.10: every driver DLL also contains the SoX Resampler library (soxr
+         0.1.3, LGPL-2.1-or-later, third_party/soxr), compiled as C (-O2;
+         cl /TC for Arm64X) and linked statically
   Diagnostics: WasapiDriverDiag.exe, mingw-w64 GCC 13.2 x64, console, static
   Test: WasapiDriverTest.exe, mingw-w64 GCC 13.2 x64, console, static
   Installer: NSIS 3.09 (makensis), solid LZMA, Modern UI 2 (English, Spanish)
-  CI: .github/workflows/build.yml (ubuntu-latest); releases:
+  CI: .github/workflows/build.yml (ubuntu-24.04); releases:
       .github/workflows/release.yml (tags v*, see RELEASING.txt); third-party
       actions pinned to commit SHAs; 0.9.8: no release job runs unless every
       offline test passed (tests/run_all.sh); 0.9.9: "arm64x" job (Windows
-      11 ARM64 runner, MSVC) at every push and in every release
+      11 ARM64 runner, MSVC) at every push and in every release; 0.9.10:
+      actions on Node 24 (checkout v7.0.1, upload-artifact v7.0.2,
+      download-artifact v8.0.2)
   Offline tests (18, tests/run_all.sh): resampler, sink, dmix, live, limiter,
                  channel names, visuals, timeinfo, strings, themes, update
                  helpers, instance registry, icon, fixed-ratio conversion and
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 990
+getDriverVersion() = 9100 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
+                     up to 0.9.9 it was major * 1000 + minor * 100 + patch * 10)
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.10 (changes from 0.9.9) - "soxr"
+------------------------------------
+Optional higher-quality rate conversion with the SoX Resampler library,
+requested by the maintainer (the default stays the low-latency sinc of
+0.9.9), plus build and CI maintenance.
+Summary of all changes:
+- "Stop trace.bat" now always saves the trace in
+  C:\Users\Public\Documents\WASAPI Driver for ASIO\Traces and opens that folder in Explorer.
+  The 0.9.9 "signed-in user's Desktop" detection proved unreliable on a real system (standard
+  user + different administrator account at the UAC prompt: the file went to the
+  administrator's profile). Verified on Windows: the 0.9.9 trace contained 556 events of the
+  WASAPIDriverForASIO provider, decoded by tracerpt, with no user or computer names.
+- New optional engine for the internal fixed-ratio rate conversion (used
+  when the DAW rate differs from the device rate with "Low latency" on, e.g.
+  a 44.1 kHz project on a 48 kHz device, outputs and inputs), used only when
+  "soxr (best quality, +8-10 ms)" is selected: soxr, the SoX
+  Resampler library 0.1.3 (Steinberg built-in ASIO Driver 1.0.9.26 installs
+  soxr.dll next to asiobtin.dll, and asiobtin.dll loads it for sample-rate
+  conversion (its binary contains the message "Cannot load soxr.dll! No
+  SRC!"); observed by inspecting the installed files), recipe HQ (20-bit, linear phase, pass band to 91.3 % of
+  the lower Nyquist frequency, no aliasing). Measured at 44.1 -> 48 kHz:
+  132.6 dB SNR and -136 dB THD+N at 1 kHz (sinc 114.9 / -122.5), -137 dB
+  THD+N at 18 kHz (sinc -126.5), images -135 dB (sinc -120), pass-band
+  ripple 0.003 dB; about half the CPU of sinc. Cost: about 8-10 ms more
+  latency per converted direction at 44.1-192 kHz, more at 16-32 kHz
+  (look-ahead 429 input frames = 9.7 ms instead of 64 = 1.45 ms at
+  44.1 -> 48 kHz; 48 -> 16 kHz 15.6 ms, 16 -> 44.1 kHz 26.8 ms), reported
+  exactly to the DAW (the model measures
+  the round trip equal to the reported latencies within 0.5 frame).
+- New setting FixedRatioEngine=Auto|Soxr|Sinc|Hermite (Advanced tab,
+  "Rate conversion", with a help tip in the five languages; stored in
+  profiles; the DAW restarts the driver to apply it). Auto (default) and
+  Sinc: exactly the 0.9.9 behaviour (sinc within the CPU budget, lowest
+  latency with full anti-aliasing; Auto never picks soxr). Soxr: soxr when
+  the shared CPU budget allows, otherwise the 0.9.9 rule, and the log says
+  why soxr was not used. Hermite: Hermite for every up-conversion (lowest latency
+  and CPU, ~89 dB); down-conversions still use sinc (or Windows). With Auto
+  the log line is unchanged from 0.9.9 ("Output: rate conversion 44100 ->
+  48000 Hz, 2 channels: sinc (12 M MAC/s, budget 150 M)"); with soxr it says
+  "soxr HQ (12 M MAC/s equivalent, budget 150 M)" and the engine line
+  "internal rate conversion 44100->48000 Hz (soxr HQ, look-ahead 429
+  frames)").
+- Real-time safety: soxr allocates only on the host thread (stream open,
+  start); the audio thread never makes it allocate (small calls, warm-up,
+  a FIFO allocator with headroom; tests count 0 allocations); soxr's global
+  FFT table is sized once per process. Opening a stream with soxr takes
+  about 10-20 ms for stereo and up to about 150-300 ms for 32 channels (the
+  warm-up; the 2 s look-ahead probe runs once per rate pair and process,
+  later opens use its cached result). ARCHITECTURE.txt section 60.
+- MSVC warning C4244 (wchar_t -> char, from <xutility>) in the Arm64X build
+  fixed: the ASCII copy of a device name used for channel names is now made
+  by chn::AsciiShadow (ASCII kept, other characters '?') instead of keeping
+  the low byte of each character, which could also turn some CJK or
+  full-width characters into '(' / ')' / tab.
+- Version number: getDriverVersion() returns 9100 (new scheme
+  major * 100000 + minor * 1000 + patch * 10; the old scheme would have
+  given 1000 for 0.9.10, the value of 1.0.0). The update check compares
+  0.9.10 > 0.9.9 numerically (tested).
+- CI: GitHub actions updated to releases that run on Node 24 (checkout
+  v7.0.1, upload-artifact v7.0.2, download-artifact v8.0.2; pinned to
+  commit SHAs); ilammy/msvc-dev-cmd stays at v1.13.0 (latest release, still
+  Node 20). Linux jobs run on ubuntu-24.04 instead of ubuntu-latest.
+  download-artifact now fails on a corrupted artifact (digest mismatch).
+- Build: the soxr C files are compiled by build.sh, build-x86.sh,
+  build-arm64.sh and scripts/build-arm64x.ps1 (warnings off for those
+  third-party files only; 0 warnings from src/). The DLLs still import only
+  Windows system DLLs. tests/run_all.sh builds soxr for fixedratio_test,
+  which now also compares soxr, sinc and Hermite and counts soxr's
+  allocations; update_test checks the version scheme; chnames_test the new
+  ASCII copy.
+- Documents: THIRD-PARTY-NOTICES.txt section 6 (soxr, LGPL-2.1, source in
+  third_party/soxr) and the LGPL 2.1 text; COPYRIGHT.txt; installer
+  notices; ARCHITECTURE.txt section 60; CODE-REVIEW.txt "0.9.10" and
+  "Independent review of 0.9.10" (8 LOW findings, all fixed);
+  KNOWN-ISSUES.txt KI-10; TEST-GUIDE.txt block AA; README, FAQ, BUILDING.
+Not changed: the drift-correction resampler (ResamplerQuality), Exclusive
+mode, extra devices, the tools (they do not contain soxr), the installer
+logic.
 
 0.9.9 (changes from 0.9.8) - "Arm64X"; no engine change
 -------------------------------------------------------

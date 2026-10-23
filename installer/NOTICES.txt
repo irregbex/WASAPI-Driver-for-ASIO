@@ -20,7 +20,9 @@ DAW loads the driver (the old folder is not deleted).
 
 Legal documents installed with the program: LICENSE.txt (GNU GPL v3, next
 page), COPYRIGHT.txt, THIRD-PARTY-NOTICES.txt (the Steinberg ASIO SDK headers
-are used under their GPL version 3 license option; runtime libraries),
+are used under their GPL version 3 license option; runtime libraries; since
+0.9.10 the SoX Resampler library (soxr), which the driver uses for sample-rate
+conversion, under the GNU LGPL 2.1 or later, whose text is included there),
 TRADEMARKS.txt, DISCLAIMER.txt (no warranty; hearing safety: an audio driver
 can produce very loud sound), PRIVACY.txt (no telemetry; optional update
 checks connect only when requested),

@@ -57,6 +57,7 @@ inline const Def kDefs[] = {
     // Advanced
     {ID_LL, S_TIP_LL, kReset}, {ID_FOLLOW, S_TIP_FOLLOW, kLive}, {ID_LOG, S_TIP_LOG, kLive}, {ID_DITHER, S_TIP_DITHER, kLive},
     {ID_A2DP, S_TIP_A2DP, kReset}, {ID_DRIFT, S_TIP_DRIFT, kReset}, {ID_RESAMP, S_TIP_RESAMP, kReset}, {ID_RATE, S_TIP_RATE, kReset},
+    {ID_FRENG, S_TIP_FRENG, kReset},                                                   // 0.9.10
     {ID_GAIN, S_TIP_GAIN, kLive}, {ID_LIMON, S_TIP_LIMON, kLive}, {ID_LIMCEIL, S_TIP_LIMCEIL, kLive},
     {ID_LIMCAP, S_TIP_LIMCAP, kLive}, {ID_LIMCAPDB, S_TIP_LIMCAPDB, kLive},
     {ID_LB, S_TIP_LB, kReset}, {ID_APPLBL, S_TIP_APP, kReset}, {ID_APP, S_TIP_APP, kReset}, {ID_APPREF, S_TIP_APPREF, kNone},
@@ -119,7 +120,7 @@ inline const Item kRequired[] = {
     {kPanel, ID_MONWIN}, {kPanel, ID_TRAY}, {kPanel, ID_METER},
     {kPanel, ID_TIP_TILE0}, {kPanel, ID_TIP_TILE0 + 1}, {kPanel, ID_TIP_TILE0 + 2}, {kPanel, ID_TIP_TILE0 + 3},
     {kPanel, ID_LL}, {kPanel, ID_FOLLOW}, {kPanel, ID_LOG}, {kPanel, ID_DITHER}, {kPanel, ID_A2DP}, {kPanel, ID_DRIFT},
-    {kPanel, ID_RESAMP}, {kPanel, ID_RATE}, {kPanel, ID_GAIN}, {kPanel, ID_LIMON}, {kPanel, ID_LIMCEIL},
+    {kPanel, ID_RESAMP}, {kPanel, ID_FRENG}, {kPanel, ID_RATE}, {kPanel, ID_GAIN}, {kPanel, ID_LIMON}, {kPanel, ID_LIMCEIL},
     {kPanel, ID_LIMCAP}, {kPanel, ID_LIMCAPDB}, {kPanel, ID_LB}, {kPanel, ID_APPLBL}, {kPanel, ID_APP},
     {kPanel, ID_APPREF}, {kPanel, ID_OFSOUT}, {kPanel, ID_OFSIN}, {kPanel, ID_OFSHINT}, {kPanel, ID_HPROF},
     {kPanel, ID_HPLIST}, {kPanel, ID_HPDEL},

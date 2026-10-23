@@ -16,12 +16,18 @@
 //   fraction (44100 -> 48000 = 147/160 input frames per output frame), stepped with integers, so there is no
 //   drift, no accumulated rounding and no control loop: output frame j is the input signal at exactly
 //   j * num / den input frames (num/den = inRate/outRate in lowest terms).
+//   0.9.10: three engines. Quality "soxr" (only when chosen explicitly, FixedRatioEngine=Soxr): the SoX Resampler
+//   library, recipe HQ (20-bit, linear phase), wrapped by SoxrCore in frsoxr.h; it filters by FFT blocks, so its look-ahead
+//   is larger (429 input frames = 9.7 ms at 44.1 -> 48 kHz instead of 64 = 1.45 ms) but its stop band starts at
+//   the lower Nyquist frequency itself, its pass band reaches 91.3 % with 0.004 dB ripple, and it measures about
+//   132 dB SNR / -136 dB THD+N at 1 kHz (sinc: 115 / -122 dB; tests/fixedratio_test.cpp prints the full table).
 //   Quality "sinc": polyphase windowed sinc (Kaiser, beta 10) with one exact coefficient set per phase (den
 //   phases, computed when the stream opens), cut-off at 95 % of the lower Nyquist frequency (pass band to 90 %,
 //   >= 100 dB stop band from 100 %: anti-aliasing when the rate goes down). 64 taps per side at the lower rate
 //   (more input taps when decimating). Quality "hermite": 4-point Hermite, low CPU, no anti-aliasing.
 //   Latency: the converter must see `ahead()` input frames after the position it evaluates (64 for sinc at equal
-//   or rising rates, 2 for Hermite); the filter is symmetric (linear phase), so the signal is not shifted.
+//   or rising rates, 2 for Hermite, the measured SoxrCore::ahead() for soxr); every engine is linear phase and
+//   time-aligned, so the signal is not shifted.
 //   Tested offline in tests/fixedratio_test.cpp (accounting, SNR, pass/stop band, CPU).
 //
 // Use
@@ -33,6 +39,12 @@
 //   (kMacBudget multiply-accumulates per second), in both directions; above the budget the driver uses Hermite
 //   (rate up) or lets Windows convert (rate down). 0.9.6 (KI-5): ResamplerQuality no longer plays a part here; it
 //   only selects the drift resampler (sinc.h). Describe() formats the decision for the log.
+//   0.9.10: Choose() takes the FixedRatioEngine preference (Engine): Auto (default) and Sinc are the 0.9.9 policy
+//   above (low latency); Soxr tries soxr first (its cost, SoxrMacs, against the same budget), then the sinc rule;
+//   Hermite uses Hermite
+//   whenever the rate goes up (lowest latency and CPU) and the sinc rule when it goes down (Hermite cannot
+//   anti-alias). The soxr engine allocates in configure() and reset() (host thread) only; see frsoxr.h for where
+//   soxr allocates and why the audio thread never makes it allocate.
 //
 // Difference from sinc.h
 //   sinc.h corrects drift: the ratio is ~1 and varies continuously, so a 256-phase table with linear
@@ -66,6 +78,7 @@
 #include <cstdint>
 #include <cstdio>      // snprintf (Describe, 0.9.6)
 #include <vector>
+#include "frsoxr.h"    // 0.9.10: soxr engine (SoX Resampler library, third_party/soxr)
 
 namespace fr {
 
@@ -86,6 +99,15 @@ constexpr double kBeta     = 10.0;     // Kaiser beta (~100 dB)
 constexpr long   kMaxDen   = 4096;     // largest phase count accepted (all standard rate pairs are far below)
 constexpr int    kMaxTaps  = 1024;     // longest filter (decimation by more than 4.3 is refused)
 constexpr double kMacBudget = 150e6;   // multiply-accumulates per second above which the driver avoids sinc
+// 0.9.10: soxr's cost expressed in the same unit (multiply-accumulates of the sinc engine that take the same CPU
+// time), per channel and per input + output frame. soxr runs an FFT stage at one rate and a short polyphase stage
+// at the other, so its work grows with both rates. Measured on x64 (tests/fixedratio_test.cpp, "soxr cost" lines):
+// 13 to 38 per channel and input + output frame depending on the pair (48 -> 44.1 kHz the highest, 96 -> 48 kHz
+// the lowest) on the development machine, and 52.1 for 48 -> 44.1 kHz on another x64 machine (independent review
+// of 0.9.10: the ratio of soxr's FFT work to sinc's multiply-accumulates differs between CPUs). 64 is a
+// conservative round value (about 1.2 x the worst measured), so the budget keeps its meaning (150 M MAC/s of sinc
+// work, roughly 10 % of one core). 0.9.10 shipped with 48 during development; the review raised it.
+constexpr double kSoxrMacsPerFrame = 64.0;
 
 // Filter length of the sinc converter for a rate pair (without building it); 0 if the pair is not representable.
 //   Decimating (out < in) stretches the filter by in/out so that it still spans kHalfUnit periods of the lower
@@ -113,11 +135,38 @@ inline double SincMacs(double inRate, double outRate, int channels) {
 //     sched.h like before, so the reported latencies stay exact.
 //   - Over the budget: an up-conversion falls back to Hermite (cheap, no anti-aliasing needed when the rate goes
 //     up); a down-conversion is not done by the driver at all (Hermite has no anti-aliasing): None.
-enum class Quality { None, Hermite, Sinc };
-inline Quality Choose(double inRate, double outRate, int channels, double budget = kMacBudget) {
+// 0.9.10: Quality::Soxr (the SoX Resampler library, frsoxr.h) and the FixedRatioEngine preference:
+//   Engine::Auto (default) and Engine::Sinc: the sinc rule above, i.e. exactly the 0.9.9 behaviour (lowest latency
+//     with full anti-aliasing). Auto never picks soxr: the default stays low-latency (maintainer's decision; soxr
+//     adds about 8-10 ms per converted direction at 44.1-192 kHz, more at 16-32 kHz). Auto is a separate value so that a later version may refine the
+//     automatic choice without changing what an explicit "Sinc" means.
+//   Engine::Soxr (explicit choice only): soxr when SoxrMacs fits the budget, otherwise the sinc rule above (the
+//     driver logs that soxr was over the budget, see Describe).
+//   Engine::Hermite: up-conversion always Hermite (lowest latency and CPU, ~89 dB SNR at 1 kHz); a down-conversion
+//     still follows the sinc rule (Hermite has no anti-aliasing filter, so it is never used to lower the rate).
+//   The exact-ratio condition (SincTaps > 0: den <= kMaxDen, decimation <= 4.3) is the same for every engine, so
+//   a pair is either converted by the driver with every preference or by Windows with every preference.
+enum class Quality { None, Hermite, Sinc, Soxr };
+enum class Engine { Auto = 0, Soxr = 1, Sinc = 2, Hermite = 3 };
+// soxr's cost (kSoxrMacsPerFrame x channels x (input rate + output rate)); 0 if the pair is not representable.
+inline double SoxrMacs(double inRate, double outRate, int channels) {
+    if (SincTaps(inRate, outRate) == 0) return 0.0;
+    return kSoxrMacsPerFrame * (double)channels * (inRate + outRate);
+}
+inline Quality Choose(double inRate, double outRate, int channels, double budget = kMacBudget, Engine pref = Engine::Auto) {
     if (SincTaps(inRate, outRate) == 0) return Quality::None;            // no exact ratio
+    if (pref == Engine::Hermite && outRate > inRate) return Quality::Hermite;
+    if (pref == Engine::Soxr && SoxrMacs(inRate, outRate, channels) <= budget) return Quality::Soxr;
     if (SincMacs(inRate, outRate, channels) <= budget) return Quality::Sinc;
     return outRate < inRate ? Quality::None : Quality::Hermite;          // over budget: Windows (down) / Hermite (up)
+}
+
+// 0.9.10 (independent review, item 6): what to use when soxr was chosen but cannot be configured (soxr refused
+// the pair; not seen in the tests). The sinc rule with the SAME remaining budget, so a fallback never exceeds the
+// budget the soxr choice was checked against: sinc if it fits, otherwise Hermite (rate up) or Windows (None, rate
+// down). soxr is cheaper than sinc in the cost model, so "soxr fitted but sinc does not" is possible. Pure.
+inline Quality FallbackFromSoxr(double inRate, double outRate, int channels, double budget) {
+    return Choose(inRate, outRate, channels, budget, Engine::Sinc);
 }
 
 // 0.9.6 (independent review R2): cost in multiply-accumulates per second of a converter of quality q (Sinc:
@@ -125,7 +174,9 @@ inline Quality Choose(double inRate, double outRate, int channels, double budget
 // of every converter it configures from ONE budget per stream open (output first, then the main input, then the
 // extra inputs), and passes the remaining budget to Choose, so that all converters together stay within
 // kMacBudget (before, each converter could take the whole 150 M on its own: up to 5 x 150 M). Pure.
+// 0.9.10: Soxr: SoxrMacs.
 inline double Cost(Quality q, double inRate, double outRate, int channels) {
+    if (q == Quality::Soxr) return SoxrMacs(inRate, outRate, channels);
     if (q == Quality::Sinc) return SincMacs(inRate, outRate, channels);
     if (q == Quality::Hermite) return 4.0 * (double)channels * outRate;
     return 0.0;
@@ -139,32 +190,77 @@ inline double Cost(Quality q, double inRate, double outRate, int channels) {
 //   Hermite: "Hermite (sinc would cost 197 M MAC/s, over the budget of 150 M)"
 //   None:    "Windows converts (no exact ratio)" or "Windows converts (sinc would cost ... over the budget ...)"
 // Pure (no allocation), so the exact wording is checked by tests/fixedratio_test.cpp.
+// 0.9.10: `pref` is the FixedRatioEngine preference given to Choose. New and changed texts:
+//   Soxr:    "soxr HQ (12 M MAC/s equivalent, budget 150 M)"
+//   FixedRatioEngine=Soxr but soxr over the budget (exact ratio): the usual text of the fallback followed by
+//            "; soxr HQ not used: it would cost 215 M MAC/s equivalent, over the budget of 150 M"
+//   Hermite chosen in the settings: "Hermite (FixedRatioEngine=Hermite)"
+//   Auto and Sinc give exactly the 0.9.6 / 0.9.9 texts.
 inline int Describe(char* buf, size_t n, Quality q, double inRate, double outRate, int channels,
-                    double budget = kMacBudget) {
+                    double budget = kMacBudget, Engine pref = Engine::Auto) {
     const double m = SincMacs(inRate, outRate, channels) / 1e6, b = budget / 1e6;
-    if (q == Quality::Sinc) return snprintf(buf, n, "sinc (%.0f M MAC/s, budget %.0f M)", m, b);
-    if (q == Quality::Hermite) return snprintf(buf, n, "Hermite (sinc would cost %.0f M MAC/s, over the budget of %.0f M)", m, b);
+    const double xm = SoxrMacs(inRate, outRate, channels) / 1e6;
+    if (q == Quality::Soxr) return snprintf(buf, n, "%s (%.0f M MAC/s equivalent, budget %.0f M)", SoxrCore::Name(), xm, b);
     if (SincTaps(inRate, outRate) == 0) return snprintf(buf, n, "Windows converts (no exact ratio)");
-    return snprintf(buf, n, "Windows converts (sinc would cost %.0f M MAC/s, over the budget of %.0f M)", m, b);
+    // soxr chosen explicitly but over the budget: the fallback's text plus why soxr was not used
+    char sx[96] = "";
+    if (pref == Engine::Soxr)
+        snprintf(sx, sizeof sx, "; %s not used: it would cost %.0f M MAC/s equivalent, over the budget of %.0f M", SoxrCore::Name(), xm, b);
+    if (q == Quality::Sinc) return snprintf(buf, n, "sinc (%.0f M MAC/s, budget %.0f M)%s", m, b, sx);
+    if (q == Quality::Hermite && pref == Engine::Hermite && outRate > inRate) return snprintf(buf, n, "Hermite (FixedRatioEngine=Hermite)");
+    if (q == Quality::Hermite) return snprintf(buf, n, "Hermite (sinc would cost %.0f M MAC/s, over the budget of %.0f M)%s", m, b, sx);
+    return snprintf(buf, n, "Windows converts (sinc would cost %.0f M MAC/s, over the budget of %.0f M)%s", m, b, sx);
 }
 
 class Converter {
 public:
+    Converter() = default;
+    Converter(const Converter&) = delete;              // 0.9.10: owns a soxr instance (SoxrCore)
+    Converter& operator=(const Converter&) = delete;
     // inRate/outRate in Hz (integers), channels <= 32. maxPush / maxOut: largest number of input frames pushed
     // and output frames requested between two produce() calls (sizes the ring). False if the pair cannot be
     // represented (den > kMaxDen) or the arguments are invalid.
     // Host thread only (allocates the table and the ring). Ring capacity: a power of two >= 2 x (maxPush + taps +
     // input frames for maxOut outputs + 16), so a push burst plus the read window never overwrite unread frames.
     // fc_ is the cut-off relative to the input Nyquist: 0.95 when up-converting, 0.95 * out/in when decimating.
-    bool configure(double inRate, double outRate, int channels, size_t maxPush, size_t maxOut, bool useSinc) {
+    // 0.9.10: `q` selects the engine (Sinc, Hermite or Soxr; None is refused). Soxr: the ring only stages the
+    // frames pushed since the last produce(); SoxrCore measures the look-ahead (taps_ = 2 x ahead, the window it
+    // stands for) and warms the soxr instance up (frsoxr.h). If soxr refuses the pair or fails, the converter
+    // falls back to Sinc and soxrError() keeps soxr's message (quality() then says Sinc). With soxr it takes about
+    // 10-20 ms for stereo and 150-300 ms for 32 channels (warm-up; the look-ahead probe runs once per rate pair and
+    // process, SoxrCore caches it): host thread, at stream open only.
+    bool configure(double inRate, double outRate, int channels, size_t maxPush, size_t maxOut, Quality q) {
         active_ = false;
+        soxr_.Close();
+        soxrErr_[0] = 0;
+        if (q == Quality::None) return false;
         const long a = (long)std::lround(inRate), b = (long)std::lround(outRate);
         if (a <= 0 || b <= 0 || channels <= 0 || channels > 32) return false;
         const long g = Gcd(a, b);
         num_ = a / g; den_ = b / g;
         if (den_ > kMaxDen || num_ > 64 * kMaxDen) return false;
-        ch_ = channels; sinc_ = useSinc;
+        ch_ = channels; q_ = q; sinc_ = q == Quality::Sinc;
         const double down = (double)b / (double)a;                 // < 1: decimation (cut-off moves down)
+        if (q_ == Quality::Soxr) {
+            // Look-ahead first (it sizes the ring), then the instance. The ring stages at most one produce() worth
+            // of input: the same bound as for sinc with 2 x look-ahead in place of the taps; its capacity is the
+            // largest chunk SoxrCore is ever fed (the warm-up uses it).
+            if (soxr_.Measure(a, b, num_, den_)) {
+                half_ = soxr_.ahead(); taps_ = 2 * half_;
+                size_t need = maxPush + (size_t)taps_ + (size_t)std::ceil((double)maxOut * num_ / den_) + 16, cap = 64;
+                while (cap < need * 2) cap <<= 1;
+                if (soxr_.Open(ch_, cap, maxOut)) {
+                    ring_.assign(cap * (size_t)ch_, 0.f);           // staging only: no mirror needed
+                    mask_ = cap - 1;
+                    reset();
+                    active_ = true;
+                    return true;
+                }
+            }
+            snprintf(soxrErr_, sizeof soxrErr_, "%s", soxr_.err());   // soxr refused or failed: sinc instead
+            soxr_.Close();
+            q_ = Quality::Sinc; sinc_ = true;
+        }
         fc_ = kCutoff * (down < 1.0 ? down : 1.0);                  // relative to the input Nyquist frequency
         half_ = sinc_ ? (int)std::ceil(kHalfUnit / (down < 1.0 ? down : 1.0)) : 2;
         taps_ = sinc_ ? 2 * half_ : 4;
@@ -178,22 +274,36 @@ public:
         active_ = true;
         return true;
     }
+    // 0.9.4 form: sinc (true) or Hermite (false).
+    bool configure(double inRate, double outRate, int channels, size_t maxPush, size_t maxOut, bool useSinc) {
+        return configure(inRate, outRate, channels, maxPush, maxOut, useSinc ? Quality::Sinc : Quality::Hermite);
+    }
     // Back to the start state: `ahead()` frames of silence as history, first real input frame next.
     // (Precisely: written_ = k_ = hist() = ahead() - 1 for sinc, 1 for Hermite; the ring is zeroed, so the taps
     // left of the first real frame read silence.) Not real-time critical, but allocation-free.
+    // 0.9.10, soxr: written_ = k_ = 0 (soxr keeps its own history) and SoxrCore::Restart flushes the previous run
+    // with silence and re-aligns the output grid (host thread; soxr_process on silence, see frsoxr.h).
     void reset() {
         std::fill(ring_.begin(), ring_.end(), 0.f);
         last_ = kNone;
         written_ = (uint64_t)hist();
         k_ = (uint64_t)hist(); ph_ = 0;
+        fedTo_ = written_;
+        if (q_ == Quality::Soxr) soxr_.Restart();
     }
     bool   active() const { return active_; }
     long   num() const { return num_; }
     long   den() const { return den_; }
     int    taps() const { return taps_; }
     bool   sinc() const { return sinc_; }
+    Quality quality() const { return q_; }            // 0.9.10: the engine in use (Sinc after a soxr fallback)
+    const char* soxrError() const { return soxrErr_; }   // why soxr was not used ("" if it was, or not asked for)
+    uint64_t soxrShortfalls() const { return soxr_.shortfalls(); }   // promised soxr frames that were missing (0)
+    // Engine name for the log ("soxr HQ", "sinc", "Hermite").
+    const char* engineName() const { return q_ == Quality::Soxr ? SoxrCore::Name() : sinc_ ? "sinc" : "Hermite"; }
     // Input frames the converter must hold after the evaluated position (its latency, in input frames).
-    int    ahead() const { return sinc_ ? half_ : 2; }
+    // soxr: the measured look-ahead (half_ holds it).
+    int    ahead() const { return q_ == Quality::Soxr ? half_ : sinc_ ? half_ : 2; }
     // Frames held: written but not yet behind the read window.
     size_t held() const { return (size_t)(written_ - (k_ - (uint64_t)hist())); }
     size_t capacity() const { return mask_ + 1; }
@@ -202,6 +312,7 @@ public:
     // The frame is written by the caller after this returns; its mirror copy (frames 0..taps-1 are repeated after
     // the ring so a filter window is always contiguous) is made on the next push or produce.
     float* pushSlot() {
+        if (q_ == Quality::Soxr) { const size_t i = (size_t)(written_ & mask_); ++written_; return &ring_[i * ch_]; }
         flushMirror();
         const size_t i = (size_t)(written_ & mask_);
         last_ = i; ++written_;
@@ -227,6 +338,7 @@ public:
     }
     // Produces n output frames (the caller checked missingFor(n) == 0). out(i, channel, value).
     template <class Out> void produce(size_t n, Out out) {
+        if (q_ == Quality::Soxr) { produceSoxr(n, out); return; }
         flushMirror();
         float acc[32];
         for (size_t i = 0; i < n; ++i) {
@@ -278,8 +390,32 @@ public:
 
 private:
     static constexpr size_t kNone = (size_t)-1;
-    // Frames kept to the left of k_ (the window's left part): half_ - 1 for sinc, 1 for Hermite.
-    int hist() const { return sinc_ ? half_ - 1 : 1; }
+    // Frames kept to the left of k_ (the window's left part): half_ - 1 for sinc, 1 for Hermite, 0 for soxr.
+    int hist() const { return q_ == Quality::Soxr ? 0 : sinc_ ? half_ - 1 : 1; }
+    // 0.9.10, soxr engine (audio thread). Gives soxr every frame pushed since the last call (the ring part
+    // [fedTo_, written_), in at most two contiguous pieces), then hands out n frames from SoxrCore's output buffer.
+    // The caller checked missingFor(n) == 0, so by the definition of the look-ahead soxr has produced them; if it
+    // has not (never seen in the tests) the missing frames are silence and counted (soxrShortfalls), so the
+    // stream timing stays exact whatever happens.
+    template <class Out> void produceSoxr(size_t n, Out out) {
+        while (fedTo_ < written_) {
+            const size_t at = (size_t)(fedTo_ & mask_);
+            const size_t len = (size_t)std::min<uint64_t>(written_ - fedTo_, (uint64_t)(mask_ + 1 - at));
+            const size_t used = soxr_.Feed(&ring_[at * ch_], len);
+            if (!used) break;
+            fedTo_ += used;
+        }
+        if (soxr_.available() < n) soxr_.Drain();
+        const size_t have = std::min(n, soxr_.available());
+        const float* src = soxr_.peek();
+        for (size_t i = 0; i < have; ++i)
+            for (int c = 0; c < ch_; ++c) out(i, c, src[i * (size_t)ch_ + (size_t)c]);
+        for (size_t i = have; i < n; ++i)
+            for (int c = 0; c < ch_; ++c) out(i, c, 0.f);
+        soxr_.consume(have);
+        if (have < n) soxr_.countShort(n - have);
+        advance(n);
+    }
     // Copies the frame pushed last into the mirror area if it lies in the first taps_ ring slots.
     void flushMirror() {
         if (last_ != kNone && last_ < (size_t)taps_)
@@ -308,6 +444,10 @@ private:
         }
     }
     bool active_ = false, sinc_ = true;
+    Quality q_ = Quality::Sinc;         // 0.9.10: engine in use
+    SoxrCore soxr_;                     // 0.9.10: the soxr instance (open only with Quality::Soxr)
+    uint64_t fedTo_ = 0;                // 0.9.10, soxr: ring frames [fedTo_, written_) not yet given to soxr
+    char soxrErr_[96] = {0};
     int ch_ = 2, half_ = 2, taps_ = 4;
     long num_ = 1, den_ = 1;
     double fc_ = 1.0;

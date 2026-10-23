@@ -1415,6 +1415,7 @@ static void FillControls(PanelState* p, const Config& c) {
     Sel(GetDlgItem(w, ID_RATE), rsel);
     Sel(GetDlgItem(w, ID_DRIFT), (int)c.drift);
     Sel(GetDlgItem(w, ID_RESAMP), (int)c.resampler);
+    Sel(GetDlgItem(w, ID_FRENG), (int)c.frEngine);                                    // 0.9.10
     SetChk(w, ID_LL, c.lowLatencyShared);
     SetChk(w, ID_FOLLOW, c.followDevices);
     SetChk(w, ID_LOG, c.log);
@@ -1469,6 +1470,10 @@ static void ReadControls(PanelState* p, Config& c) {
     else if (r >= 0) { c.sampleRateAuto = false; c.sampleRate = (double)kRates[r]; }
     c.drift = (DriftMode)(Cur(w, ID_DRIFT) < 0 ? 0 : Cur(w, ID_DRIFT));
     c.resampler = Cur(w, ID_RESAMP) == 1 ? ResamplerQ::Sinc : ResamplerQ::Hermite;
+    {   // 0.9.10
+        const int fe = Cur(w, ID_FRENG);
+        c.frEngine = fe >= 0 && fe <= 3 ? (FrEngine)fe : FrEngine::Auto;
+    }
     c.lowLatencyShared = GetChk(w, ID_LL);
     c.followDevices    = GetChk(w, ID_FOLLOW);
     c.log              = GetChk(w, ID_LOG);
@@ -1632,7 +1637,7 @@ static std::wstring StatusText(const StatusInfo& s, const Config& c) {
         std::wstring eng;
         if (!s.outExclusive && s.engineKind >= 0) {
             const wchar_t* kind = s.engineKind == 1 ? T(S_ENG_LL) : s.engineKind == 2 ? T(S_ENG_MIX) : T(S_ENG_STD);
-            const std::wstring conv = s.outConv ? FmtW(T(S_ENG_CONV), s.rate, s.outDevRate, s.convSinc ? L"sinc" : L"Hermite")
+            const std::wstring conv = s.outConv ? FmtW(T(S_ENG_CONV), s.rate, s.outDevRate, s.convSoxr ? L"soxr HQ" : s.convSinc ? L"sinc" : L"Hermite")
                                     : std::wstring(s.engineKind == 0 && s.mixRate > 0 && std::fabs(s.mixRate - s.rate) >= 0.5 ? T(S_ENG_WINCONV) : T(S_ENG_NOCONV));
             eng = FmtW(T(S_ST_ENGINE), kind, s.outPeriod, s.outDevRate > 0 ? 1000.0 * s.outPeriod / s.outDevRate : 0.0, s.outDevRate, conv.c_str());
         }
@@ -2185,37 +2190,43 @@ static void BuildControls(PanelState* p) {
     if (p->meter) { p->tabCtl[TAB_MAIN].push_back(p->meter); if (p->tab == TAB_MAIN) ShowWindow(p->meter, SW_SHOW); }
 
     // ---- Advanced
-    AddCard(p, TAB_ADV, 16, kCT, 400, 230, T(S_CARD_BEHAVIOR));
+    // 0.9.10: the two top cards are 36 px taller (266) for the "Rate conversion" row (FixedRatioEngine); the cards
+    // below moved down by 36 (the host-profile card now ends at kCT + 482 = 594, ContentBottom is 624).
+    AddCard(p, TAB_ADV, 16, kCT, 400, 266, T(S_CARD_BEHAVIOR));
     Btn(p, TAB_ADV, TM(S_LOWLAT), 32, kCT + 40, 370, 28, ID_LL, 3);
     Btn(p, TAB_ADV, T(S_FOLLOW), 32, kCT + 74, 370, 28, ID_FOLLOW, 3);
     Btn(p, TAB_ADV, T(S_WRITELOG), 32, kCT + 108, 370, 28, ID_LOG, 3);
     Btn(p, TAB_ADV, T(S_DITHER), 32, kCT + 142, 370, 28, ID_DITHER, 3);
     // 0.8.0 (G1): never open the microphone of the Bluetooth headset used as output (it would leave A2DP)
     Btn(p, TAB_ADV, TM(S_A2DP), 32, kCT + 176, 370, 28, ID_A2DP, 3);
-    AddCard(p, TAB_ADV, 428, kCT, 396, 230, T(S_CARD_QUALITY));
+    AddCard(p, TAB_ADV, 428, kCT, 396, 266, T(S_CARD_QUALITY));
     {
         const int x = 428, y = kCT;
         Label(p, TAB_ADV, TM(S_DRIFT), x + 16, y + 40, 150, true);
         HWND d = Combo(p, TAB_ADV, x + 170, y + 40, 210, ID_DRIFT); Add(d, T(S_AUTO)); Add(d, T(S_ALWAYS)); Add(d, T(S_NEVER));
         Label(p, TAB_ADV, TM(S_RESAMPLER), x + 16, y + 76, 150, true);
         HWND rq = Combo(p, TAB_ADV, x + 170, y + 76, 210, ID_RESAMP); Add(rq, T(S_HERMITE_LIGHT)); Add(rq, T(S_SINC_HQ));
-        Label(p, TAB_ADV, TM(S_INIT_RATE), x + 16, y + 112, 154, true);
-        HWND r = Combo(p, TAB_ADV, x + 170, y + 112, 210, ID_RATE);
+        // 0.9.10: FixedRatioEngine; item index = FrEngine value (Auto = Sinc rule, soxr only when chosen, Sinc, Hermite)
+        Label(p, TAB_ADV, TM(S_FR_ENGINE), x + 16, y + 112, 150, true);
+        HWND fe = Combo(p, TAB_ADV, x + 170, y + 112, 210, ID_FRENG);
+        Add(fe, T(S_FRE_AUTO)); Add(fe, T(S_FRE_SOXR)); Add(fe, T(S_FRE_SINC)); Add(fe, T(S_HERMITE_LIGHT));
+        Label(p, TAB_ADV, TM(S_INIT_RATE), x + 16, y + 148, 154, true);
+        HWND r = Combo(p, TAB_ADV, x + 170, y + 148, 210, ID_RATE);
         for (int i = 0; i < 6; ++i) { wchar_t t[16]; swprintf(t, 16, L"%ld", kRates[i]); Add(r, t); }
         Add(r, T(S_FOLLOW_WIN));             // 0.8.0 (G4): SampleRate=Auto, index 6
-        Label(p, TAB_ADV, T(S_GAIN_DB), x + 16, y + 148, 150, true);
-        Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 170, y + 148, 100, 26, ID_GAIN);
+        Label(p, TAB_ADV, T(S_GAIN_DB), x + 16, y + 184, 150, true);
+        Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 170, y + 184, 100, 26, ID_GAIN);
         // 0.8.0 (G2): hearing-safety limiter (live): on/off, ceiling (dBFS), optional cap on the Gain key (dB)
-        Btn(p, TAB_ADV, T(S_LIMITER), x + 16, y + 184, 92, 28, ID_LIMON, 3);
-        Label(p, TAB_ADV, T(S_CEILING), x + 116, y + 186, 50, true);
-        Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 168, y + 184, 52, 26, ID_LIMCEIL);
-        Btn(p, TAB_ADV, T(S_GAINCAP), x + 228, y + 184, 92, 28, ID_LIMCAP, 3);
-        HWND cap = Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 326, y + 184, 52, 26, ID_LIMCAPDB);
+        Btn(p, TAB_ADV, T(S_LIMITER), x + 16, y + 220, 92, 28, ID_LIMON, 3);
+        Label(p, TAB_ADV, T(S_CEILING), x + 116, y + 222, 50, true);
+        Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 168, y + 220, 52, 26, ID_LIMCEIL);
+        Btn(p, TAB_ADV, T(S_GAINCAP), x + 228, y + 220, 92, 28, ID_LIMCAP, 3);
+        HWND cap = Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 326, y + 220, 52, 26, ID_LIMCAPDB);
         AccNamed(cap, std::wstring(T(S_GAINCAP)) + L" (dB)");   // 0.9.1 (B1): it follows a toggle, not a label
     }
-    AddCard(p, TAB_ADV, 16, kCT + 238, 540, 124, T(S_CARD_LOOPBACK));
+    AddCard(p, TAB_ADV, 16, kCT + 274, 540, 124, T(S_CARD_LOOPBACK));
     {
-        const int y = kCT + 238;
+        const int y = kCT + 274;
         Label(p, TAB_ADV, TM(S_CAPTURE), 32, y + 40, 100, true);
         HWND lb = Combo(p, TAB_ADV, 140, y + 40, 380, ID_LB);
         Add(lb, T(S_OFF)); Add(lb, T(S_LB_EXCL)); Add(lb, T(S_LB_ALL));
@@ -2225,9 +2236,9 @@ static void BuildControls(PanelState* p) {
         Btn(p, TAB_ADV, T(S_REFRESH), 410, y + 75, 110, 28, ID_APPREF);
     }
     // 0.7.0 (F4): latency offsets (live; the host is told with kAsioLatenciesChanged)
-    AddCard(p, TAB_ADV, 568, kCT + 238, 256, 124, T(S_CARD_OFFSETS));
+    AddCard(p, TAB_ADV, 568, kCT + 274, 256, 124, T(S_CARD_OFFSETS));
     {
-        const int x = 568, y = kCT + 238;
+        const int x = 568, y = kCT + 274;
         Label(p, TAB_ADV, T(S_OUTPUT), x + 16, y + 38, 90, true);
         Ctl(p, TAB_ADV, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x + 110, y + 38, 80, 26, ID_OFSOUT);
         Label(p, TAB_ADV, T(S_INPUT), x + 16, y + 70, 90, true);
@@ -2237,9 +2248,9 @@ static void BuildControls(PanelState* p) {
         if (hint) SetPropW(hint, L"wbdim", (HANDLE)1);
     }
     // 0.8.0 (G3): automatic profile per program ([HostProfiles], used when the driver is loaded)
-    AddCard(p, TAB_ADV, 16, kCT + 370, 808, 76, T(S_CARD_HOSTPROF));
+    AddCard(p, TAB_ADV, 16, kCT + 406, 808, 76, T(S_CARD_HOSTPROF));
     {
-        const int y = kCT + 370;
+        const int y = kCT + 406;
         p->hostExe = HostExeName();
         const std::wstring lbl = p->hostExe.empty() ? std::wstring(T(S_THIS_PROGRAM_UNKNOWN)) : p->hostExe;
         HWND hl = Ctl(p, TAB_ADV, L"STATIC", lbl.c_str(), SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 32, y + 40, 150, 20, 0);

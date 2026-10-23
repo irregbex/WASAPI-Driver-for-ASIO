@@ -25,6 +25,8 @@
 enum class LoopbackMode { Off = 0, ExcludeDaw = 1, All = 2, App = 3 };   // App = a single application (0.4.0)
 enum class DriftMode    { Auto = 0, On = 1, Off = 2 };
 enum class ResamplerQ   { Hermite = 0, Sinc = 1 };
+// 0.9.10: engine preference of the fixed-ratio converter (fixedratio.h fr::Engine, same values).
+enum class FrEngine     { Auto = 0, Soxr = 1, Sinc = 2, Hermite = 3 };
 
 // Complete driver configuration. Every field maps to a key of config.ini ([General] section).
 struct Config {
@@ -43,6 +45,9 @@ struct Config {
     std::wstring loopbackApp;               // Loopback=App: executable name (e.g. spotify.exe)
     bool         dither           = true;   // TPDF dither on 16/24-bit integer outputs (Exclusive)
     ResamplerQ   resampler        = ResamplerQ::Hermite;   // drift-correction resampler quality
+    // 0.9.10: FixedRatioEngine=Auto|Soxr|Sinc|Hermite, the fixed-ratio converter used when the ASIO rate differs
+    // from the device rate (fixedratio.h Choose). RESET key, stored in profiles (an engine setting).
+    FrEngine     frEngine         = FrEngine::Auto;
     std::wstring activeProfile;             // informational only: last profile applied from the panel
     // 0.5.0 (beta): additional devices (name substrings, at most kMaxExtra per list) and output routing
     std::vector<std::wstring> extraOutputs, extraInputs;

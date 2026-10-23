@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO 0.9.9 (public beta) - Architecture
-=========================================================
+WASAPI Driver for ASIO 0.9.10 (public beta) - Architecture
+==========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -2123,3 +2123,205 @@ process and the EC half into an x64 process.
     WasapiDriverTest.exe loads the ARM64EC half: it is the x64-host test).
 Status: built and checked in CI; not yet run on real Windows on Arm
 hardware (KNOWN-ISSUES.txt KI-9).
+
+60. SOXR ENGINE OF THE FIXED-RATIO CONVERTER (0.9.10)
+----------------------------------------------------
+What. A third engine for the fixed-ratio converter of section 54 (used when
+the ASIO rate differs from the device rate with LowLatencyShared=1, e.g. a
+44.1 kHz project on a 48 kHz device, in both directions): the SoX Resampler
+library (soxr 0.1.3, LGPL-2.1-or-later, third_party/soxr, vendored files
+unchanged; THIRD-PARTY-NOTICES.txt section 6). Steinberg built-in ASIO
+Driver 1.0.9.26 installs soxr.dll next to asiobtin.dll, and asiobtin.dll
+loads it for sample-rate conversion (its binary contains the message "Cannot
+load soxr.dll! No SRC!"); observed by inspecting the installed files.
+Requested by the maintainer, who
+decided that the default stays low-latency: soxr is used ONLY when the user
+selects it ("soxr (best quality, +8-10 ms)"); the default Auto is exactly
+the 0.9.9 behaviour.
+
+Setting. config.ini FixedRatioEngine=Auto|Soxr|Sinc|Hermite (cfgtypes.h
+FrEngine, parse.h, config.cpp; an engine key: written to every profile,
+RESET key in NeedsReset; default Auto). Panel: Advanced tab, "Quality" card,
+"Rate conversion" combo (ID_FRENG; items "Auto (Sinc, low latency)" /
+"soxr (best quality, +8-10 ms)" / "Sinc (low latency)" / "Hermite
+(light)"; help tip S_TIP_FRENG with the measured trade-off (Auto/Sinc 1.5 ms,
+115 dB SNR; soxr 132 dB SNR, no aliasing, ~8-10 ms more at 44.1-192 kHz,
+more at 16-32 kHz) and the RESET tag;
+strings in en/es/pt/fr/de). The two top cards of the Advanced
+tab are 36 px taller, the cards below moved down by 36 (the last one now ends
+at y 594 of 624).
+
+Policy (fixedratio.h, pure, tested): Choose(in, out, ch, budget, pref):
+  no exact ratio (SincTaps == 0)                     -> None (Windows), any pref
+  pref Hermite and the rate goes up                  -> Hermite
+  pref Soxr and SoxrMacs <= budget                   -> Soxr
+  SincMacs <= budget                                 -> Sinc
+  over budget: rate down -> None, rate up -> Hermite (the 0.9.6 rule)
+  Auto never picks soxr: Auto and Sinc both give the 0.9.9 rule (Auto exists
+  so a later version can refine the automatic choice without changing an
+  explicit Sinc), and with Auto the log line is the 0.9.9 one word for word
+  ("sinc (12 M MAC/s, budget 150 M)"). An explicit Soxr over the budget falls
+  back to that rule and the log says why. Hermite is
+  never used to lower the rate (no anti-aliasing): pref Hermite then follows
+  the sinc rule. SoxrMacs = kSoxrMacsPerFrame (64) x channels x (in + out
+  rate), soxr's CPU time expressed in sinc multiply-accumulates (measured 13
+  to 38 per channel and input + output frame on the development x64
+  machine and 52.1 for 48 -> 44.1 kHz on another x64 machine in the
+  independent review; 64 leaves about 20 % margin; 0.9.10 development used
+  48). Cost(Soxr) = SoxrMacs, so the shared budget of review R2 (one
+  150 M budget per stream open: output first, then the inputs) applies
+  unchanged. With this model soxr is cheaper than sinc for every standard
+  pair, so an explicit Soxr gives soxr or, over the budget, Hermite (up) /
+  Windows (down). Describe() log texts: "soxr HQ (12 M MAC/s equivalent,
+  budget 150 M)", "Hermite (FixedRatioEngine=Hermite)", and for Soxr over
+  the budget the fallback's text followed by "; soxr HQ not used: it would
+  cost 215 M MAC/s equivalent, over the budget of 150 M"; the 0.9.6 texts
+  are otherwise unchanged.
+  The engine line (Status tab, Copy status, test tool) says "internal rate
+  conversion 44100->48000 Hz (soxr HQ, look-ahead 429 frames)"; inputs log
+  "<tag>: internal rate conversion ... (soxr HQ, look-ahead 420 frames)".
+  If soxr refuses a pair or fails (not seen), configure() falls back to
+  sinc; the driver then decides again with fr::FallbackFromSoxr (the sinc
+  rule with the same remaining budget: sinc, or Hermite going up / Windows
+  going down if sinc does not fit, since soxr is cheaper than sinc in the
+  cost model), subtracts the cost of what it really uses, and logs "soxr not
+  available (<soxr message>); instead: <Describe text>" (independent review,
+  item 6). The trace events OutputOpen and InputOpen carry ConvEngine =
+  "soxr HQ" / "sinc" / "Hermite" ("" without conversion; TRACING.txt).
+
+Recipe. soxr_quality_spec(SOXR_HQ, 0): 20-bit precision, linear phase, pass
+band to 91.3 % of the lower Nyquist frequency (<= 0.01 dB specified, 0.004 dB
+measured), stop band from 100 %. Engine "cr32" (single precision, plain C;
+soxr-config.h enables nothing else: no SSE / AVX / NEON engine, no OpenMP).
+soxr_runtime_spec(1) with log2_min_dft_size = log2_large_dft_size = 10: the
+DFT length of soxr's FFT stage is then the smallest soxr allows for that
+stage's filter: the filter length times 1.7 to 3.4, rounded to a power of two,
+at least 1024 points (1024 for the 409-tap filter of 44.1 -> 48 kHz; longer
+filters, e.g. for strong decimation, get 2048 or more; with soxr's default
+log2_large_dft_size = 17 it would be about 4 times the filter length).
+EnsureFftTables covers lengths up to 2^17.
+Measured choices (44.1 -> 48 kHz with a standalone probe: look-ahead in
+input frames before the 16-frame margin, CPU of soxr_process in ms per
+second of stereo audio on the x64 test machine, two runs averaged):
+  HQ, FFT up to 2^17 (soxr default)   925 (21.0 ms)   3.3 ms/s
+  HQ, smallest DFT (chosen)           413 (9.4 ms)    3.8 ms/s
+  VHQ (28-bit) on cr32                378 (8.6 ms)    4.9 ms/s, but the float
+                                      engine cannot deliver 28 bits, and the
+                                      double engine (cr64) would cost more
+  MQ (16-bit, wider roll-off)         430 (9.8 ms)    3.5 ms/s, less quality
+HQ with the smallest DFT length halves the look-ahead of soxr's default
+for about 15 % more CPU, still less than half of what sinc costs.
+
+Latency (the converter's contract, frsoxr.h). soxr pre-loads its filters, so
+its output is time-aligned with the input (an impulse at input frame k comes
+out at exactly k * den / num; the test checks it within 0.25 frame) and the
+converter adds no shift. What it adds is buffering: an output frame becomes
+available only when the FFT block containing it was computed. SoxrCore
+measures, at configure(), for a mono instance fed one frame at a time over
+2 s of input, the largest number of input frames needed beyond an output's
+position, and adds 16 frames of margin: that is ahead(), used exactly like
+the sinc look-ahead by missingFor / producible (so the driver pushes ASIO
+blocks until soxr has the frames) and by sched::OutLatency / InDelay (so the
+latency reported to the host includes it). soxr_delay() is not used: it
+returns the output owed for the input consumed so far, which varies with
+the block phase; ahead() is its worst case in input frames.
+  pair             look-ahead soxr      sinc            Hermite
+  44.1 -> 48 kHz   429 (9.73 ms)        64 (1.45 ms)    2
+  48 -> 44.1 kHz   420 (8.75 ms)        70 (1.46 ms)    2
+  48 -> 96 kHz     430 (8.96 ms)        64 (1.33 ms)    2
+  96 -> 48 kHz     845 (8.80 ms)        128 (1.33 ms)   2
+  44.1 -> 96 kHz   429 (9.73 ms)        64 (1.45 ms)    2
+  96 -> 44.1 kHz   824 (8.58 ms)        140 (1.46 ms)   2
+At lower rates the look-ahead is longer (the FFT blocks hold the same number
+of samples): 32 <-> 48 kHz 8.0 ms, 44.1 -> 22.05 kHz 19.2 ms, 48 -> 16 kHz
+15.6 ms, 16 -> 44.1 kHz 26.8 ms (sinc 2-4 ms there). So soxr adds about
+8-10 ms per converted direction at 44.1-192 kHz, more at 16-32 kHz: at
+44.1 kHz ASIO on a 48 kHz device with a 128 buffer and a 144-frame engine
+period the reported output latency is 888 frames (20.1 ms) instead of 523
+(11.9 ms); a converted input adds the same again to the round trip. This is
+why soxr is opt-in and the default Auto stays on sinc (KNOWN-ISSUES.txt
+KI-10). The scheduling model (sched::Sim with soxr in both converters, 48
+cases: 6 rate pairs, periods 144 / 480, buffers 32 / 128 / 512 / 1024, 10
+simulated minutes each plus 5 s with real samples) measures the impulse
+round trip equal to getLatencies in + out within 0.50 frame, with exact
+accounting, no underrun and no promised frame missing.
+
+Real-time safety (where soxr allocates; frsoxr.h header has the details).
+  soxr_create        allocates everything (filters, FFT setup, FIFOs): host
+                     thread, configure().
+  soxr_process       never allocates, except that a stage FIFO (fifo.h)
+                     grows with realloc() when a write does not fit.
+  soxr_clear         frees and re-creates everything: never used.
+  global FFT table   (fft4g_cache.h) grows with realloc() when an instance
+                     needs a longer FFT than any before; without OpenMP its
+                     lock is a no-op, so another stream's audio thread could
+                     read freed memory: EnsureFftTables() grows it to 2^17
+                     points once per process before the first soxr_create.
+Measures: Feed() passes at most 128 frames per soxr_process call and drains
+all output after each call (FIFO contents stay at about one FFT block plus
+one call's output); configure() warms the instance up with 2 s of silence
+in pseudo-random pieces of 1..128 frames (host thread); reset() (start(),
+host thread) does not call soxr_clear but pushes 2 x ahead + 64 frames of
+silence (rounded up to a multiple of num, so the output grid stays exact)
+and discards the output up to there; the FIFO allocator of soxr is ours
+(soxr-config.h: FIFO_MIN = 64 so a FIFO compacts instead of growing,
+fifo-headroom.c: every FIFO starts with 64 KB and grows to twice what it
+asks for). soxr_create also calls getenv (SOXR_* runtime overrides) and
+time(): host thread only, and ahead() is measured with the same settings.
+Verified: tests/fixedratio_test.cpp counts soxr's malloc / calloc / realloc
+on the audio-thread path (-Wl,--wrap): 0 over 52 million output frames of
+random driver-like traffic (5 pairs, output and input patterns, reset()
+between runs); a separate stress run over every exact pair of 22.05, 32,
+44.1, 48, 88.2, 96, 176.4 and 192 kHz (220 configurations, 1..4 channels,
+random buffers and requests, 30 s each, 3 seeds): 0 allocations, 0 missing
+frames (CODE-REVIEW.txt 0.9.10; before the FIFO policy and the small calls,
+that run found a few realloc calls at 32 -> 192 kHz and 48 -> 32 kHz).
+Costs: configure() runs the look-ahead probe (mono, 2 s of input: about
+5-15 ms at 44.1-48 kHz, more at 192 kHz) and the warm-up (2 s of silence for
+every channel). Measured: 11-17 ms for a stereo pair opened the first time,
+3-9 ms afterwards; with the probe result cached, 40-51 ms for 8 channels and
+about 150 ms for 32 channels (development machine; the independent review
+measured 196-270 ms for a first 32-channel open on a fast x64). The probe
+result depends only on the rate pair, so SoxrCore keeps it in a lock-free
+per-process cache (32 slots, key = rate pair, host threads only): later
+opens of the same pair skip the probe; the test checks that the cached
+look-ahead equals a fresh probe. The warm-up is kept for every open: it is
+what guarantees that soxr's FIFOs never grow on the audio thread;
+memory about 200 KB per converted channel (64 KB per soxr FIFO). A promised
+frame that soxr had not produced (never seen) would be played as silence and
+counted; closeStreams logs the count if it is not 0.
+
+Quality (tests/fixedratio_test.cpp, mono, -6 dBFS sines; SNR against the
+ideal sine, THD+N after fitting the tone, ripple 20 Hz .. 85 % of the lower
+Nyquist, alias = tones 2-30 % above the new Nyquist when the rate goes
+down, image = what is left beside a tone at 85 % of the input Nyquist when
+it goes up):
+  44.1 -> 48 kHz   SNR 1k  THD+N 1k  SNR 18k  THD+N 18k  ripple   alias/img
+    soxr HQ        132.6   -136.0    74.0     -137.4     0.0032   -135.2
+    sinc           114.9   -122.5    106.8    -126.5     0.0000   -120.2
+    Hermite         89.4    -92.5      7.6     -10.7     3.5629     -9.2
+  48 -> 44.1 kHz
+    soxr HQ        130.6   -135.9    72.0     -139.0     0.0036   -137.4
+    sinc           112.3   -126.4    105.1    -120.2     0.0000   -102.8
+  96 -> 44.1 kHz
+    soxr HQ        130.1   -136.2    72.0     -139.3     0.0036   -138.6
+    sinc           112.7   -133.6    105.3    -132.2     0.0000   -103.4
+The "SNR 18k" of soxr (72-74 dB) is its pass-band ripple (0.003 dB of gain
+at 18 kHz counts as error against the ideal sine; inaudible); its THD+N at
+18 kHz is -137 dB. soxr's distortion, noise and aliasing are 10 to 35 dB
+lower than sinc's; sinc keeps a flatter pass band and 6 times less latency.
+CPU (stereo, x64 test machine): soxr 2.6 to 5.6 ms per second of audio,
+sinc 8 to 18, Hermite 1 to 2.
+
+Builds. The DLL builds compile the soxr C files (BUILDING.txt) with -w /
+/W0 for those files only; the C++ sources get -Ithird_party/soxr/src. No
+new imported DLL (pefile: system DLLs only; ARM64 adds the UCRT API sets
+api-ms-win-crt-environment / -utility). The Arm64X script compiles them
+with cl /TC for the native ARM64 and the ARM64EC half; data-io-portable.c
+avoids rint.h's SSE2 branch, which ARM64EC (it defines _M_X64) would take.
+The tools (diag, test host) do not contain soxr.
+
+Files: src/frsoxr.h (SoxrCore), src/fixedratio.h (Quality::Soxr, Engine,
+SoxrMacs, configure(q), produceSoxr), src/sched.h (Config::soxr for the
+model), driver.cpp (pref from cfg.frEngine, fallback log, engine line),
+third_party/soxr (library, configuration, README-vendored.txt).

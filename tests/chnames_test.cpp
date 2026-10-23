@@ -118,6 +118,18 @@ int main() {
     const std::string fs = chn::FitConverted(sur, 5, conv);
     True(fs == "Mic", "FitConverted removes a surrogate pair as one character");
     True(chn::FitConverted(L"", 10, conv).empty(), "FitConverted of an empty text");
+    {   // 0.9.10: AsciiShadow (the ASCII copy ShortName runs on; replaces a truncating wchar_t -> char copy)
+        std::wstring w = L"Speakers (Kestrel E10";
+        w += (wchar_t)0x4E29;                                 // low byte 0x29 = ')': the old copy ended in ')'
+        const std::string sh = chn::AsciiShadow(w);
+        std::wstring acc = L"Lautsprecher (Gr";
+        acc += (wchar_t)0x00FC; acc += L"n)";                 // "Gruen" with u-umlaut
+        const std::string sa = chn::AsciiShadow(acc);
+        True(sh.size() == w.size() && sh.back() == '?' && chn::ShortName(sh) == sh,
+             "AsciiShadow: non-ASCII unit -> '?', same length (no false ')' at the end)");
+        True(sa == "Lautsprecher (Gr?n)" && chn::AsciiShadow(L"Speakers (Nordvik AX-22)") == "Speakers (Nordvik AX-22)",
+             "AsciiShadow: ASCII kept, one char per UTF-16 unit");
+    }
     printf("RESULT: %s\n", g_fail ? "FAILED" : "PASSED");
     return g_fail ? 1 : 0;
 }

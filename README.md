@@ -51,7 +51,7 @@ itself - no need to open any settings again.
 |---|---|
 | **Modern Windows audio** | WASAPI with the low-latency `IAudioClient3` engine at the device's native rate (typically 10 ms periods) |
 | **Shared or Exclusive** | Shared by default (everything keeps playing); Exclusive for minimum latency |
-| **Any project rate** | Internal 128-tap sinc conversion when the project rate differs from the device (e.g. 44.1 kHz project on a 48 kHz device) |
+| **Any project rate** | Internal conversion when the project rate differs from the device (e.g. 44.1 kHz project on a 48 kHz device): low-latency 128-tap sinc by default, or **soxr** (SoX Resampler library, HQ) for the best quality (adds ~8-10 ms at 44.1-192 kHz, more at 16-32 kHz) |
 | **Bluetooth aware** | Detects Bluetooth outputs, recommends a buffer, latency offsets; keeps playing when headphones go into their case and come back |
 | **Several devices** | Main device plus up to 3 extra inputs/outputs with clock-drift correction, output routing and loopback of a single application |
 | **Monitoring and safety** | Direct monitoring, hearing-safety limiter, dither, live level meters and DSP load |
@@ -90,7 +90,7 @@ which Steinberg no longer develops.
 | Feature | Generic Low Latency ASIO Driver (discontinued) | Steinberg built-in ASIO Driver 1.0.9 (18 Dec 2024) | **WASAPI Driver for ASIO** |
 |---|---|---|---|
 | Other apps while the DAW is open | Exclusive in our tests: other apps went silent | Shared in our tests: other apps kept playing | **Shared by default**, Exclusive optional |
-| Sample-rate conversion | - | Automatic (soxr library) | Automatic (built-in 128-tap sinc) |
+| Sample-rate conversion | - | Automatic (soxr library) | Automatic (built-in 128-tap sinc, low latency; **soxr** library HQ selectable) |
 | Follows the Windows default output | - | No: a device must be picked in its port list (Bluetooth only while already connected) | **Yes**: "(Windows default)" follows Windows, e.g. headphones on/off |
 | Bluetooth | No special handling | Works when picked directly; after the headphones disconnect the selection is lost and must be set again in the panel | Detection, buffer advice, latency offsets; output moves to the next device and comes back by itself on reconnect |
 | Several devices | Port list | Port list | Up to 3 extra devices with drift correction, routing, app loopback |

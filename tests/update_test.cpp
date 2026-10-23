@@ -17,9 +17,12 @@
 //   hostile input (truncated documents, deep nesting, wrong types, huge input, random bytes: never crashes and
 //   never accepts garbage), Setup asset selection, SHA256SUMS.txt lookup, URL and repository rules.
 //   0.9.1: SemVer pre-release precedence (fix 8) and the final host allow-list (fix 5).
+//   0.9.10: the first two-digit patch number (0.9.10 > 0.9.9), and src/common.h's WB_VERSION_NUM against the
+//   new getDriverVersion scheme (major * 100000 + minor * 1000 + patch * 10; read from the source root).
 //   Prints one line per check and "RESULT: PASSED" or "RESULT: FAILED".
 #include "../src/update.h"
 #include <cstdio>
+#include <cstdlib>     // atol (0.9.10)
 
 using namespace upd;
 static int g_fail = 0;
@@ -36,6 +39,35 @@ int main() {
           !ParseVersion("99999999.0", v) && !ParseVersion("1.2.3-", v), "reject malformed versions");
     Check(Cmp("v0.9.1", "0.9.0") > 0 && Cmp("0.10.0", "0.9.9") > 0 && Cmp("1.0.0", "0.99.99") > 0, "newer versions compare greater");
     Check(Cmp("0.9.0", "v0.9.0") == 0 && Cmp("0.9.0-rc.1", "0.9.0") < 0 && Cmp("0.9.0-rc.2", "0.9.0-rc.1") > 0, "equal and pre-release ordering");
+    // 0.9.10: the first two-digit patch number compares numerically, not as text ("0.9.10" > "0.9.9")
+    Check(Cmp("0.9.10", "0.9.9") > 0 && Cmp("v0.9.10", "0.9.10") == 0 && Cmp("0.9.10", "0.9.11") < 0 &&
+          Cmp("0.10.0", "0.9.10") > 0 && Cmp("0.9.10-rc.1", "0.9.9") > 0 && Cmp("0.9.10-rc.1", "0.9.10") < 0,
+          "two-digit patch: 0.9.10 is newer than 0.9.9");
+    {   // 0.9.10: src/common.h WB_VERSION_STR / WB_VERSION_NUM (read as text, like build.yml does; common.h needs
+        // <windows.h>). WB_VERSION_NUM = major * 100000 + minor * 1000 + patch * 10 and larger than 990 (0.9.9).
+        std::string text;
+        for (const char* path : {"src/common.h", "../src/common.h"}) {
+            if (FILE* f = fopen(path, "rb")) { char buf[4096]; size_t n; while ((n = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n); fclose(f); break; }
+        }
+        auto define = [&](const char* name) {
+            const std::string key = std::string("#define ") + name + " ";
+            const size_t p = text.find(key);
+            if (p == std::string::npos) return std::string();
+            size_t a = p + key.size();
+            while (a < text.size() && text[a] == ' ') ++a;
+            size_t b = a;
+            while (b < text.size() && text[b] != '\r' && text[b] != '\n' && text[b] != ' ') ++b;
+            return text.substr(a, b - a);
+        };
+        std::string vs = define("WB_VERSION_STR");
+        if (vs.size() >= 2 && vs.front() == '"' && vs.back() == '"') vs = vs.substr(1, vs.size() - 2);
+        const long num = atol(define("WB_VERSION_NUM").c_str());
+        Version cur;
+        const bool parsed = ParseVersion(vs, cur);
+        printf("  common.h: WB_VERSION_STR \"%s\", WB_VERSION_NUM %ld\n", vs.c_str(), num);
+        Check(parsed && num == cur.major * 100000L + cur.minor * 1000L + cur.patch * 10L && num > 990 && Cmp(vs.c_str(), "0.9.9") >= 0,
+              "WB_VERSION_NUM = major*100000 + minor*1000 + patch*10, above 990 (0.9.9)");
+    }
 
     const std::string json = R"({
       "url": "https://api.github.com/repos/o/r/releases/1", "id": 1, "tag_name": "v0.9.1",

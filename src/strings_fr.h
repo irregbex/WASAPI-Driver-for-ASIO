@@ -385,6 +385,12 @@ inline void Fill_fr(const wchar_t** t) {
     t[S_TRAY_ST_LOAD] = L"Charge élevée";
     t[S_TRAY_ST_DROPS] = L"Coupures";
     t[S_TRAY_ST_STOPPED] = L"Arrêté";
+    // 0.9.10: fixed-ratio converter engine (Advanced tab, FixedRatioEngine)
+    t[S_FR_ENGINE] = L"Conversion de fréquence";
+    t[S_FRE_AUTO] = L"Auto (Sinc, faible latence)";
+    t[S_FRE_SOXR] = L"soxr (meilleure qualité, +8-10 ms)";
+    t[S_FRE_SINC] = L"Sinc (faible latence)";
+    t[S_TIP_FRENG] = L"Si la fréquence ASIO diffère de celle de l'appareil (ex. projet 44,1 kHz, appareil 48 kHz). Auto/Sinc : 1,5 ms, SNR 115 dB. soxr : SNR 132 dB, sans repliement, +8-10 ms de latence (plus à 16-32 kHz). Hermite : léger.";
 }
 
 }  // namespace lang

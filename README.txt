@@ -1,15 +1,15 @@
-WASAPI Driver for ASIO(R) 0.9.9 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
-=====================================================================================================================
+WASAPI Driver for ASIO(R) 0.9.10 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+======================================================================================================================
 
 A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
 devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cubase, Nuendo, Ableton Live,
 DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
 earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
 
-WHERE TO GET IT (0.9.9, public beta)
-------------------------------------
+WHERE TO GET IT (0.9.10, public beta)
+-------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.9. Open its release (or a newer
+  The current public beta is version 0.9.10. Open its release (or a newer
   release) and download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
@@ -49,8 +49,8 @@ Panel titles found in version 1.0.9.26:
   Other apps while     Exclusive in our       Shared in our tests:       Shared by default; Exclusive
   the DAW is open      tests: other apps      other apps kept playing    optional
                        went silent (KI-1)
-  Sample-rate          -                      Automatic (soxr)           Automatic (128-tap sinc)
-  conversion
+  Sample-rate          -                      Automatic (soxr)           Automatic: 128-tap sinc (low
+  conversion                                                             latency); soxr HQ selectable (0.9.10)
   Follows the Windows  -                      No: a device must be       Yes: "(Windows default)"
   default output                              picked in its port list    follows Windows (e.g.
                                               (Bluetooth only while      headphones on/off, in the
@@ -83,7 +83,7 @@ in the installation folder.
 
 RELEASE FOLDER LAYOUT
 ---------------------
-  WASAPI-Driver-for-ASIO-0.9.9-Setup.exe  Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
+  WASAPI-Driver-for-ASIO-0.9.10-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
   README.txt          This file (complete manual).
   Docs\               QUICK-START.txt (one page), FAQ.txt, COMPATIBILITY.txt (tested hosts and devices),
                       VERSION.txt (changelog), TEST-GUIDE.txt (test plan), ROADMAP.txt, TRACING.txt
@@ -195,6 +195,10 @@ Features:
 - 0.9.0: six color themes (including retro looks), four more background
   effects, an optional update check (off by default) and the interface in
   English, Spanish, Portuguese (Brazil), French and German.
+- 0.9.4 / 0.9.10: the low-latency engine at any project rate, with an
+  internal conversion: a 128-tap sinc by default (low latency) or, when
+  chosen, the SoX Resampler library (soxr HQ, best quality, ~8-10 ms more
+  latency at 44.1-192 kHz, more at 16-32 kHz) (section 41).
 
 ----------------------------------------------------------------------
 2. REQUIREMENTS
@@ -209,12 +213,12 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.9-Setup.exe from the 0.9.9 release
+  0. Download WASAPI-Driver-for-ASIO-0.9.10-Setup.exe from the 0.9.10 release
      (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
      optionally compare its SHA-256 with SHA256SUMS.txt. For a newer version,
      use that version's release assets.
   1. Close the DAW.
-  2. Double-click WASAPI-Driver-for-ASIO-0.9.9-Setup.exe.
+  2. Double-click WASAPI-Driver-for-ASIO-0.9.10-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
      not digitally signed).
   4. UAC: Yes. Welcome > Next. Notices > Next. License: I Agree. Folder: keep
@@ -377,6 +381,12 @@ Advanced tab
                             drift correction. Since 0.9.6 the internal
                             rate conversion (section 41) always uses sinc
                             when the CPU budget allows.
+  Rate conversion           0.9.10: engine of the internal rate conversion
+                            (section 41): Auto (Sinc, low latency; the
+                            default, as in 0.9.9) | soxr (best quality,
+                            +8-10 ms) | Sinc (low latency) | Hermite
+                            (light; only when the rate goes up).
+                            FixedRatioEngine key.
   Initial sample rate       Rate used when opening while no DAW rate is
                             known; the DAW changes it later and the driver
                             remembers the DAW's rate (0.9.5, section 29).
@@ -594,7 +604,8 @@ period the device offers (IAudioClient3), and when the DAW rate differs the
 driver converts internally with an exact fixed ratio (section 41). Status
 shows the engine line, e.g. "Engine: low latency (IAudioClient3), period
 144 frames (3.00 ms) at 48000 Hz; internal rate conversion 44100->48000 Hz
-(sinc)".
+(sinc)" (0.9.10: "(soxr HQ)" when Rate conversion = soxr; log.txt also
+shows the converter's look-ahead).
 
 ----------------------------------------------------------------------
 11. LOOPBACK INPUTS
@@ -822,7 +833,8 @@ config.ini keys: Mode, LowLatencyShared, OutputDevice, InputDevice,
 Loopback (Off|ExcludeDaw|All|App), LoopbackApp (e.g. spotify.exe),
 BufferSize, SampleRate, LastHostRate (0.9.5: written by the driver, the rate
 the DAW last set), Gain (linear), FollowDeviceChanges, DriftCorrection
-(Auto|On|Off), ResamplerQuality (Hermite|Sinc), Dither (0|1), MaxChannels
+(Auto|On|Off), ResamplerQuality (Hermite|Sinc), FixedRatioEngine (0.9.10:
+Auto|Soxr|Sinc|Hermite, section 41), Dither (0|1), MaxChannels
 (1..32), Log, ActiveProfile, ExtraOutputs, ExtraInputs (names separated by
 |, up to 3), OutputMap (asio:dev,...), AlignDevices (0|1),
 OutputLatencyOffsetMs / InputLatencyOffsetMs (-50..500), DirectMonitor
@@ -837,10 +849,10 @@ with "Include devices"). Profile sections written by 0.4.0 to 0.5.1 are
 converted automatically.
 %LOCALAPPDATA%\WASAPI Driver for ASIO\crash\     crash reports (section 25)
 Diagnostic traces (.etl, 0.9.8) are written only when you record one, where
-"Stop trace.bat" saves it (your Desktop); see section 42 and TRACING.txt.
+"Stop trace.bat" saves it (C:\Users\Public\Documents\WASAPI Driver for ASIO\Traces); see section 42 and TRACING.txt.
 
 ----------------------------------------------------------------------
-20. KNOWN LIMITATIONS 0.9.9
+20. KNOWN LIMITATIONS 0.9.10
 ----------------------------------------------------------------------
 - Extra devices (beta): up to 3 extra outputs and 3 extra inputs, 32
   channels per direction in total. Alignment is based on estimated
@@ -861,11 +873,15 @@ Diagnostic traces (.etl, 0.9.8) are written only when you record one, where
   a time, as before.
 - Bluetooth: Windows does not report the real delay of Bluetooth devices;
   use the output latency offset (section 26).
+- Rate conversion with soxr (0.9.10, only when "soxr" is selected) adds
+  about 8-10 ms of latency per converted direction at 44.1-192 kHz (more at
+  16-32 kHz) compared with the default sinc; it is reported to the DAW
+  (section 41, KNOWN-ISSUES.txt KI-10).
 - If the host calls init() on a thread without a message loop (rare),
   automatic resets are not delivered.
 - No Authenticode signature unless a release was built with a certificate
   (SIGNING.txt); unsigned files make SmartScreen warn.
-- Features from 0.2.x to 0.9.9 have not been fully tested on real hardware
+- Features from 0.2.x to 0.9.10 have not been fully tested on real hardware
   yet (see TEST-GUIDE.txt and COMPATIBILITY.txt). Beta features are listed
   in section 36.
 
@@ -944,6 +960,11 @@ See VERSION.txt for the detailed changelog.
        release; diagnostic tracing (ETW) with a Windows Performance
        Recorder profile. No new user features; valid calls and the sound
        are unchanged.
+0.9.10 soxr: the internal rate conversion can use the SoX Resampler
+       library (HQ) when "soxr" is selected (Rate conversion /
+       FixedRatioEngine; the default Auto stays the low-latency sinc);
+       MSVC warning C4244 fixed; CI actions on Node 24; getDriverVersion
+       9100.
 0.9.9  Arm64X: one driver DLL for native ARM64 and emulated x64 DAWs on
        Windows on Arm, built with MSVC in CI and registered once by the
        Setup (no question; beta, KNOWN-ISSUES.txt KI-9); two MSVC
@@ -1284,8 +1305,8 @@ The update check is beta until the project has a public release.
 36. STABLE AND BETA FEATURES
 ----------------------------------------------------------------------
 0.9.1 to 0.9.6 are release candidates and 0.9.7 is the first public beta;
-0.9.8 hardens it (robustness, tests, diagnostic tracing) and 0.9.9 adds the
-Arm64X DLL for Windows on Arm:
+0.9.8 hardens it (robustness, tests, diagnostic tracing), 0.9.9 adds the
+Arm64X DLL for Windows on Arm and 0.9.10 the soxr rate conversion (beta):
 no new features until 1.0, only fixes
 (0.9.2 adds help tips and 0.9.3 the application icon, accepted as exceptions:
 interface only, no audio change; 0.9.4 extends the low-latency engine to
@@ -1300,7 +1321,8 @@ Beta (works in the tests, little real-world use yet):
 - extra devices, alignment and output routing (section 15);
 - "Follow Windows" sample rate, SampleRate=Auto (section 29);
 - the internal rate conversion of the low-latency engine (0.9.4, section
-  41) until it has been tested on real hardware;
+  41) until it has been tested on real hardware, and its optional soxr
+  engine (0.9.10, FixedRatioEngine=Soxr);
 - the Arm64X DLL for Windows on Arm (0.9.9: in the Setup, registered
   once for ARM64 and x64 DAWs; not yet tested on real hardware, KI-9);
 - the update check, until a real public release exists (section 35).
@@ -1428,7 +1450,28 @@ Now, with "Low latency" on (Shared mode):
 Expected output latency, DAW at 44.1 kHz, ASIO buffer 128, Windows at
 48 kHz: with a 144-frame engine period (3 ms) about 12 ms; with a device
 that only offers 480 frames (10 ms) about 29 ms, the same as before but
-without Windows' unreported converter delay. Check the Status tab (engine
+without Windows' unreported converter delay. (With the default sinc;
+soxr adds about 8-10 ms, see below.)
+0.9.10: the conversion engine is selectable (Advanced tab > Rate conversion,
+FixedRatioEngine=Auto|Soxr|Sinc|Hermite). The default, "Auto (Sinc, low
+latency)", is exactly the 0.9.9 behaviour (sinc whenever the CPU budget
+allows); "Sinc (low latency)" is the same. "soxr (best quality, +8-10 ms)"
+uses the SoX Resampler library (recipe HQ: 20-bit, linear phase; Steinberg's
+built-in ASIO driver installs a soxr.dll as well) when the CPU budget allows: about
+132 dB signal-to-noise on a 1 kHz tone (sinc about 115 dB), distortion and
+aliasing 10-35 dB lower than sinc, flat to 20 kHz (0.004 dB), at about half
+of sinc's CPU. It works on FFT blocks, so it needs a longer look-ahead: about
+9.7 ms instead of 1.45 ms at 44.1 -> 48 kHz, i.e. about 8 ms more output
+latency (at buffer 128 with a 3 ms engine period: 20 ms instead of 12 ms) and
+the same again on a converted input; about 8-10 ms of look-ahead for every
+pair between 44.1 and 192 kHz, more at 16-32 kHz (48 -> 16 kHz 15.6 ms,
+16 -> 44.1 kHz 26.8 ms, 44.1 -> 22.05 kHz 19.2 ms). The DAW is told the exact latency, so
+recordings stay in time. If soxr would exceed the CPU budget, the driver
+uses the default rule instead and the log says so. "Hermite (light)" is the
+cheapest and is only used when the rate goes up. The log and the Status tab
+name the engine ("soxr HQ", "sinc", "Hermite"). KNOWN-ISSUES.txt KI-10,
+ARCHITECTURE.txt section 60.
+Check the Status tab (engine
 line) and WasapiDriverDiag.exe ("Low-latency period below the default"):
 many built-in and USB devices offer 128-144 frames with the standard
 Windows driver; some vendor drivers only 480.

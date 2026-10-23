@@ -78,6 +78,21 @@ inline std::string ShortName(const std::string& full) {
     return Trim(full);
 }
 
+// 0.9.10: the ASCII copy of a wide device name on which ShortName runs (driver.cpp, buildChannelNames): exactly one
+// char per UTF-16 unit, so an index into the copy is the same index into the wide name; ASCII units are copied, every
+// other unit (accented letters, CJK, each half of a surrogate pair) becomes '?'. Before 0.9.10 the driver built the
+// copy with std::string(w.begin(), w.end()), which keeps only the low byte of each unit: MSVC warned (C4244,
+// wchar_t -> char, reported from <xutility>), and a character such as U+4E28 or U+FF09 turned into '(' or a tab,
+// which could change the " (" / ")" / blank parsing. '?' is never a blank, a parenthesis or part of a generic word.
+inline std::string AsciiShadow(const std::wstring& w) {
+    std::string a(w.size(), '?');
+    for (size_t i = 0; i < w.size(); ++i) {
+        const unsigned long u = (unsigned long)w[i];        // wchar_t: 16-bit unsigned (Windows) or 32-bit (Linux)
+        if (u < 0x80) a[i] = static_cast<char>(u);
+    }
+    return a;
+}
+
 // Speaker position label for bit `bit` of a channel mask (SPEAKER_FRONT_LEFT = bit 0 ... SPEAKER_TOP_BACK_RIGHT =
 // bit 17, as in ksmedia.h); "" for bits outside that range.
 inline const char* PosLabel(int bit) {

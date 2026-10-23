@@ -37,6 +37,8 @@ enum {
     // monitor window's text lines) and of dialog buttons whose meaning differs from the panel's IDOK / IDCANCEL.
     ID_HELPTIPS = 370, ID_TIPTIMER = 7,
     ID_TIP_TILE0 = 380, ID_TIP_TAB0 = 390, ID_TIP_MWSUM = 410, ID_TIP_NAMESAVE = 420, ID_TIP_DLGCANCEL, ID_TIP_ROUTEOK,
+    // 0.9.10: FixedRatioEngine combo (Advanced tab, "Quality" card)
+    ID_FRENG = 440,
     ID_DLG_OK = 1, ID_DLG_CANCEL = 2      // = IDOK / IDCANCEL of windows.h (static_assert in panel.cpp)
 };
 

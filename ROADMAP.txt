@@ -206,3 +206,15 @@ Done in 0.9.9 (Arm64X)
   application. DONE (application pending).
 Next: Windows on Arm results for the Arm64X DLL (TEST-GUIDE.txt block Z),
 COMPATIBILITY.txt reports and traces from beta users.
+
+Done in 0.9.10 (soxr)
+---------------------
+- SoX Resampler library (soxr HQ) as an optional engine of the internal
+  rate conversion, with the FixedRatioEngine setting (Auto = low-latency
+  sinc, the default / soxr / Sinc / Hermite); latency reported exactly, no
+  allocation on the audio thread (ARCHITECTURE.txt section 60). DONE,
+  requested by the maintainer.
+- MSVC C4244 fixed; GitHub actions on Node 24; ubuntu-24.04 runners. DONE.
+Next: listening and latency results with soxr on real hardware (TEST-GUIDE.txt
+block AA); possibly a lower-latency soxr recipe (shorter FFT blocks need a
+different filter split).

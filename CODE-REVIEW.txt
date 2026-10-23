@@ -1169,3 +1169,132 @@ separate experimental-unsigned file (AF11): the DLL is now produced by a
 pinned workflow on a GitHub-hosted runner, verified by hash in the packaging
 job and signed there with the other DLLs, the same chain as every other
 binary.
+
+0.9.10 soxr engine, MSVC warning C4244, CI actions (self-review; 0 HIGH, 0 MED, 4 LOW FIXED, 3 INFO)
+---------------------------------------------------------------------------------------------------
+Scope: the new soxr engine of the fixed-ratio converter (src/frsoxr.h,
+src/fixedratio.h, third_party/soxr; ARCHITECTURE.txt section 60), the
+FixedRatioEngine setting and panel row, the C4244 warning of the Arm64X
+build and the GitHub Actions update. Checked by tests/fixedratio_test.cpp
+(extended), a separate allocation stress run, the five local builds
+(0 warnings from src/), pefile and makensis.
+S1 LOW  FIXED  (found while integrating) soxr's FIFOs (fifo.h) grow with
+               realloc() inside soxr_process, i.e. on the audio thread. A
+               warm-up alone was not enough: with soxr's default FIFO policy
+               (compact only after 16 KB were read) and 512-frame calls, the
+               counting test found realloc calls during playback at
+               48 -> 44.1 kHz (1024-frame ASIO blocks), and the stress run
+               over all standard pairs at 32 -> 192 kHz and 48 -> 32 kHz.
+               Fix (no change to soxr's files): calls of at most 128 frames
+               with all output drained after each, a 2 s warm-up in
+               pseudo-random pieces, FIFO_MIN = 64 and an allocator with a
+               64 KB floor and 2x growth (soxr-config.h, fifo-headroom.c).
+               Result: 0 allocations on the audio-thread path in the test
+               (52 million frames) and in the stress run (220 rate
+               configurations x 2 runs x 30 s, 3 seeds, 1..4 channels,
+               random buffers and requests; output and input patterns).
+S2 LOW  FIXED  soxr's global FFT table (fft4g_cache.h) is shared by all
+               instances and grows with realloc() under a lock that is a
+               no-op without OpenMP: a soxr_create on the host thread that
+               needs a longer FFT could free the table while another
+               stream's audio thread reads it. SoxrCore::EnsureFftTables
+               grows it to 2^17 points once per process (thread-safe static
+               initialization) before the first soxr_create.
+S3 LOW  FIXED  soxr_clear() frees and re-creates the whole instance, so it
+               cannot be used for the converter's reset() (start()). reset()
+               now pushes 2 x look-ahead + 64 frames of silence (a multiple
+               of num, so the output grid stays exact) and discards the
+               output up to there; the test checks that a second run gives
+               the same samples within -120 dBFS and the same timing.
+S4 LOW  FIXED  MSVC C4244 "conversion from 'wchar_t' to 'char', possible
+               loss of data", reported from <xutility> in the Arm64X build:
+               driver.cpp buildChannelNames (line 927 in 0.9.9),
+                 before: std::string a(n.begin(), n.end());
+                 after:  const std::string a = chn::AsciiShadow(n);
+               The copy only feeds the generic-word test of ShortName and
+               must keep one char per UTF-16 unit (the index is used on the
+               wide name). The old copy kept the low byte of each unit, so a
+               character such as U+4E29 or U+FF09 became ')' or a tab and
+               could change the " (" / ")" parsing. chn::AsciiShadow (pure,
+               chnames.h) copies ASCII and maps every other unit to '?';
+               tests/chnames_test.cpp covers it. No other wchar_t -> char
+               narrowing exists in the DLL sources (crash.cpp widens char to
+               wchar_t, which MSVC does not warn about).
+S5 INFO        Latency: soxr's FFT blocks need about 6 times the sinc
+               look-ahead (429 instead of 64 input frames at 44.1 -> 48
+               kHz, about +8 ms per converted direction). It is reported
+               exactly (the model measures the round trip equal to the
+               reported latencies within 0.5 frame in 48 cases;
+               KNOWN-ISSUES.txt KI-10). By the maintainer's decision soxr
+               is opt-in: the default Auto is the 0.9.9 sinc rule (same log
+               line); soxr only with FixedRatioEngine=Soxr.
+S6 INFO        Not verifiable here: the MSVC compilation of the soxr C files
+               (cl /TC /W0, native ARM64 and /arm64EC) runs only in the
+               "arm64x" CI job. Expected to compile: soxr supports MSVC
+               upstream, the SIMD / CPUID / x87 code paths are disabled by
+               soxr-config.h, and data-io-portable.c avoids rint.h's SSE2
+               branch that ARM64EC (it defines _M_X64) would select.
+S7 INFO        CI: actions/checkout v7.0.1, upload-artifact v7.0.2 and
+               download-artifact v8.0.2 run on Node 24 (action.yml "using:
+               node24"); ilammy/msvc-dev-cmd v1.13.0 is its latest release
+               and still node20 (kept). download-artifact v8 fails on a
+               digest mismatch where v4 only warned (kept: a corrupted
+               artifact must not be packaged). actionlint 1.7.7: no error
+               apart from "unknown runner label windows-11-arm" (its label
+               list predates that GitHub-hosted runner) and shellcheck
+               info-level notes (SC2086, SC2035) in run scripts that this
+               version did not change.
+Checked, no defect: the soxr look-ahead probe (2 s) against 64 s probes
+(at most 3 frames more, at 44.1 -> 192 kHz; covered by the 16-frame
+margin); long runs drift-free (pending output bounded over 30 minutes for
+15 pairs); multichannel output bit-exact with mono per channel; the impulse
+leaves soxr at its exact input position (no shift); configure() falls back
+to sinc if soxr fails; the soxr path keeps the converter's held() /
+capacity() bookkeeping used by the scheduling model; the version scheme
+(WB_VERSION_NUM 9100 for 0.9.10, see common.h; update_test checks it and
+that 0.9.10 compares newer than 0.9.9).
+
+Independent review of 0.9.10 (0 HIGH, 0 MED, 8 LOW; all FIXED in 0.9.10)
+------------------------------------------------------------------------
+Verdict of the reviewer: safe to publish, only LOW findings.
+R1 LOW  FIXED  "~8 ms" was stated as soxr's extra latency everywhere, but the
+               look-ahead depends on the rate pair (48 -> 16 kHz 15.6 ms,
+               16 -> 44.1 kHz 26.8 ms, 44.1 -> 22.05 kHz 19.2 ms). The panel
+               label ("soxr (best quality, +8-10 ms)"), the help tip (5
+               languages) and every document now say "about 8-10 ms at
+               44.1-192 kHz, more at 16-32 kHz", with those examples.
+R2 LOW  FIXED  The stream-open cost was documented too low (32 channels:
+               196 ms at 44.1 -> 48 kHz, 270 ms at 48 -> 44.1 kHz on a fast
+               x64). Documents and comments now give the measured range,
+               and SoxrCore caches the look-ahead probe per rate pair and
+               process (lock-free, 32 slots, host threads only), so later
+               opens of a pair skip the 2 s probe; the test checks that the
+               cached value equals a fresh probe. The warm-up is not
+               shortened (it is what keeps the audio thread allocation-free).
+R3 LOW  FIXED  kSoxrMacsPerFrame = 48 was below the 52.1 measured for
+               48 -> 44.1 kHz on another machine: now 64 (about 20 %
+               margin); the policy tests and log texts were updated.
+R4 LOW  FIXED  "Steinberg's built-in ASIO driver uses soxr" is now sourced:
+               Steinberg built-in ASIO Driver 1.0.9.26 installs soxr.dll
+               next to asiobtin.dll, and asiobtin.dll loads it for
+               sample-rate conversion (its binary contains the message
+               "Cannot load soxr.dll! No SRC!"); observed by inspecting the
+               installed files (VERSION.txt, ARCHITECTURE.txt section 60).
+R5 LOW  FIXED  Stale comments: soxr-config.h said pieces of at most 512
+               frames (128); ARCHITECTURE.txt and frsoxr.h said the FFT
+               stage works in 1024-point blocks (the DFT length is the
+               smallest soxr allows for each stage's filter, at least 1024,
+               up to the 2^17 table bound).
+R6 LOW  FIXED  driver.cpp: when soxr could not be configured, the converter
+               silently became sinc although sinc may not fit the budget
+               that soxr was checked against. Output and inputs now decide
+               again with fr::FallbackFromSoxr (the sinc rule with the same
+               remaining budget: sinc, Hermite going up, Windows going down),
+               reconfigure or reopen accordingly, subtract the cost of what
+               is used, and log the decision. Helper tested in
+               tests/fixedratio_test.cpp.
+R7 LOW  FIXED  The trace events did not say which converter runs: OutputOpen
+               and InputOpen carry ConvEngine ("soxr HQ" / "sinc" /
+               "Hermite", empty without conversion); TRACING.txt updated.
+R8 LOW  FIXED  applySafeSettings (safe mode after a crash) did not reset the
+               new key: cfg.frEngine = FrEngine::Auto (the 0.9.9 converter).

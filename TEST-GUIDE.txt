@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO 0.9.9 (public beta) - Test guide
-=======================================================
+WASAPI Driver for ASIO 0.9.10 (public beta) - Test guide
+========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -11,7 +11,7 @@ the report.
 
 Preparation
 -----------
-P0  Install WASAPI-Driver-for-ASIO-0.9.9-Setup.exe (README section 3).
+P0  Install WASAPI-Driver-for-ASIO-0.9.10-Setup.exe (README section 3).
     OK = it finishes without errors and "WASAPI Driver for ASIO" appears in
     the DAW.
 
@@ -471,7 +471,7 @@ O10 Program profile: Advanced > Profile for this program: choose a profile
 O11 Diagnostics (Start menu > Diagnostics).  OK = every endpoint shows a
     "Bluetooth: yes/no" line; the Bluetooth headset says yes.
 O12 Silent install: in an administrator console run
-    WASAPI-Driver-for-ASIO-0.9.9-Setup.exe /S.  OK = no window asks
+    WASAPI-Driver-for-ASIO-0.9.10-Setup.exe /S.  OK = no window asks
     anything, the driver appears in the DAW afterwards.
 
 Block P - panel visuals (0.8.1, speed and frame rate updated in 0.8.2)
@@ -742,14 +742,16 @@ W2  Same setting, choose an input device (or only an extra input).  OK = the
 W3  Cubase project at 44.1 kHz, Windows device at 48 kHz, Low latency on.
     OK = log.txt shows "Output: rate conversion 44100 -> 48000 Hz, 2
     channels: sinc (12 M MAC/s, budget 150 M)" with ResamplerQuality Hermite
-    AND with Sinc (the setting no longer changes this line).
+    AND with Sinc (the setting no longer changes this line). 0.9.10: the
+    same line with Rate conversion = "Auto (Sinc, low latency)" (default)
+    and "Sinc (low latency)"; "soxr ..." changes it (block AA).
 W4  Keep Cubase open with the project playing (the driver is loaded) and run
-    WASAPI-Driver-for-ASIO-0.9.9-Setup.exe.  OK = after Install, a message
+    WASAPI-Driver-for-ASIO-0.9.10-Setup.exe.  OK = after Install, a message
     says the file is in use and asks to close the audio programs (Cubase,
     DaVinci Resolve, Ableton Live...) with Retry / Cancel. Cancel: Setup
     stops and the installed version still works. Close Cubase, run Setup
-    again, Retry if asked: it finishes and the DAW shows 0.9.9
-    (getDriverVersion 990 in the test report).
+    again, Retry if asked: it finishes and the DAW shows 0.9.10
+    (getDriverVersion 9100 in the test report; 990 was 0.9.9).
 W5  Same as W4 with Settings > Apps > WASAPI Driver for ASIO > Uninstall
     while Cubase is open.  OK = the same message; Cancel removes nothing.
 
@@ -777,7 +779,8 @@ Y3  Start menu > "... Start trace" (accept the administrator prompt).
     OK = a blue window says "Tracing started". Open the DAW, play 30 s,
     change the buffer size in the panel (Apply), play 10 s, close the DAW.
     Start menu > "... Stop trace".  OK = a yellow window says "Trace saved"
-    and WasapiDriver-<date>-<time>.etl is on the Desktop.
+    and WasapiDriver-<date>-<time>.etl is in C:\Users\Public\Documents\WASAPI Driver for ASIO\Traces
+    (the folder opens in Explorer), whatever account approved the UAC prompt.
 Y4  Open the .etl in Windows Performance Analyzer (or run tracerpt on it, see
     TRACING.txt section 5).  OK = provider WASAPIDriverForASIO with events
     DriverCreated, AsioInit, AsioCall (createBuffers, start, stop,
@@ -800,7 +803,7 @@ First check that your package contains it: the release notes say so, and
 WasapiDriverARM64X.dll is in the bin zip.
 How to see a process's architecture: Task Manager > Details, right-click a
 column header > Select columns > "Architecture" (ARM64, x64 or x86).
-Z1  Install WASAPI-Driver-for-ASIO-0.9.9-Setup.exe (over 0.9.8 if it was
+Z1  Install WASAPI-Driver-for-ASIO-0.9.10-Setup.exe (over 0.9.8 if it was
     installed).  OK = NO question "native ARM64 or x64 DAW"; the details
     list says "Registered Arm64X (64-bit view: ...)" and "Registered x86
     (32-bit view)"; C:\Program Files\WASAPI Driver for ASIO contains
@@ -834,6 +837,55 @@ If Z3, Z4 or Z5 fails: send log.txt, the test report, the Diagnostics
 report and a trace. Workaround until it is fixed: the portable bin zip
 without WasapiDriverARM64X.dll (delete or rename it, then run install.bat:
 it asks for the ARM64 or the x64 DLL as in 0.9.8).
+
+Block AA - 0.9.10 soxr rate conversion (Cubase recommended; headphones)
+-----------------------------------------------------------------------
+Preparation: Windows output device at 48000 Hz (Sound settings > device >
+Properties > Advanced > Default Format), panel Main tab "Low latency" on,
+Shared mode. Cubase project at 44.1 kHz.
+AA0 Default first: Rate conversion = "Auto (Sinc, low latency)" (the
+    default after installing).  OK = log.txt shows exactly the 0.9.9 line
+    "Output: rate conversion 44100 -> 48000 Hz, 2 channels: sinc (12 M MAC/s,
+    budget 150 M)" and the Status tab "(sinc)": no soxr unless it is chosen.
+AA1 Set Rate conversion = "soxr (best quality, +8-10 ms)", Apply (Cubase
+    restarts the driver), start playback, then panel > Status > "Open log".
+    OK = log.txt shows
+    "Output: rate conversion 44100 -> 48000 Hz, 2 channels: soxr HQ (12 M
+    MAC/s equivalent, budget 150 M)" (the channel count may differ) and the
+    engine line "... internal rate conversion 44100->48000 Hz (soxr HQ,
+    look-ahead 429 frames)"; the Status tab shows "soxr HQ" in the engine
+    line. With an input at 48 kHz: "<input>: internal rate conversion
+    48000->44100 Hz (soxr HQ, look-ahead 420 frames)". No line "soxr not
+    available" and no "soxr missed ... promised frames" after stopping.
+AA2 Listening test: play well-known music (44.1 kHz material) and a sine
+    sweep up to 20 kHz (Cubase: Test Generator or a sweep file) through the
+    44.1 kHz project.  OK = clean sound, no clicks, crackles or dropouts
+    during 10 minutes of playback, also while moving windows and opening
+    the panel; the sweep is smooth to about 20 kHz with no audible tones
+    folding back (no aliasing whistles) at the top.
+AA3 A/B: set Rate conversion back to "Auto (Sinc, low latency)", Apply,
+    play the same material; then soxr again.
+    OK = both sound clean; note any audible difference (none expected at
+    normal listening levels). The panel's Output latency tile is about 8 ms
+    lower with Sinc (e.g. 20.1 -> 11.9 ms at buffer 128 with a 3 ms engine
+    period).
+AA4 Latency: Cubase Studio Setup shows the driver's latencies; with an input
+    at 48 kHz run the automatic test's latency test (WasapiDriverTest.exe
+    --latency, needs a loop-back cable from output to input) once with Auto
+    (sinc) and once with soxr.  OK = in both cases the measured round trip equals
+    the reported one within 1 ms (the test prints both).
+AA5 CPU: 44.1 kHz project with as many output channels as the device has
+    (e.g. 8) playing.  OK = the panel's DSP load is not higher than with
+    Sinc (soxr needs about half of sinc's CPU).
+AA6 Rate conversion = "Hermite (light)", Apply.  OK = the log says
+    "Hermite (FixedRatioEngine=Hermite)" for 44.1 -> 48 kHz; an input at
+    48 kHz (rate going down) still says "sinc (...)" (Hermite is never used
+    to lower the rate). Set it back to Auto (the default).
+AA7 Settings and profiles: save a profile with Rate conversion = Sinc, load
+    another profile, then the first again.  OK = the combo follows the
+    profile; config.ini [General] has FixedRatioEngine=Auto|Soxr|Sinc|Hermite.
+AA8 The 0.9.10 build reports its version: Status tab / About show 0.9.10;
+    the automatic test report says "version 9100".
 
 Useful data for the report
 --------------------------

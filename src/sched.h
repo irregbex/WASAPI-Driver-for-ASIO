@@ -126,6 +126,7 @@ struct Config {
     uint32_t period = 480, devBuffer = 960, streamLat = 0, inPeriod = 480;   // devBuffer: frames kept queued
     long bufSize = 256;
     bool sinc = true;
+    bool soxr = false;      // 0.9.10: both converters use the soxr engine (overrides `sinc`)
 };
 // Sim outcome. underruns: device queue ran empty; overruns: a converter ring held more than its capacity;
 // inMissing: an input frame was due before it had been produced; accountingOk: frame bookkeeping is exact;
@@ -150,8 +151,10 @@ public:
     bool init(const Config& c, bool signal) {
         c_ = c; signal_ = signal;
         const int ch = 1;
-        if (!out_.configure(c.asioRate, c.devRate, ch, (size_t)c.bufSize * 2, c.devBuffer, c.sinc)) return false;
-        if (!in_.configure(c.inRate, c.asioRate, ch, c.inPeriod * 2, (size_t)c.inPeriod * 4, c.sinc)) return false;
+        const fr::Quality q = c.soxr ? fr::Quality::Soxr : c.sinc ? fr::Quality::Sinc : fr::Quality::Hermite;
+        if (!out_.configure(c.asioRate, c.devRate, ch, (size_t)c.bufSize * 2, c.devBuffer, q)) return false;
+        if (!in_.configure(c.inRate, c.asioRate, ch, c.inPeriod * 2, (size_t)c.inPeriod * 4, q)) return false;
+        if (out_.quality() != q || in_.quality() != q) return false;     // 0.9.10: no silent soxr -> sinc fallback here
         delay_ = InDelay(c.bufSize, out_.ahead(), c.asioRate, c.inRate, in_.ahead(), c.inPeriod, c.devRate, c.period);
         return true;
     }
@@ -249,6 +252,10 @@ public:
         return r;
     }
     uint32_t delay() const { return delay_; }
+    // 0.9.10: promised soxr frames that were missing in either converter (must stay 0) and the look-aheads.
+    uint64_t shortfalls() const { return out_.soxrShortfalls() + in_.soxrShortfalls(); }
+    int aheadOut() const { return out_.ahead(); }
+    int aheadIn() const { return in_.ahead(); }
 private:
     Config c_;
     bool signal_ = false;

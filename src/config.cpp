@@ -56,6 +56,7 @@ L"; " WB_NAME_W L" - configuration. Edit it from the driver control panel (Contr
 L"; Mode=Shared|Exclusive  LowLatencyShared=0|1  OutputDevice/InputDevice=substring of the device name (empty=Windows default, InputDevice=none for no input)\r\n"
 L"; Loopback=Off|ExcludeDaw|All|App  LoopbackApp=program.exe  BufferSize=32..4096  SampleRate=Hz  Gain=linear  FollowDeviceChanges=0|1\r\n"
 L"; DriftCorrection=Auto|On|Off  ResamplerQuality=Hermite|Sinc  Dither=0|1  MaxChannels=1..32  Log=0|1  ActiveProfile=name\r\n"
+L"; FixedRatioEngine=Auto|Soxr|Sinc|Hermite (rate conversion when the ASIO rate differs from the device rate)\r\n"
 L"; ExtraOutputs/ExtraInputs=name1|name2 (up to 3)  OutputMap=asio:dev,... (e.g. 1:1,2:2,3:1)  AlignDevices=0|1\r\n"
 L"; OutputLatencyOffsetMs/InputLatencyOffsetMs=-50..500 (added to the reported latency)\r\n"
 L"; DirectMonitor=0|1  DirectMonitorInput/DirectMonitorOutput=first channel (1-based)  DirectMonitorLevelDb=-60..6  DirectMonitorPan=-100..100  DirectMonitorMute=0|1\r\n"
@@ -182,6 +183,7 @@ using cfgp::JoinList;
 using cfgp::SplitList;
 using cfgp::LbStr;
 using cfgp::DriftStr;
+using cfgp::FrEngineStr;    // 0.9.10
 
 // Reads a section ([General] or [Profile:x]) on top of `c`: missing keys keep the current value of `c`.
 // 0.9.8: the logic (every key, defaults and range checks) is cfgp::ReadSectionWith in parse.h, so it can be fuzzed
@@ -235,6 +237,7 @@ static void WriteSection(const wchar_t* sec, const Config& c, const std::wstring
     W(L"DriftCorrection", DriftStr(c.drift));
     W(L"Dither", c.dither ? L"1" : L"0");
     W(L"ResamplerQuality", c.resampler == ResamplerQ::Sinc ? L"Sinc" : L"Hermite");
+    W(L"FixedRatioEngine", FrEngineStr(c.frEngine));               // 0.9.10
     if (kind == SecKind::General) {
         W(L"FollowDeviceChanges", c.followDevices ? L"1" : L"0");
         swprintf(b, 64, L"%d", c.maxChannels); W(L"MaxChannels", b);
@@ -301,7 +304,7 @@ bool NeedsReset(const Config& a, const Config& b) {
            _wcsicmp(a.outputDevice.c_str(), b.outputDevice.c_str()) || _wcsicmp(a.inputDevice.c_str(), b.inputDevice.c_str()) ||
            a.loopback != b.loopback || _wcsicmp(a.loopbackApp.c_str(), b.loopbackApp.c_str()) ||
            a.bufferSize != b.bufferSize || a.sampleRate != b.sampleRate || a.drift != b.drift ||
-           a.maxChannels != b.maxChannels || a.resampler != b.resampler ||
+           a.maxChannels != b.maxChannels || a.resampler != b.resampler || a.frEngine != b.frEngine ||   // 0.9.10
            JoinList(a.extraOutputs) != JoinList(b.extraOutputs) || JoinList(a.extraInputs) != JoinList(b.extraInputs) ||
            a.alignDevices != b.alignDevices ||
            a.protectA2dp != b.protectA2dp || a.sampleRateAuto != b.sampleRateAuto ||          // 0.8.0

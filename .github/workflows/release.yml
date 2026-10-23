@@ -31,6 +31,16 @@
 # pin: git ls-remote --tags https://github.com/<owner>/<action> and take the commit of the wanted tag (the
 # "^{}" line for annotated tags). See RELEASING.txt.
 #
+# 0.9.10: actions moved to releases that run on Node.js 24 (GitHub deprecates Node 20 for actions): checkout v7.0.1,
+# upload-artifact v7.0.2, download-artifact v8.0.2 (each action.yml says "using: node24"). Behaviour kept: uploads are
+# still zipped (archive: true is the default) and hidden files still excluded (as since v4.4); a download by name
+# still extracts into `path`, and a download of all artifacts (release job) still creates one sub-folder per
+# artifact (merge-multiple: false). One deliberate difference: download-artifact v8 fails on a digest mismatch
+# (digest-mismatch: error, the default) where v4 only logged it, so a corrupted artifact can no longer be packaged.
+# ilammy/msvc-dev-cmd stays at v1.13.0: it is the latest release and still "using: node20" (no Node 24 release
+# exists); the runner runs it with Node 24 once GitHub forces that. Linux jobs run on ubuntu-24.04 (named, instead
+# of ubuntu-latest, so a future image change is a deliberate edit and the migration notice no longer appears).
+#
 # Secrets and variables (all optional; names only, no values in this file):
 #   secrets.WB_SIGN_PFX_BASE64, secrets.WB_SIGN_PFX_PASSWORD, vars.WB_SIGN_TIMESTAMP, vars.WB_SIGN_URL  (PFX)
 #   vars.WB_SIGNING = trusted, secrets.AZURE_TENANT_ID, secrets.AZURE_CLIENT_ID, secrets.AZURE_CLIENT_SECRET,
@@ -48,9 +58,9 @@ permissions:
 jobs:
   tests:
     # 0.9.8: the release gate. A failing test stops the whole workflow before any binary is built.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: All offline tests (unit, fuzz, ASIO argument validation, trace encoder; sanitizers)
         run: sh tests/run_all.sh
 
@@ -60,16 +70,16 @@ jobs:
     # run builds nothing.
     needs: [tests, arm64x]
     if: ${{ !cancelled() && needs.tests.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.ver.outputs.version }}
       arm64x: ${{ steps.a64x.outputs.included }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Arm64X DLL from the arm64x job (only when it passed every check)
         if: ${{ needs.arm64x.outputs.ok == 'true' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: arm64x
           path: arm64x
@@ -161,7 +171,7 @@ jobs:
           zip -9 -X -j dist/WASAPI-Driver-for-ASIO-$VERSION-bin.zip $DOC/install.bat $DOC/uninstall.bat $DOC/VERSION.txt $DOC/ROADMAP.txt
           git archive --format=zip --prefix=WASAPI-Driver-for-ASIO-$VERSION/ -o dist/WASAPI-Driver-for-ASIO-$VERSION-src.zip HEAD
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files
           path: dist/*
@@ -178,7 +188,7 @@ jobs:
       ok: ${{ steps.arm64x.outputs.ok }}
       sha256: ${{ steps.arm64x.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: arm64
@@ -189,7 +199,7 @@ jobs:
         id: arm64x
         shell: pwsh
         run: ./scripts/build-arm64x.ps1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: arm64x
           path: WasapiDriverARM64X.dll
@@ -206,8 +216,8 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' && vars.WB_SIGNING == 'trusted' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: dist
@@ -243,7 +253,7 @@ jobs:
           Move-Item -Force stage\WASAPI-Driver-for-ASIO-$v-Setup.exe dist\
           Remove-Item dist\WASAPI-Driver-for-ASIO-$v-bin.zip
           Push-Location stage; Compress-Archive -Path *.dll, *.exe, *.txt, *.bat, trace -DestinationPath ..\dist\WASAPI-Driver-for-ASIO-$v-bin.zip; Pop-Location
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files-trusted
           path: dist/*
@@ -253,12 +263,12 @@ jobs:
     # Runs for tags when "build" succeeded; "arm64x" (experimental; without it the package has no Arm64X DLL) and
     # "package-trusted" (optional) may be failed or skipped.
     if: always() && startsWith(github.ref, 'refs/tags/v') && needs.tests.result == 'success' && needs.build.result == 'success' && needs.package-trusted.result != 'failure'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
       - name: Collect files and checksums (no signing secrets in this job)

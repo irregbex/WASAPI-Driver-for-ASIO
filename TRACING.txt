@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO(R) 0.9.9 - Diagnostic tracing (ETW / Windows Performance Recorder)
-=========================================================================================
+WASAPI Driver for ASIO(R) 0.9.10 - Diagnostic tracing (ETW / Windows Performance Recorder)
+==========================================================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -20,7 +20,8 @@ Driver for ASIO\Tracing). Portable / zip: the Tools folder.
   2. Reproduce the problem in your DAW (start playback, change the buffer,
      plug the device out and in, whatever triggers it).
   3. Run "Stop trace.bat" soon afterwards (a yellow window). It saves
-     WasapiDriver-<date>-<time>.etl on your Desktop (or in your user folder)
+     WasapiDriver-<date>-<time>.etl in C:\Users\Public\Documents\WASAPI Driver for ASIO\Traces
+     (the same folder for every account; it opens in Explorer when saved)
      and prints the full path. 0.9.9: also when it is started from an
      administrator window of ANOTHER account (for example a separate admin
      account), the file goes to the Desktop of the user signed in to this
@@ -42,7 +43,7 @@ In an elevated Command Prompt, in the folder that contains WasapiDriver.wprp:
   wpr -start "WasapiDriver.wprp!WasapiDriver" -filemode
         writes everything from start to stop to disk (for long captures where
         the beginning matters; the file grows while it runs)
-  wpr -stop "%USERPROFILE%\Desktop\WasapiDriver.etl"
+  wpr -stop "%PUBLIC%\Documents\WasapiDriver.etl"
         stops and saves
   wpr -cancel
         stops without saving (use it if "Start trace.bat" says a trace is
@@ -80,7 +81,9 @@ Events (all on non-real-time threads; the audio thread never writes one):
                       they caused a reset)
   Streams             OutputOpen (engine, Shared / Exclusive / low latency,
                       ASIO and device rates, period, buffer, sample format,
-                      rate conversion), InputOpen, LoopbackOpen,
+                      rate conversion; 0.9.10: ConvEngine = "soxr HQ",
+                      "sinc" or "Hermite", empty without conversion),
+                      InputOpen (0.9.10: also ConvEngine), LoopbackOpen,
                       ExtraOutputOpen, StreamsClosed, ExclusiveFormatRefused,
                       CaptureOpenFailed (HRESULT, privacy block)
   Resets and errors   ResetRequest / ResetPending (reason), DriverError

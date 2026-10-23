@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO(R) 0.9.9 - Frequently asked questions
-============================================================
+WASAPI Driver for ASIO(R) 0.9.10 - Frequently asked questions
+=============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
 
@@ -25,11 +25,13 @@ See also QUICK-START.txt and README.txt (section numbers below).
    With "Low latency in Shared" on, the driver always opens the device at
    that rate with its shortest engine period (IAudioClient3); if the
    project uses another rate (e.g. 44.1 kHz), the driver converts
-   internally with an exact fixed ratio (sinc quality, no drift, latency
-   included in what the DAW is told). So keep your project at 44.1 kHz if
-   you like; 48 kHz on both sides only saves the conversion (a little CPU,
-   about 1.5 ms less latency). Status shows "Engine: ... internal rate
-   conversion 44100->48000 Hz (sinc)" or "no conversion". How low it goes
+   internally with an exact fixed ratio (sinc quality by default, no
+   drift, latency included in what the DAW is told; 0.9.10: soxr can be
+   chosen, see question 20). So keep your project at 44.1 kHz if you like;
+   48 kHz on both sides only saves the conversion (a little CPU and its
+   latency: about 1.5 ms with sinc, 9.7 ms with soxr). Status shows
+   "Engine: ... internal rate conversion 44100->48000 Hz (sinc)" or "no
+   conversion". How low it goes
    depends on the device: WasapiDriverDiag.exe tells whether it offers a
    period below the default 10 ms. Exclusive mode uses the project rate
    directly if the device supports it. README sections 10, 29 and 41.
@@ -131,7 +133,8 @@ See also QUICK-START.txt and README.txt (section numbers below).
     A recording of what the driver did (0.9.8), made with a tool built into
     Windows. Run "Start trace" (Start menu > WASAPI Driver for ASIO, or
     Tools in the release folder), reproduce the problem, run "Stop trace",
-    and attach the zipped .etl file from your Desktop to your issue. It
+    and attach the zipped .etl file from C:\Users\Public\Documents\WASAPI Driver
+    for ASIO\Traces (it opens in Explorer) to your issue. It
     contains no audio and no file paths; user and computer names are masked
     in the driver's events. Nothing is recorded unless you start it.
     TRACING.txt explains what is in it.
@@ -170,3 +173,18 @@ See also QUICK-START.txt and README.txt (section numbers below).
         when headphones disconnect and comes back by itself.
     Full table: README.txt, "WHY USE IT". If a Steinberg driver works for you,
     there is no need to switch.
+
+20. Which "Rate conversion" should I choose (soxr, Sinc, Hermite)? (0.9.10)
+    It only matters when the project rate differs from the Windows rate of
+    the device (e.g. 44.1 kHz project, 48 kHz device) with "Low latency" on.
+    Auto (Sinc, low latency) = the default and the 0.9.9 converter: very
+    clean (about 115 dB signal-to-noise), 1.5 ms of look-ahead; "Sinc (low
+    latency)" is the same. soxr (best quality, +8-10 ms) = the SoX
+    Resampler library (Steinberg's built-in driver installs a soxr.dll too):
+    the cleanest result (about 132 dB, no aliasing), but about 8-10 ms more
+    latency per direction at 44.1-192 kHz, more at 16-32 kHz. Hermite (light) = least CPU and latency, audibly less
+    clean on high frequencies; only used when the rate goes up. Mixing and
+    listening: soxr. Playing a software instrument or monitoring through the
+    DAW at that rate: Auto or Sinc, or set Windows and the project to the same rate
+    and no conversion is needed at all. The DAW is told the exact latency in
+    every case (README section 41, KNOWN-ISSUES.txt KI-10).

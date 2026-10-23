@@ -127,6 +127,7 @@ static S Mutate(Rng& r, S s, Gen piece) {
 static const wchar_t* const kKeys[] = {
     L"Mode", L"LowLatencyShared", L"OutputDevice", L"InputDevice", L"Loopback", L"LoopbackApp", L"BufferSize", L"SampleRate",
     L"Gain", L"FollowDeviceChanges", L"DriftCorrection", L"MaxChannels", L"Log", L"Dither", L"ResamplerQuality",
+    L"FixedRatioEngine",
     L"ExtraOutputs", L"ExtraInputs", L"OutputMap", L"AlignDevices", L"OutputLatencyOffsetMs", L"InputLatencyOffsetMs",
     L"DirectMonitor", L"DirectMonitorInput", L"DirectMonitorOutput", L"DirectMonitorLevelDb", L"DirectMonitorPan",
     L"DirectMonitorMute", L"MonitorWindow", L"MonitorTopmost", L"MonitorX", L"MonitorY", L"MonitorW", L"MonitorH",
@@ -135,7 +136,7 @@ static const wchar_t* const kKeys[] = {
     L"UpdateLastCheck", L"VisualsIntensity", L"VisualsMonitor", L"VisualsSpeed"};
 
 static bool ConfigInvariants(const Config& c) {
-    return c.bufferSize >= 32 && c.bufferSize <= 4096 && c.sampleRate >= 8000 && c.sampleRate <= 384000 &&
+    return (int)c.frEngine >= 0 && (int)c.frEngine <= 3 && c.bufferSize >= 32 && c.bufferSize <= 4096 && c.sampleRate >= 8000 && c.sampleRate <= 384000 &&
            c.gain >= 0 && c.gain <= 16 && c.maxChannels >= 1 && c.maxChannels <= 32 &&
            c.outLatOffsetMs >= -50 && c.outLatOffsetMs <= 500 && c.inLatOffsetMs >= -50 && c.inLatOffsetMs <= 500 &&
            c.dmLevelDb >= -60 && c.dmLevelDb <= 6 && c.dmPan >= -100 && c.dmPan <= 100 &&

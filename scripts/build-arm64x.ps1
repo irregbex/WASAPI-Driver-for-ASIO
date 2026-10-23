@@ -41,6 +41,15 @@
 # copy, obj\WasapiDriverARM64X.def, identical except for "LIBRARY WasapiDriverARM64X", and passes it to both
 # /defArm64Native and /def.
 #
+# 0.9.10: the SoX Resampler library (third_party/soxr, LGPL-2.1-or-later, see its README-vendored.txt) is compiled
+# as C (cl /TC) for both halves, like the C++ sources: obj\a64\soxr_<name>.obj (native ARM64) and
+# obj\ec\soxr_<name>.obj (/arm64EC). Third-party code: /W0 for these files ONLY (the C++ sources keep /W3 and are
+# expected to build without warnings). The configuration is third_party\soxr\soxr-config.h (plain C engine "cr32",
+# no SIMD, no OpenMP); third_party\soxr\data-io-portable.c replaces src\data-io.c because soxr's rint.h would pick
+# SSE2 intrinsics for ARM64EC (which defines _M_X64); third_party\soxr\fifo-headroom.c is the FIFO allocator that
+# soxr-config.h names. /D_CRT_SECURE_NO_WARNINGS and /D_USE_MATH_DEFINES only
+# silence CRT deprecation notes and provide M_PI where soxr expects it (math-wrap.h defines it anyway).
+#
 # Checks after the link (any failure makes the script fail):
 #   dumpbin /headers    the machine line must say ARM64X
 #   dumpbin /exports    exactly DllCanUnloadNow, DllGetClassObject, DllRegisterServer, DllUnregisterServer
@@ -76,13 +85,24 @@ function Esc-Prop([string]$s) { return (Esc-Data $s).Replace(':', '%3A').Replace
 
 $cf = @('/nologo', '/c', '/O2', '/EHsc', '/std:c++17', '/W3', '/MT', '/utf-8', '/permissive-', '/Zc:__cplusplus',
         '/DUNICODE', '/D_UNICODE', '/D_WIN32_WINNT=0x0A00', '/D_CRT_SECURE_NO_WARNINGS', '/DNOMINMAX',
-        '/Ithird_party\asiosdk', '/Isrc')
+        '/Ithird_party\asiosdk', '/Ithird_party\soxr\src', '/Isrc')
 $src = @('dll', 'driver', 'config', 'panel', 'crash', 'update', 'trace')
+# 0.9.10: soxr C sources (path without .c) and their compiler flags (see the header)
+$cfC = @('/nologo', '/c', '/O2', '/TC', '/W0', '/MT', '/utf-8', '/DSOXR_LIB', '/DNDEBUG', '/D_CRT_SECURE_NO_WARNINGS',
+         '/D_USE_MATH_DEFINES', '/Ithird_party\soxr')
+$soxr = @('third_party\soxr\src\soxr', 'third_party\soxr\data-io-portable', 'third_party\soxr\fifo-headroom', 'third_party\soxr\src\dbesi0',
+          'third_party\soxr\src\filter', 'third_party\soxr\src\fft4g32', 'third_party\soxr\src\fft4g64',
+          'third_party\soxr\src\cr', 'third_party\soxr\src\cr32')
 
 Invoke-Step 'rc' @('/nologo', '/i', 'src', '/fo', 'obj\res.res', 'src\WasapiDriver.rc') | Out-Null
 foreach ($s in $src) {
     Invoke-Step 'cl' ($cf + @("/Foobj\a64\$s.obj", "src\$s.cpp")) | Out-Null
     Invoke-Step 'cl' ($cf + @('/arm64EC', "/Foobj\ec\$s.obj", "src\$s.cpp")) | Out-Null
+}
+foreach ($c in $soxr) {
+    $n = 'soxr_' + [System.IO.Path]::GetFileName($c)
+    Invoke-Step 'cl' ($cfC + @("/Foobj\a64\$n.obj", "$c.c")) | Out-Null
+    Invoke-Step 'cl' ($cfC + @('/arm64EC', "/Foobj\ec\$n.obj", "$c.c")) | Out-Null
 }
 
 # Temporary .def with the real output name (LNK4070, see above). Only the LIBRARY line changes; the EXPORTS

@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO 0.9.9 - Source code and building
-=======================================================
+WASAPI Driver for ASIO 0.9.10 - Source code and building
+========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -12,6 +12,20 @@ Building (Linux or WSL, cross-compiling)
   Test:  sh build-test.sh     needs g++-mingw-w64-x86-64   -> WasapiDriverTest.exe
   File prefix: WasapiDriver; product name "WASAPI Driver for ASIO".
   All builds use -Wall -Wextra and must produce 0 warnings from src/.
+  0.9.10: the DLL builds first compile the SoX Resampler library
+  (third_party/soxr, LGPL-2.1-or-later, see its README-vendored.txt) as C,
+  one object per file into obj/soxr64, obj/soxr32 or obj/soxra64:
+    third_party/soxr/src/soxr.c, third_party/soxr/data-io-portable.c,
+    third_party/soxr/fifo-headroom.c, third_party/soxr/src/dbesi0.c,
+    filter.c, fft4g32.c, fft4g64.c, cr.c, cr32.c (all in src/)
+  with -O2 -std=gnu99 -DSOXR_LIB -DNDEBUG -Ithird_party/soxr and -w: warnings
+  are switched off for these third-party files ONLY (upstream code, kept
+  unchanged); src/ keeps -Wall -Wextra and 0 warnings. The C++ sources get
+  -Ithird_party/soxr/src (soxr.h). No CMake: third_party/soxr/soxr-config.h
+  is the hand-written configuration (plain C engine "cr32", no SIMD, no
+  OpenMP). soxr is linked statically; no new DLL is imported (ARM64 adds the
+  Universal CRT API sets api-ms-win-crt-environment / -utility, parts of
+  Windows).
   Builds use -ffile-prefix-map / -fmacro-prefix-map (no build path is
   embedded) and are stripped (-s).
   Option: WB_FLAGS="-DWB_SHOW_ASIO_LOGO=0" sh build.sh (same for the other
@@ -23,7 +37,7 @@ Building (Linux or WSL, cross-compiling)
 Installer
   Needs installer/lang_en.nsh, lang_es.nsh, header.bmp, welcome.bmp and
   app.ico (a copy of src/res/app.ico) next to the .nsi.
-  makensis -DVERSION=0.9.9 installer/WasapiDriver.nsi (nsis package), with
+  makensis -DVERSION=0.9.10 installer/WasapiDriver.nsi (nsis package), with
   the 3 DLLs, WasapiDriverDiag.exe, WasapiDriverTest.exe, LICENSE.txt and
   the documents README.txt, QUICK-START.txt, FAQ.txt, COMPATIBILITY.txt,
   TEST-GUIDE.txt, COPYRIGHT.txt,
@@ -51,6 +65,9 @@ ARM64X (0.8.0 experimental; built at every push and packaged since 0.9.9)
   pwsh scripts\build-arm64x.ps1). The script checks the image with dumpbin
   (ARM64X machine, the four exports, no Visual C++ runtime DLL) and ends
   with a ::notice annotation. See ARCHITECTURE.txt section 59.
+  0.9.10: the script also compiles the soxr C files with cl /TC /W0 for both
+  halves (obj\a64\soxr_*.obj, obj\ec\soxr_*.obj); /W0 applies to those
+  third-party files only, the C++ sources keep /W3.
 
 Offline tests (Linux, plain g++)
   0.9.8: sh tests/run_all.sh builds and runs ALL of them (18) and prints a
@@ -71,8 +88,16 @@ Offline tests (Linux, plain g++)
   for resampler_test, sink_test, dmix_test, limiter_test, chnames_test,
   visuals_test (add -D_GLIBCXX_ASSERTIONS: bounds-checked; --dump <folder>
   writes preview images), timeinfo_test (-pthread), strings_test,
-  themes_test, update_test, registry_test (-pthread), icon_test (from the
-  source root), fixedratio_test (0.9.4, about 30 s), ratepolicy_test (0.9.5);
+  themes_test, update_test (from the source root: 0.9.10 reads
+  src/common.h), registry_test (-pthread), icon_test (from the source
+  root), ratepolicy_test (0.9.5);
+  fixedratio_test (0.9.4; about 90 s since 0.9.10) needs the soxr objects:
+    for f in <the nine soxr C files above>; do
+      gcc -O2 -w -DSOXR_LIB -DNDEBUG -Ithird_party/soxr -c $f -o obj/$(basename $f .c).o; done
+    g++ -O2 -std=c++17 -Ithird_party/soxr/src tests/fixedratio_test.cpp obj/*.o -o ft && ./ft
+  (tests/run_all.sh does exactly this and adds -DWB_COUNT_ALLOC=1
+  -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc, which lets the test
+  count soxr's allocations on the audio-thread path);
   live_test also needs -pthread. Exit code 0 = passed (most also print
   RESULT: PASSED or FAILED).
 
@@ -87,7 +112,7 @@ Offline tests (Linux, no Windows needed)
   g++ -O2 -std=c++17 -pthread tests/live_test.cpp -o lt && ./lt
 
 CI
-  .github/workflows/build.yml (GitHub Actions, ubuntu-latest) builds the
+  .github/workflows/build.yml (GitHub Actions, ubuntu-24.04 since 0.9.10) builds the
   three DLLs and both tools, runs every offline test (tests/run_all.sh) and
   builds the installer. release.yml builds nothing until its "tests" job
   (the same script) has passed. 0.9.9: both workflows also run the
@@ -99,7 +124,8 @@ Toolchain details
   (0.9.8: ETW functions EventRegister / EventUnregister / EventWriteTransfer
   come from advapi32; EventSetInformation is resolved at run time because the
   32-bit mingw import library lacks it). DLL sources: dll.cpp driver.cpp
-  config.cpp panel.cpp crash.cpp update.cpp trace.cpp.
+  config.cpp panel.cpp crash.cpp update.cpp trace.cpp, plus (0.9.10) the
+  nine soxr C files listed above.
   Diagnostics libraries: ole32 uuid avrt advapi32 shell32 user32 (-municode,
   wmain; user32 since 0.9.3 for the console icon).
   Test libraries: ole32 uuid advapi32 shell32 user32 (-municode, wmain);
@@ -215,7 +241,11 @@ src/trayicon.h        Tray status dot composition (0.9.3).
 tests/icon_test.cpp   Offline test of app.ico and the tray icons (run from
                       the source root; --dump <folder> writes PAM images).
 src/fixedratio.h      Fixed-ratio sample-rate converter (0.9.4, sinc /
-                      Hermite, exact rational ratio).
+                      Hermite, exact rational ratio; 0.9.10: soxr engine and
+                      the FixedRatioEngine policy).
+src/frsoxr.h          0.9.10: the soxr engine (SoxrCore: look-ahead probe,
+                      warm-up, restart, real-time feeding; ARCHITECTURE.txt
+                      section 60).
 src/sched.h           Timing model of the audio thread (0.9.4): block
                       timestamps, latency formulas, offline simulation.
 src/ratepolicy.h      Sample-rate precedence across resets, instances and
@@ -226,7 +256,9 @@ tests/fixedratio_test.cpp
                       Offline test of the converter (SNR, pass / stop band,
                       CPU), its quality policy and log text (0.9.6: sinc
                       whenever the CPU budget allows) and the scheduling model (10 simulated minutes per
-                      case, measured round trip).
+                      case, measured round trip). 0.9.10: soxr vs sinc vs
+                      Hermite table, soxr latency (measured = reported),
+                      FixedRatioEngine policy, soxr allocation count.
 src/panel_ids.h, src/tips.h
                       Control ids and the help-tip table (0.9.2; checked by
                       tests/strings_test.cpp).
@@ -241,7 +273,13 @@ third_party/asiosdk/  asio.h, asiosys.h, iasiodrv.h, LICENSE.txt (Steinberg
                       (0.9.8: Microsoft's TraceLoggingDynamic.h was evaluated
                       for the tracing and is NOT included: it does not compile
                       with mingw-w64; src/tlg.h implements the documented
-                      format instead. No other third-party source is used.)
+                      format instead.)
+third_party/soxr/     0.9.10: SoX Resampler library 0.1.3 (LGPL-2.1-or-later):
+                      src/ (upstream files used, unchanged), COPYING.LGPL,
+                      LICENCE, AUTHORS, NEWS, and this project's
+                      soxr-config.h, data-io-portable.c, fifo-headroom.c and
+                      README-vendored.txt (origin, file list with SHA-256,
+                      configuration). No other third-party source is used.
 build.sh, build-x86.sh, build-arm64.sh, build-diag.sh, build-test.sh
                       Build scripts (obj/ is a temporary folder).
 installer/WasapiDriver.nsi  NSIS installer script.

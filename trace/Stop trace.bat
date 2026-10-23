@@ -1,7 +1,8 @@
 @echo off
 rem WASAPI Driver for ASIO - stops the diagnostic trace started by "Start trace.bat" and saves it as an .etl file.
 rem SPDX-License-Identifier: GPL-3.0-or-later
-rem The file goes to your Desktop (WasapiDriver-<date>-<time>.etl). Attach it to a GitHub issue (zip it first);
+rem The file goes to the shared folder %PUBLIC%\Documents\WASAPI Driver for ASIO\Traces
+rem (WasapiDriver-<date>-<time>.etl), which is the same for every account. Attach it to a GitHub issue (zip it first);
 rem read the privacy notes in TRACING.txt before sharing it.
 rem Elevation (0.9.8, review R4): "fltmc" succeeds only with administrator rights (it works on every Windows
 rem edition, unlike "net session", which needs the Server service). The elevated copy is started with the marker
@@ -10,19 +11,18 @@ rem Single quotes in paths are doubled for PowerShell's single-quoted strings.
 setlocal
 color E1
 title WASAPI Driver for ASIO - Stop trace
-rem The output folder is decided by the NON-elevated copy (the signed-in user's Desktop, or the user folder) and
-rem passed to the elevated copy as its second argument, because an administrator account used for elevation
-rem has another profile (review R4).
-set "OUTDIR=%USERPROFILE%\Desktop"
-if not exist "%OUTDIR%" set "OUTDIR=%USERPROFILE%"
-set "OUTARG="
-if /i "%~1"=="elevated" if not "%~2"=="" set "OUTDIR=%~2"& set "OUTARG=1"
+rem 0.9.10: the trace is always saved in ONE fixed shared folder, %PUBLIC%\Documents\WASAPI Driver for ASIO\Traces
+rem (normally C:\Users\Public\Documents\...). Earlier versions tried to find "the signed-in user's Desktop", but when
+rem Windows elevates with a DIFFERENT administrator account (standard user + admin credentials at the UAC prompt) the
+rem script runs as that account, and the detection proved unreliable on real systems: the file ended up in the
+rem administrator's profile. %PUBLIC% is identical for every account, readable by all users, and the folder is opened
+rem in Explorer at the end so nobody has to look for the file.
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin
 echo Requesting administrator rights...
 set "SELF=%~f0"
-powershell -NoProfile -Command "Start-Process -FilePath '%SELF:'=''%' -ArgumentList 'elevated', '\"%OUTDIR:'=''%\"' -Verb RunAs"
+powershell -NoProfile -Command "Start-Process -FilePath '%SELF:'=''%' -ArgumentList 'elevated' -Verb RunAs"
 exit /b
 
 :noadmin
@@ -31,17 +31,6 @@ pause
 exit /b 1
 
 :admin
-rem 0.9.9: when this copy already runs elevated without an output folder from a non-elevated copy (for example it
-rem was started from an administrator console that belongs to ANOTHER account), %USERPROFILE% is that account's
-rem profile. Use instead the Desktop of the user signed in to this window session: the owner of explorer.exe in
-rem the same session, its Desktop folder from its "User Shell Folders" (OneDrive / redirected Desktops) or
-rem <profile>\Desktop, falling back to the profile folder. Any failure keeps the previous OUTDIR.
-if defined OUTARG goto :wpr
-set "SESSDESK="
-for /f "delims=" %%d in ('powershell -NoProfile -Command "try { $s=(Get-Process -Id $PID).SessionId; $e=Get-CimInstance Win32_Process -Filter \"Name='explorer.exe' AND SessionId=$s\" | Select-Object -First 1; $sid=(Invoke-CimMethod -InputObject $e -MethodName GetOwnerSid).Sid; $prof=(Get-ItemProperty ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\'+$sid)).ProfileImagePath; $d=(Get-ItemProperty ('Registry::HKEY_USERS\'+$sid+'\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders') -Name Desktop -ErrorAction SilentlyContinue).Desktop; if ($d) { $d=$d -ireplace '%%USERPROFILE%%',$prof } else { $d=Join-Path $prof 'Desktop' }; if (Test-Path -LiteralPath $d) { $d } elseif ($prof -and (Test-Path -LiteralPath $prof)) { $prof } } catch { }"') do set "SESSDESK=%%d"
-if defined SESSDESK set "OUTDIR=%SESSDESK%"
-
-:wpr
 set "WPR=%SystemRoot%\System32\wpr.exe"
 if not exist "%WPR%" set "WPR=%SystemRoot%\Sysnative\wpr.exe"
 if exist "%WPR%" goto :name
@@ -50,10 +39,13 @@ pause
 exit /b 1
 
 :name
+set "OUTDIR=%PUBLIC%\Documents\WASAPI Driver for ASIO\Traces"
+if not defined PUBLIC set "OUTDIR=%SystemDrive%\Users\Public\Documents\WASAPI Driver for ASIO\Traces"
+if not exist "%OUTDIR%" mkdir "%OUTDIR%" >nul 2>&1
+if not exist "%OUTDIR%" set "OUTDIR=%USERPROFILE%"
 set "TS="
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "TS=%%t"
 if not defined TS set "TS=trace"
-if not exist "%OUTDIR%" set "OUTDIR=%USERPROFILE%"
 set "OUT=%OUTDIR%\WasapiDriver-%TS%.etl"
 echo Saving the trace (this can take a minute)...
 "%WPR%" -stop "%OUT%"
@@ -65,7 +57,9 @@ echo Trace saved to this file (full path):
 echo.
 echo     "%OUT%"
 echo.
-echo Zip it and attach it to your GitHub issue. Read TRACING.txt (privacy) before sharing it.
+echo The folder opens now in Explorer. Zip the file and attach it to your GitHub issue.
+echo Read TRACING.txt (privacy) before sharing it.
+start "" explorer.exe /select,"%OUT%"
 pause
 exit /b 0
 

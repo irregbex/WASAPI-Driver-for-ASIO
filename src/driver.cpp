@@ -924,7 +924,7 @@ static bool AnsiLead(unsigned char c) { return IsDBCSLeadByteEx(CP_ACP, c) != 0;
 void WasapiBridge::buildChannelNames() {
     std::vector<std::string> outs, ins;
     auto shortW = [](const std::wstring& n) {        // short form decided on the wide string (ASCII rules)
-        std::string a(n.begin(), n.end());           // only for the generic-word test; real text converted below
+        const std::string a = chn::AsciiShadow(n);   // only for the generic-word test; real text converted below (0.9.10)
         const std::string sh = chn::ShortName(a);
         const size_t pos = a.find(sh);
         return pos == std::string::npos ? n : n.substr(pos, sh.size());
@@ -1198,6 +1198,7 @@ ApplyResult WasapiBridge::applyPanelChanges(const Config& saved) {
         cfg.inputDevice = keep.inputDevice; cfg.loopback = keep.loopback; cfg.loopbackApp = keep.loopbackApp;
         cfg.bufferSize = keep.bufferSize; cfg.sampleRate = keep.sampleRate; cfg.drift = keep.drift;
         cfg.maxChannels = keep.maxChannels; cfg.resampler = keep.resampler; cfg.extraOutputs = keep.extraOutputs;
+        cfg.frEngine = keep.frEngine;                                                          // 0.9.10 RESET key
         cfg.extraInputs = keep.extraInputs; cfg.alignDevices = keep.alignDevices;
         cfg.protectA2dp = keep.protectA2dp; cfg.sampleRateAuto = keep.sampleRateAuto;          // 0.8.0 RESET keys
         cfg.deviceChannelNames = keep.deviceChannelNames;
@@ -1244,6 +1245,7 @@ void WasapiBridge::applySafeSettings() {
     cfg.loopback = LoopbackMode::Off; cfg.loopbackApp.clear();
     cfg.dmEnabled = false; cfg.bufferSize = 512;
     cfg.resampler = ResamplerQ::Hermite;
+    cfg.frEngine = FrEngine::Auto;        // 0.9.10 (review item 8): the 0.9.9 converter (no soxr) in safe mode
 }
 
 // Host thread (F8, "Use my settings again"): clears the marker, reloads config.ini and asks the host to reopen
@@ -2101,11 +2103,14 @@ bool WasapiBridge::openOutput() {
             // output (review fix 2). Quality policy (fixedratio.h Choose): sinc whenever the CPU budget allows, in
             // both directions; above the budget Hermite (rate up) or Windows converts (rate down) (review fixes 4
             // and 7). 0.9.6 (KI-5): independent of ResamplerQuality (that key only selects the drift resampler).
+            // 0.9.10: FixedRatioEngine: Auto (default) / Sinc = the rule above; Soxr (explicit) = soxr when its cost
+            // fits the budget, else the rule above (Describe says why soxr was not used).
             const int convCh = nOut > 0 ? (int)nOut : 1;
+            const fr::Engine pref = (fr::Engine)(int)cfg.frEngine;
             fr::Quality q = fr::Quality::Sinc;
             if (needConv) {
-                q = fr::Choose(rate, mr, convCh, convBudgetLeft);   // R2: the output comes first (full budget)
-                char why[128]; fr::Describe(why, sizeof why, q, rate, mr, convCh, convBudgetLeft);
+                q = fr::Choose(rate, mr, convCh, convBudgetLeft, pref);   // R2: the output comes first (full budget)
+                char why[224]; fr::Describe(why, sizeof why, q, rate, mr, convCh, convBudgetLeft, pref);
                 Log("Output: rate conversion %.0f -> %.0f Hz, %d channels: %s", rate, mr, convCh, why);
             }
             const bool convOk = !needConv || q != fr::Quality::None;
@@ -2162,7 +2167,18 @@ bool WasapiBridge::openOutput() {
                 outDevRate = mr;
                 if (needConv) {
                     outClient->GetBufferSize(&outBufFrames);
-                    outConvOn = outConv.configure(rate, mr, convCh, (size_t)bufSize + 64, outBufFrames + 64, q == fr::Quality::Sinc);
+                    outConvOn = outConv.configure(rate, mr, convCh, (size_t)bufSize + 64, outBufFrames + 64, q);
+                    if (outConvOn && outConv.quality() != q) {
+                        // 0.9.10: soxr refused the pair (not expected); configure() fell back to sinc. Review item 6:
+                        // decide again with the sinc rule and the same budget (sinc may not fit where soxr did).
+                        const fr::Quality fb = fr::FallbackFromSoxr(rate, mr, convCh, convBudgetLeft);
+                        char why[224]; fr::Describe(why, sizeof why, fb, rate, mr, convCh, convBudgetLeft, fr::Engine::Sinc);
+                        Log("Output: soxr not available (%s); instead: %s", outConv.soxrError(), why);
+                        if (fb == fr::Quality::Hermite)
+                            outConvOn = outConv.configure(rate, mr, convCh, (size_t)bufSize + 64, outBufFrames + 64, fb);
+                        else if (fb == fr::Quality::None) outConvOn = false;   // Windows converts (branch below)
+                        q = outConvOn ? outConv.quality() : fb;
+                    }
                     if (!outConvOn) { atMix = outLowLatency = false; engineKind = 0; outDevRate = rate; Log("Output: converter not available"); }
                     else {                                // 0.9.6 (R2): its cost is no longer available to the inputs
                         convBudgetLeft = std::max(0.0, convBudgetLeft - fr::Cost(q, rate, mr, convCh));   // Hermite may exceed it
@@ -2225,8 +2241,12 @@ bool WasapiBridge::openOutput() {
     {
         static const char* kinds[4] = {"Shared (Windows converts the rate)", "Low-latency", "Shared at the mix rate", "Exclusive"};
         char conv[96];
-        if (outConvOn) snprintf(conv, sizeof conv, "internal rate conversion %.0f->%.0f Hz (%s, %d taps)", rate, outDevRate,
-                                outConv.sinc() ? "sinc" : "Hermite", outConv.taps());
+        // 0.9.10: soxr has no tap count to show; its look-ahead (input frames) is what matters for the latency.
+        if (outConvOn && outConv.quality() == fr::Quality::Soxr)
+            snprintf(conv, sizeof conv, "internal rate conversion %.0f->%.0f Hz (%s, look-ahead %d frames)", rate, outDevRate,
+                     outConv.engineName(), outConv.ahead());
+        else if (outConvOn) snprintf(conv, sizeof conv, "internal rate conversion %.0f->%.0f Hz (%s, %d taps)", rate, outDevRate,
+                                     outConv.engineName(), outConv.taps());
         else snprintf(conv, sizeof conv, engineKind == 0 && !outExclusive && fabs(mixRateOpen - rate) >= 0.5 ? "Windows converts %.0f->%.0f Hz" : "no conversion",
                       rate, mixRateOpen);
         snprintf(engineLine, sizeof engineLine, "%s engine period %u frames (%.2f ms) at %.0f Hz; %s", kinds[engineKind], outPeriod,
@@ -2237,6 +2257,7 @@ bool WasapiBridge::openOutput() {
                  wbtrace::F64("DeviceRate", outDevRate), wbtrace::F64("MixRate", mixRateOpen), wbtrace::U32("PeriodFrames", outPeriod),
                  wbtrace::U32("BufferFrames", outBufFrames), wbtrace::U32("QueuedFrames", outFill), wbtrace::U32("StreamLatencyFrames", outStreamLat),
                  wbtrace::Str("Format", b), wbtrace::Bool("Converting", outConvOn), wbtrace::Bool("Sinc", outConvOn && outConv.sinc()),
+                 wbtrace::Str("ConvEngine", outConvOn ? outConv.engineName() : ""),   // 0.9.10: "soxr HQ" / "sinc" / "Hermite"
                  wbtrace::I32("BufferSize", (int32_t)bufSize), wbtrace::Str("EngineLine", engineLine));
     }
 
@@ -2307,11 +2328,12 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         const bool needConv = mix && fabs(mr - rate) >= 0.5;
         // Review fixes 4, 5, 7: the quality is chosen with the real channel count before opening (sinc whenever the
         // CPU budget allows; over the budget Hermite up / Windows converts down). 0.9.6 (KI-5): independent of
-        // ResamplerQuality, like the output.
+        // ResamplerQuality, like the output. 0.9.10: FixedRatioEngine as for the output.
         if (needConv && cfg.lowLatencyShared && !cfg.exclusive) {
             const int convCh = s.asioCount > 0 ? s.asioCount : 1;
-            inQ = fr::Choose(mr, rate, convCh, convBudgetLeft);     // R2: what the output and earlier inputs left
-            char why[128]; fr::Describe(why, sizeof why, inQ, mr, rate, convCh, convBudgetLeft);
+            const fr::Engine pref = (fr::Engine)(int)cfg.frEngine;
+            inQ = fr::Choose(mr, rate, convCh, convBudgetLeft, pref);     // R2: what the output and earlier inputs left
+            char why[224]; fr::Describe(why, sizeof why, inQ, mr, rate, convCh, convBudgetLeft, pref);
             Log("%s: rate conversion %.0f -> %.0f Hz, %d channels: %s", s.tag, mr, rate, convCh, why);
         }
         const bool mixOk = cfg.lowLatencyShared && mix && (!needConv || (!cfg.exclusive && inQ != fr::Quality::None));
@@ -2372,7 +2394,17 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         // callbacks with a fixed delay (exact round trip); on another clock the drift PI follows as before.
         const int ch = s.asioCount > 0 ? s.asioCount : 1;
         const size_t maxOut = (size_t)ceil((double)(s.bufFrames + 64) * rate / s.devRate) + 64;
-        s.convOn = s.conv.configure(s.devRate, rate, ch, (size_t)s.bufFrames + 64, maxOut, inQ == fr::Quality::Sinc);
+        s.convOn = s.conv.configure(s.devRate, rate, ch, (size_t)s.bufFrames + 64, maxOut, inQ);
+        if (s.convOn && s.conv.quality() != inQ) {
+            // 0.9.10: soxr refused the pair (not expected); configure() fell back to sinc. Review item 6: decide
+            // again with the sinc rule and the same remaining budget; None -> Windows converts (branch below).
+            const fr::Quality fb = fr::FallbackFromSoxr(s.devRate, rate, ch, convBudgetLeft);
+            char why[224]; fr::Describe(why, sizeof why, fb, s.devRate, rate, ch, convBudgetLeft, fr::Engine::Sinc);
+            Log("%s: soxr not available (%s); instead: %s", s.tag, s.conv.soxrError(), why);
+            if (fb == fr::Quality::Hermite) s.convOn = s.conv.configure(s.devRate, rate, ch, (size_t)s.bufFrames + 64, maxOut, fb);
+            else if (fb == fr::Quality::None) s.convOn = false;
+            inQ = s.convOn ? s.conv.quality() : fb;
+        }
         if (s.convOn) convBudgetLeft = std::max(0.0, convBudgetLeft - fr::Cost(inQ, s.devRate, rate, ch));   // 0.9.6 (R2)
         if (!s.convOn) {                          // chosen before opening: not expected. Review fix 5: let Windows convert
             Log("%s: converter not available, reopening with Windows conversion", s.tag);
@@ -2398,8 +2430,8 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
             s.exMid = rs.mid; s.exHi = rs.hi;
             s.target = (UINT32)sched::InLatency(s.inDelay, bufSize, aheadOut);
         } else s.target += lookA;
-        Log("%s: internal rate conversion %.0f->%.0f Hz (%s, %d taps)%s, delivery delay %u frames", s.tag, s.devRate, rate,
-            s.conv.sinc() ? "sinc" : "Hermite", s.conv.taps(), s.alignedIn ? ", aligned to the output clock" : ", drift-corrected", s.inDelay);
+        Log("%s: internal rate conversion %.0f->%.0f Hz (%s, look-ahead %d frames)%s, delivery delay %u frames", s.tag, s.devRate, rate,
+            s.conv.engineName(), s.conv.ahead(), s.alignedIn ? ", aligned to the output clock" : ", drift-corrected", s.inDelay);
     }
     char b[32]; FmtStr(s.fmt, b, sizeof b);
     Log("%s open (%s): %s, buffer %u, period %u, FIFO target %u, same hardware as output=%d, drift correction=%d",
@@ -2407,7 +2439,8 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
     WB_TRACE(wbtrace::kLvlInfo, wbtrace::kKwStream, "InputOpen", wbtrace::Str("Source", s.tag), wbtrace::Bool("Exclusive", s.exclusive),
              wbtrace::Str("Format", b), wbtrace::F64("DeviceRate", s.devRate), wbtrace::U32("BufferFrames", s.bufFrames),
              wbtrace::U32("PeriodFrames", capPeriod), wbtrace::U32("TargetFrames", s.target), wbtrace::Bool("SameHardware", sameBox),
-             wbtrace::Bool("DriftCorrection", s.resample), wbtrace::Bool("Converting", s.convOn), wbtrace::Bool("AlignedToOutput", s.alignedIn));
+             wbtrace::Bool("DriftCorrection", s.resample), wbtrace::Bool("Converting", s.convOn), wbtrace::Bool("AlignedToOutput", s.alignedIn),
+             wbtrace::Str("ConvEngine", s.convOn ? s.conv.engineName() : ""));   // 0.9.10
 }
 
 // Host thread. Opens the Loopback source (last two ASIO inputs). All: classic loopback of the output endpoint.
@@ -2592,6 +2625,10 @@ void WasapiBridge::closeStreams() {
     closeSource(srcLb);
     for (int k = 0; k < kMaxExtra; ++k) { closeSource(srcEx[k]); closeSink(sinks[k]); }
     outBufFrames = outPeriod = outStreamLat = outFill = outPeriodAsio = 0;
+    // 0.9.10: a soxr frame promised by the look-ahead but not produced would have been played as silence; the tests
+    // never see one, so any count here is worth a line in the log.
+    if (outConvOn && outConv.soxrShortfalls()) Log("Output: soxr missed %llu promised frames (played as silence)",
+                                                   (unsigned long long)outConv.soxrShortfalls());
     outConvOn = false; outDevRate = rate; engineKind = 0; engineLine[0] = 0; monPath = 0;   // 0.9.4
     aligned = false; primDelayFrames = 0;
     if (streamsOpen) { Log("Streams closed"); WB_TRACE(wbtrace::kLvlInfo, wbtrace::kKwStream, "StreamsClosed", wbtrace::U32("Generation", streamGen)); }
@@ -2771,6 +2808,7 @@ void WasapiBridge::getStatus(StatusInfo& s) {
     s.engineKind = streamsOpen ? engineKind : -1; s.outDevRate = outDevRate; s.mixRate = mixRateOpen;
     s.outConv = streamsOpen && outConvOn;
     s.monAvail = streamsOpen && srcIn.cap ? (monPath != 0 ? 1 : 0) : -1; s.convSinc = outConvOn && outConv.sinc();
+    s.convSoxr = outConvOn && outConv.quality() == fr::Quality::Soxr;     // 0.9.10
     latenciesNow(s.inLat, s.outLat);         // 0.9.8: internal form (no host pointer, no trace)
     s.nIn = nIn; s.nOut = nOut;
     s.outGlitches = cntOutGlitch; s.timeouts = cntTimeouts;

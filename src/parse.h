@@ -92,6 +92,10 @@ inline const wchar_t* LbStr(LoopbackMode m) {
     return m == LoopbackMode::ExcludeDaw ? L"ExcludeDaw" : m == LoopbackMode::All ? L"All" : m == LoopbackMode::App ? L"App" : L"Off";
 }
 inline const wchar_t* DriftStr(DriftMode d) { return d == DriftMode::On ? L"On" : d == DriftMode::Off ? L"Off" : L"Auto"; }
+// 0.9.10: FixedRatioEngine values (the order of FrEngine).
+inline const wchar_t* FrEngineStr(FrEngine e) {
+    return e == FrEngine::Soxr ? L"Soxr" : e == FrEngine::Sinc ? L"Sinc" : e == FrEngine::Hermite ? L"Hermite" : L"Auto";
+}
 
 // Integer parse clamped into int (wcstol returns a long, which is 64 bits on Linux and 32 bits on Windows; the
 // clamp makes both platforms give the same, defined result for out-of-range text).
@@ -147,6 +151,11 @@ inline void ReadSectionWith(Config& c, Get get) {
     c.dither           = get(L"Dither", c.dither ? L"1" : L"0") != L"0";
     c.resampler        = EqI(get(L"ResamplerQuality", c.resampler == ResamplerQ::Sinc ? L"Sinc" : L"Hermite"), L"Sinc")
                          ? ResamplerQ::Sinc : ResamplerQ::Hermite;
+    {   // 0.9.10: unknown text keeps the current value (like a missing key)
+        const std::wstring fe = get(L"FixedRatioEngine", FrEngineStr(c.frEngine));
+        c.frEngine = EqI(fe, L"Auto") ? FrEngine::Auto : EqI(fe, L"Soxr") ? FrEngine::Soxr
+                   : EqI(fe, L"Sinc") ? FrEngine::Sinc : EqI(fe, L"Hermite") ? FrEngine::Hermite : c.frEngine;
+    }
     c.extraOutputs     = SplitList(get(L"ExtraOutputs", JoinList(c.extraOutputs).c_str()));
     c.extraInputs      = SplitList(get(L"ExtraInputs", JoinList(c.extraInputs).c_str()));
     c.outputMap        = get(L"OutputMap", c.outputMap.c_str());
