@@ -41,9 +41,13 @@ screen recordings go silent.
 **WASAPI Driver for ASIO** runs in **Shared mode by default**: your DAW and the rest of Windows play through the same
 headphones or speakers at the same time. When you need the lowest latency, switch to **Exclusive** mode in one click.
 
+It can also **follow the Windows default output**: switch from speakers to headphones in Windows and the DAW follows.
+Put your Bluetooth headphones in their case and the sound moves to the next device; take them out and it comes back by
+itself - no need to open any settings again.
+
 ## Features
 
-| | |
+| Feature | Details |
 |---|---|
 | **Modern Windows audio** | WASAPI with the low-latency `IAudioClient3` engine at the device's native rate (typically 10 ms periods) |
 | **Shared or Exclusive** | Shared by default (everything keeps playing); Exclusive for minimum latency |
@@ -83,7 +87,7 @@ which Steinberg no longer develops.
 > | Italian | Driver ASIO generico a bassa latenza - versione 1.0.9.26 | **old name** |
 > | Japanese | 共通低レイテンシー ASIO ドライバ：Vers. 1.0.9.26 | **old name** |
 
-| | Generic Low Latency ASIO Driver (discontinued) | Steinberg built-in ASIO Driver 1.0.9 (18 Dec 2024) | **WASAPI Driver for ASIO** |
+| Feature | Generic Low Latency ASIO Driver (discontinued) | Steinberg built-in ASIO Driver 1.0.9 (18 Dec 2024) | **WASAPI Driver for ASIO** |
 |---|---|---|---|
 | Other apps while the DAW is open | Exclusive in our tests: other apps went silent | Shared in our tests: other apps kept playing | **Shared by default**, Exclusive optional |
 | Sample-rate conversion | - | Automatic (soxr library) | Automatic (built-in 128-tap sinc) |
@@ -97,7 +101,8 @@ which Steinberg no longer develops.
 
 Steinberg's drivers have years of use on many machines; this driver is a public beta. The built-in driver column is based on
 version 1.0.9.26 (x64), Steinberg's published information and our own tests; "-" means we found no such feature.
-Both drivers are products of Steinberg Media Technologies GmbH; this project is not affiliated with Steinberg.
+The Generic Low Latency ASIO Driver and the Steinberg built-in ASIO Driver are products of Steinberg Media Technologies GmbH.
+WASAPI Driver for ASIO is an independent open-source project, not affiliated with or endorsed by Steinberg.
 
 ## Install
 
