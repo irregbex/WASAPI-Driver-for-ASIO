@@ -14,6 +14,10 @@ UNDER INVESTIGATION, OPEN (driver bug, fix pending).
 KI-1  Opening DaVinci Resolve cuts all Windows audio (YouTube, recordings)
 ---------------------------------------------------------------------------
 Status: CONFIRMED - caused by another ASIO driver, not by this driver.
+Note (2026-10): this was the OLD "Generic Low Latency ASIO Driver" (asioglld.dll). Steinberg's
+current "Steinberg built-in ASIO Driver" (asiobtin.dll, 1.0.9 of 18 December 2024) is a different driver; in our test it
+ran in shared mode and other apps kept playing. Its panel still shows the old name in some
+languages (see FAQ.txt question 19).
 
 Symptom
   - Audio playing in other apps (e.g. YouTube in a browser) stops the moment

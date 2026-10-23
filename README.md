@@ -34,8 +34,9 @@
 
 ## Why this driver
 
-Most DAWs talk to audio hardware through **ASIO**. Without an audio interface you are usually left with a driver that
-takes the sound device **exclusively**: while the DAW is open, YouTube, calls, system sounds and screen recordings go silent.
+Most DAWs talk to audio hardware through **ASIO**. Without an audio interface, Windows users usually rely on a generic
+driver. Some of them take the sound device **exclusively**: while the DAW is open, YouTube, calls, system sounds and
+screen recordings go silent.
 
 **WASAPI Driver for ASIO** runs in **Shared mode by default**: your DAW and the rest of Windows play through the same
 headphones or speakers at the same time. When you need the lowest latency, switch to **Exclusive** mode in one click.
@@ -55,22 +56,48 @@ headphones or speakers at the same time. When you need the lowest latency, switc
 | **Troubleshooting** | Log file, Diagnostics tool, automatic ASIO host test, TraceLogging provider with a ready-made `.wprp` profile |
 | **Privacy** | No telemetry. The optional update check is off by default ([PRIVACY.txt](PRIVACY.txt)) |
 
-## Compared with the "Generic Low Latency ASIO Driver"
+## Compared with Steinberg's generic drivers
 
-Cubase and Nuendo install Steinberg's *Generic Low Latency ASIO Driver*, a good compact fallback. This driver takes a different approach:
+Cubase, Nuendo and other Steinberg products install a generic driver for computers without an audio interface:
+the current **Steinberg built-in ASIO Driver** or, on older installations, the **Generic Low Latency ASIO Driver**,
+which Steinberg no longer develops.
 
-| | Generic Low Latency ASIO Driver | **WASAPI Driver for ASIO** |
+**Steinberg built-in ASIO Driver - release history** (Steinberg release notes):
+
+| Version | Date | Change |
 |---|---|---|
-| Other apps while the DAW is open | Exclusive: other apps go silent | **Shared by default**, Exclusive optional |
-| Sample-rate conversion | soxr library | Built-in 128-tap sinc |
-| Bluetooth | No special handling | Detection, buffer advice, latency offsets |
-| Several devices | Port list | Up to 3 extra devices, drift correction, routing, app loopback |
-| Windows on Arm | x64 only | x64, x86, ARM64, **Arm64X** |
-| Diagnostics | - | Log, diagnostics, host test, TraceLogging |
-| Source code | Closed | **Open (GPL-3.0)** |
+| 1.0.7 | July 2023 | First release (with WaveLab Cast 2) |
+| 1.0.8 | 24 October 2024 | Windows 11 on Arm (preview) |
+| **1.0.9** | **18 December 2024** | Unified installer. **Latest version** as of October 2026 (file version 1.0.9.26) |
 
-The Generic driver has years of use on many machines; this driver is a public beta. Comparison with version 1.0.9.26 (x64).
-The Generic Low Latency ASIO Driver is a product of Steinberg Media Technologies GmbH; this project is not affiliated with Steinberg.
+> [!IMPORTANT]
+> **Same driver, two names.** The built-in driver's control panel still shows the **old name** in some languages,
+> so it is easy to mistake it for the discontinued Generic driver. Check the version in the title: **1.0.9.x = built-in**.
+>
+> | Language | Title of the built-in driver's panel (1.0.9.26) | Name |
+> |---|---|---|
+> | English | Steinberg built-in ASIO Driver - Version 1.0.9.26 | correct |
+> | German | Steinberg eingebauter ASIO-Treiber - Version 1.0.9.26 | correct |
+> | Spanish | Controlador Genérico ASIO de Baja Latencia - Version 1.0.9.26 | **old name** |
+> | French | Pilote ASIO générique à faible Latence - Version 1.0.9.26 | **old name** |
+> | Italian | Driver ASIO generico a bassa latenza - versione 1.0.9.26 | **old name** |
+> | Japanese | 共通低レイテンシー ASIO ドライバ：Vers. 1.0.9.26 | **old name** |
+
+| | Generic Low Latency ASIO Driver (discontinued) | Steinberg built-in ASIO Driver 1.0.9 (18 Dec 2024) | **WASAPI Driver for ASIO** |
+|---|---|---|---|
+| Other apps while the DAW is open | Exclusive in our tests: other apps went silent | Shared in our tests: other apps kept playing | **Shared by default**, Exclusive optional |
+| Sample-rate conversion | - | Automatic (soxr library) | Automatic (built-in 128-tap sinc) |
+| Follows the Windows default output | - | No: a device must be picked in its port list (Bluetooth only while already connected) | **Yes**: "(Windows default)" follows Windows, e.g. headphones on/off |
+| Bluetooth | No special handling | Works when picked directly; after the headphones disconnect the selection is lost and must be set again in the panel | Detection, buffer advice, latency offsets; output moves to the next device and comes back by itself on reconnect |
+| Several devices | Port list | Port list | Up to 3 extra devices with drift correction, routing, app loopback |
+| Windows on Arm | - | Windows 11 on Arm (preview, per Steinberg) | ARM64 and **Arm64X** (one DLL for ARM64 and emulated x64 hosts) |
+| 32-bit hosts | - | Not available | x86 DLL included |
+| Diagnostics | - | - | Log, diagnostics tool, host test, TraceLogging |
+| Source code | Closed | Closed | **Open (GPL-3.0)** |
+
+Steinberg's drivers have years of use on many machines; this driver is a public beta. The built-in driver column is based on
+version 1.0.9.26 (x64), Steinberg's published information and our own tests; "-" means we found no such feature.
+Both drivers are products of Steinberg Media Technologies GmbH; this project is not affiliated with Steinberg.
 
 ## Install
 

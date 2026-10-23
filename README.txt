@@ -21,39 +21,58 @@ Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
 Source code and problem reports: https://github.com/irregbex/WASAPI-Driver-for-ASIO
   (Issues > New issue; security problems privately as described in SECURITY.txt).
 
-WHY USE IT - COMPARED WITH STEINBERG'S "GENERIC LOW LATENCY ASIO DRIVER"
------------------------------------------------------------------------
-Cubase and Nuendo install Steinberg's "Generic Low Latency ASIO Driver" (asiobtin.dll) for computers without
-an audio interface. It is a good, compact fallback. This driver aims at the same job with a different design:
+WHY USE IT - COMPARED WITH STEINBERG'S GENERIC DRIVERS
+------------------------------------------------------
+Steinberg products install a generic ASIO driver for computers without an audio interface: the current
+"Steinberg built-in ASIO Driver" or, on older installations, the "Generic Low Latency ASIO Driver", which
+Steinberg no longer develops (Steinberg Help Center, "Steinberg built-in ASIO Driver: information &
+download").
 
-                              Generic Low Latency ASIO Driver      WASAPI Driver for ASIO
-  Other apps while the DAW    Opens the device in Exclusive mode:  Shared mode by default: YouTube, calls,
-  is open                     other apps go silent or stop         system sounds and screen recording keep
-                              (screen recorders, browsers)         working. Exclusive mode is an option.
-  Engine                      WASAPI, IAudioClient3                WASAPI, IAudioClient3 (10 ms periods)
-  Sample-rate conversion      soxr library                         Built-in 128-tap sinc (Hermite fallback)
-  Bluetooth headphones        No detection or latency help         Detects Bluetooth, recommends a buffer,
-                                                                   latency offsets; survives the headphones
-                                                                   going into their case and coming back
-  Several devices at once     Port list with check boxes           Main device + up to 3 extra devices with
-                                                                   clock-drift correction, routing, loopback
-                                                                   of one application
-  Windows on Arm              x64 only                             x64, x86, ARM64 and Arm64X (one DLL for
-                                                                   native ARM64 and emulated x64 hosts)
-  Control panel               Port list and sample rate            Meters, DSP load, profiles, per-program
-                                                                   profiles, floating monitor, tray icon,
-                                                                   themes, 5 languages, help tips
-  Troubleshooting             -                                    Log, Diagnostics tool, automatic ASIO host
-                                                                   test, TraceLogging + .wprp profile
-  Extras                      -                                    Output limiter, dither, direct monitoring
-  Source code                 Closed                               Open (GPL-3.0), tests and reviews public
+Steinberg built-in ASIO Driver - release history (Steinberg release notes):
+  1.0.7   July 2023          first release (with WaveLab Cast 2)
+  1.0.8   24 October 2024    Windows 11 on Arm (preview)
+  1.0.9   18 December 2024   unified installer; LATEST version as of October 2026 (file version 1.0.9.26)
 
-In short: use it when you want your DAW and the rest of Windows to share the same headphones or speakers,
-when you use Bluetooth, or when you are on Windows on Arm. The Generic driver remains a solid choice when
-you want Exclusive mode with no setup at all, and it has years of use on many machines; this driver is a
-public beta. (Comparison made with Generic Low Latency ASIO Driver 1.0.9.26 for x64 and our own tests;
-the Generic Low Latency ASIO Driver is a product of Steinberg Media Technologies GmbH; ASIO is a
-registered trademark of Steinberg Media Technologies GmbH. This project is not affiliated with Steinberg.)
+Same driver, two names: the built-in driver's control panel still shows the OLD name in some languages, so it
+is easy to mistake it for the discontinued Generic driver. Check the version in the title (1.0.9.x = built-in).
+Panel titles found in version 1.0.9.26:
+  English    "Steinberg built-in ASIO Driver - Version"                 correct name
+  German     "Steinberg eingebauter ASIO-Treiber - Version"             correct name
+  Spanish    "Controlador Generico ASIO de Baja Latencia - Version"     OLD name
+  French     "Pilote ASIO generique a faible Latence - Version"         OLD name
+  Italian    "Driver ASIO generico a bassa latenza - versione"          OLD name
+  Japanese   "Common low latency ASIO driver" (in Japanese)             OLD name
+  (Spanish/French accents omitted in this ASCII file.)
+
+                       Generic Low Latency    Steinberg built-in 1.0.9   WASAPI Driver for ASIO
+                       (discontinued)         (18 December 2024)
+  Other apps while     Exclusive in our       Shared in our tests:       Shared by default; Exclusive
+  the DAW is open      tests: other apps      other apps kept playing    optional
+                       went silent (KI-1)
+  Sample-rate          -                      Automatic (soxr)           Automatic (128-tap sinc)
+  conversion
+  Follows the Windows  -                      No: a device must be       Yes: "(Windows default)"
+  default output                              picked in its port list    follows Windows (e.g.
+                                              (Bluetooth only while      headphones on/off, in the
+                                              already connected)         case and back)
+  Bluetooth            No special handling    Works when picked          Detection, buffer advice,
+                                              directly; after the        latency offsets; output
+                                              headphones disconnect      moves to the next device
+                                              the selection is lost      and comes back by itself
+                                              and must be set again      on reconnect
+  Several devices      Port list              Port list                  Up to 3 extra devices, drift
+                                                                         correction, routing, app loopback
+  Windows on Arm       -                      Windows 11 on Arm          ARM64 and Arm64X (one DLL for
+                                              (preview, per Steinberg)   ARM64 and emulated x64 hosts)
+  32-bit hosts         -                      Not available              x86 DLL included
+  Diagnostics          -                      -                          Log, Diagnostics, host test,
+                                                                         TraceLogging + .wprp
+  Source code          Closed                 Closed                     Open (GPL-3.0)
+
+Steinberg's drivers have years of use on many machines; this driver is a public beta. The built-in driver
+column is based on version 1.0.9.26 (x64), Steinberg's published information and our own tests; "-" means we
+found no such feature. Both drivers are products of Steinberg Media Technologies GmbH; ASIO is a registered
+trademark of Steinberg Media Technologies GmbH. This project is not affiliated with Steinberg.
 
 Code signing policy: CODE-SIGNING-POLICY.txt (signing via SignPath Foundation applied for; current beta
 builds are not signed yet). Privacy: PRIVACY.txt (no telemetry; optional update check, off by default).

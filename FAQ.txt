@@ -147,3 +147,26 @@ See also QUICK-START.txt and README.txt (section numbers below).
     says it was built without the Arm64X DLL, the Setup asks instead
     whether your DAW is native ARM64 or x64, as in 0.9.8 (only that kind of
     DAW sees the driver then).
+
+19. How is this different from Steinberg's generic drivers?
+    Steinberg ships two: the old "Generic Low Latency ASIO Driver" (no longer
+    developed) and the current "Steinberg built-in ASIO Driver". Built-in
+    versions: 1.0.7 (July 2023), 1.0.8 (24 October 2024, Windows 11 on Arm
+    preview), 1.0.9 (18 December 2024, file version 1.0.9.26), the latest as
+    of October 2026. Its control panel still shows the OLD name in Spanish
+    ("Controlador Generico ASIO de Baja Latencia"), French ("Pilote ASIO
+    generique a faible Latence"), Italian ("Driver ASIO generico a bassa
+    latenza") and Japanese; English and German show the new name. Check the
+    version in the title: 1.0.9.x = built-in. In our tests:
+      - The old Generic driver opens the device exclusively: other apps go
+        silent (KNOWN-ISSUES.txt KI-1).
+      - The built-in driver is shared (other apps keep playing), but only on
+        devices you tick in its port list: it does not follow the Windows
+        default output, Bluetooth headphones must already be connected when
+        you select them, and after they disconnect the selection is lost and
+        must be set again.
+      - This driver is shared by default (Exclusive optional), can follow the
+        Windows default output ("(Windows default)"), moves to the next device
+        when headphones disconnect and comes back by itself.
+    Full table: README.txt, "WHY USE IT". If a Steinberg driver works for you,
+    there is no need to switch.
