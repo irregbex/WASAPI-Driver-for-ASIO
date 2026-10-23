@@ -21,6 +21,40 @@ Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
 Source code and problem reports: https://github.com/irregbex/WASAPI-Driver-for-ASIO
   (Issues > New issue; security problems privately as described in SECURITY.txt).
 
+WHY USE IT - COMPARED WITH STEINBERG'S "GENERIC LOW LATENCY ASIO DRIVER"
+-----------------------------------------------------------------------
+Cubase and Nuendo install Steinberg's "Generic Low Latency ASIO Driver" (asiobtin.dll) for computers without
+an audio interface. It is a good, compact fallback. This driver aims at the same job with a different design:
+
+                              Generic Low Latency ASIO Driver      WASAPI Driver for ASIO
+  Other apps while the DAW    Opens the device in Exclusive mode:  Shared mode by default: YouTube, calls,
+  is open                     other apps go silent or stop         system sounds and screen recording keep
+                              (screen recorders, browsers)         working. Exclusive mode is an option.
+  Engine                      WASAPI, IAudioClient3                WASAPI, IAudioClient3 (10 ms periods)
+  Sample-rate conversion      soxr library                         Built-in 128-tap sinc (Hermite fallback)
+  Bluetooth headphones        No detection or latency help         Detects Bluetooth, recommends a buffer,
+                                                                   latency offsets; survives the headphones
+                                                                   going into their case and coming back
+  Several devices at once     Port list with check boxes           Main device + up to 3 extra devices with
+                                                                   clock-drift correction, routing, loopback
+                                                                   of one application
+  Windows on Arm              x64 only                             x64, x86, ARM64 and Arm64X (one DLL for
+                                                                   native ARM64 and emulated x64 hosts)
+  Control panel               Port list and sample rate            Meters, DSP load, profiles, per-program
+                                                                   profiles, floating monitor, tray icon,
+                                                                   themes, 5 languages, help tips
+  Troubleshooting             -                                    Log, Diagnostics tool, automatic ASIO host
+                                                                   test, TraceLogging + .wprp profile
+  Extras                      -                                    Output limiter, dither, direct monitoring
+  Source code                 Closed                               Open (GPL-3.0), tests and reviews public
+
+In short: use it when you want your DAW and the rest of Windows to share the same headphones or speakers,
+when you use Bluetooth, or when you are on Windows on Arm. The Generic driver remains a solid choice when
+you want Exclusive mode with no setup at all, and it has years of use on many machines; this driver is a
+public beta. (Comparison made with Generic Low Latency ASIO Driver 1.0.9.26 for x64 and our own tests;
+the Generic Low Latency ASIO Driver is a product of Steinberg Media Technologies GmbH; ASIO is a
+registered trademark of Steinberg Media Technologies GmbH. This project is not affiliated with Steinberg.)
+
 Code signing policy: CODE-SIGNING-POLICY.txt (signing via SignPath Foundation applied for; current beta
 builds are not signed yet). Privacy: PRIVACY.txt (no telemetry; optional update check, off by default).
 
