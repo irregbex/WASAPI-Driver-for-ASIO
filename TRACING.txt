@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.12 - Diagnostic tracing (ETW / Windows Performance Recorder)
+WASAPI Driver for ASIO(R) 0.9.13 - Diagnostic tracing (ETW / Windows Performance Recorder)
 ==========================================================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -97,7 +97,8 @@ Events (all on non-real-time threads; the audio thread never writes one):
                       CaptureEmptyPulls, CaptureMultiPacketPulls,
                       CaptureMaxPacket, CaptureMaxPerWake, CaptureMaxFifoFill;
                       ARCHITECTURE.txt section 61); 0.9.12: CaptureFifoFillNow,
-                      WakeGapMaxUs, CaptureReadGapMaxUs (section 64)
+                      WakeGapMaxUs, CaptureReadGapMaxUs (section 64); 0.9.13:
+                      CaptureGated, CaptureClockFallback (section 65)
   Crash protection    CrashProtectionInstalled, SafeMode, CrashMarkerCleared,
                       CrashDump (exception code and offset only)
   Panel and updates   PanelOpen / PanelClose / PanelApply, UpdateCheck /

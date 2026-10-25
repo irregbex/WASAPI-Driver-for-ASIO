@@ -126,18 +126,21 @@ int main() {
     small.u64("v", 1);
     Check(!small.finish(), "a value that no longer fits makes the event invalid");
     // 0.9.12: the "Stats" event of driver.cpp (onStatsTimer) must fit the 512-byte metadata buffer of Write(); its
-    // field names are repeated here (keep in sync when a counter is added: 25 fields, about 440 bytes today).
+    // field names are repeated here (keep in sync when a counter is added: 27 fields since 0.9.13, about 480 bytes).
     {
         static const char* statsFields[] = {"Running", "BufferSwitches", "OutputGlitches", "WaitTimeouts", "InputUnderruns", "InputDrops",
             "InputGlitches", "LoopbackUnderruns", "ExtraInputUnderruns", "ExtraInputDrops", "ExtraOutputUnderflows", "ExtraOutputOverflows",
             "DspLoadPct", "DspLoadMaxPct", "InputDriftPpm", "MonitorUnderruns", "CapturePulls", "CaptureEmptyPulls", "CaptureMultiPacketPulls",
-            "CaptureMaxPacket", "CaptureMaxPerWake", "CaptureMaxFifoFill", "CaptureFifoFillNow", "WakeGapMaxUs", "CaptureReadGapMaxUs"};
+            "CaptureMaxPacket", "CaptureMaxPerWake", "CaptureMaxFifoFill", "CaptureFifoFillNow", "WakeGapMaxUs", "CaptureReadGapMaxUs",
+            "CaptureGated", "CaptureClockFallback"};   // 0.9.13
         tlg::Event<512, 1024> st("Stats");
         st.boolean(statsFields[0], true); st.u64(statsFields[1], 1);
         for (size_t i = 2; i < sizeof statsFields / sizeof statsFields[0]; ++i) {
-            if (i == 12 || i == 13 || i == 14) st.f64(statsFields[i], 1.0); else st.u32(statsFields[i], 1);
+            if (i == 12 || i == 13 || i == 14) st.f64(statsFields[i], 1.0);
+            else if (i == 26) st.boolean(statsFields[i], true);
+            else st.u32(statsFields[i], 1);
         }
-        Check(st.finish() && st.metaSize() <= 512, "the Stats event (25 fields) fits the 512-byte metadata buffer");
+        Check(st.finish() && st.metaSize() <= 512, "the Stats event (27 fields) fits the 512-byte metadata buffer");
     }
     // The level / keyword constants used by the .wprp and TRACING.txt
     Check(wbtrace::kLvlVerbose == 5 && wbtrace::kLvlInfo == 4 && wbtrace::kKwStats == 0x40 && wbtrace::kKwUpdate == 0x200, "levels and keywords");

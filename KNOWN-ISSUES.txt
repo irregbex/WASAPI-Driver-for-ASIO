@@ -316,8 +316,10 @@ What to do
 
 KI-11 Input underruns and discontinuities in Shared mode at a 256 buffer (0.9.10)
 --------------------------------------------------------------------------------
-Status: FIXED (0.9.12), to be confirmed by TEST-GUIDE.txt block AB on real
-hardware. History: 0.9.11 fixed buffer 256 (0 / 0 / 0 after 70 s where
+Status: FIXED (0.9.12), CONFIRMED on 2026-10-25 by TEST-GUIDE.txt block AB
+on the same system: Shared 256 and Shared 512 both 0 underruns / 0 drops /
+0 discontinuities after 50-85 s, longest interval between wake-ups
+11.5 ms (the audio thread was never late). History: 0.9.11 fixed buffer 256 (0 / 0 / 0 after 70 s where
 0.9.10 counted 8 underruns / 27 discontinuities) but buffer 512 on the
 same system (Yamaha Steinberg USB Driver, 44.1 kHz, no conversion) then
 counted 22 underruns / 46 discontinuities in ~85 s: "max per wake 970" =
@@ -417,9 +419,39 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
-Status: FIXED (0.9.12), to be confirmed by TEST-GUIDE.txt block AB on real
+Status: FIXED (0.9.13), to be confirmed by TEST-GUIDE.txt block AB on real
 hardware. NOT fixed by 0.9.11 (the limit change only moved the drop
-point); cause identified on 2026-10-25 with the 0.9.11 counters.
+point) and NOT fixed by 0.9.12 on the tested interface (the event-driven
+capture made the mechanism visible but did not change it, see "What
+0.9.12 showed" below); cause identified on 2026-10-25 with the counters.
+What 0.9.12 showed (block AB, Exclusive, event-driven capture, Yamaha
+Steinberg USB Driver, 44.1 kHz, no conversion, nothing plugged in):
+  - buffer 256, capture period 441 (device default): drops 427,
+    discontinuities 13, underruns 0 in ~42 s; "Capture: pulls 7255 (empty
+    3, multi-packet 13), max packet 441, max per wake 882, max FIFO fill
+    4795 (now 3984), max gap: wake 11.5 ms, read 19.8 ms". 7255 drains in
+    ~42 s = 172 per second = the rate of the 256-frame OUTPUT wake-ups, and
+    every drain found a full 441-frame packet: 1.73 times real time.
+  - buffer 512, capture period 882 (2 x default, the 0.9.12 rule): drops 0,
+    discontinuities 0, underruns 0 in ~44 s; pulls 2180 = about 50 per
+    second = one per 882-frame period, packets of 882; reported input
+    latency 63.22 ms (too much, see the 0.9.13 period rule).
+  Reading: with this driver neither the capture event nor
+  GetNextPacketSize marks a real period; whenever the thread asks, the
+  driver hands over "one full period", and the event fires at the output
+  period. Only the stream's IAudioClock position advanced at real time.
+Fix (0.9.13, "capture gate", ARCHITECTURE.txt section 65): an Exclusive
+capture is drained only when the stream's own clock (IAudioClock of the
+capture client) says a whole new period exists since the frames already
+accepted, and never more than that: exactly one period per period,
+whatever the driver offers and however often the thread asks. Without a
+usable clock (missing, failing, or frozen for 20 drains) the gate runs on
+the system timer (QueryPerformanceCounter credit; "clock=qpc" in the stop
+line of the log, capClockFallback in the Stats event). The Capture line
+ends with ", gated N" = the drains refused by the gate (expected: about
+72 per second at Exclusive 256 on this interface). The capture period is
+now the smallest multiple of the device default that is >= HALF the ASIO
+buffer (441 at 512, reported input latency about 41 ms).
 What 0.9.11 showed (new "Capture:" counters, Exclusive 256, Yamaha
 Steinberg USB Driver, 44.1 kHz): the capture client delivers a packet of
 512 frames (up to 1024) in EVERY wake of the 256-frame output period
@@ -487,3 +519,19 @@ Fix (0.9.11)
 Workaround on 0.9.10: buffer 512 or larger when recording in Exclusive
 mode.
 
+Observations recorded with 0.9.12 (not issues yet; see ROADMAP.txt)
+--------------------------------------------------------------------
+- Shared, buffer 256, UR22mkII: "Output glitches: 2" after ~50 s although
+  the longest interval between wake-ups was 11.3 ms (the audio thread was
+  never late) and the inputs were clean. Most likely counted while the
+  engine restarted after "Apply" (the Shared glitch test is "padding 0
+  with headroom" and the first wake-ups after a restart can show it); to
+  be checked in 0.9.14 (skip the glitch test for the first wake-ups of a
+  run, as the Exclusive test already does).
+- Shared, buffer 512: "max FIFO fill 2790 (now 2602)" while the reported
+  input latency was 41.6 ms (1835 frames): the plain copy path keeps the
+  backlog it once received (a late start of the capture, a late wake-up)
+  and never trims it, so the real input latency exceeded the reported one
+  by about 17 ms until the next restart. 0.9.14: re-centre the plain FIFO
+  without discarding audio (a slow trim of one frame per block while the
+  fill stays above the set point).

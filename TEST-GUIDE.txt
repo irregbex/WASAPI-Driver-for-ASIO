@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.12 (public beta) - Test guide
+WASAPI Driver for ASIO 0.9.13 (public beta) - Test guide
 ========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -901,7 +901,7 @@ saved in the Public folder. Regression on 0.9.10 (blocks C and W):
 Bluetooth case on/off without a dialog, buffer 256 -> 512 -> 256 with 0
 glitches, sleep / resume with the engine reopened by itself.
 
-Block AB - 0.9.11 / 0.9.12 recording with an audio interface that has inputs
+Block AB - 0.9.11 / 0.9.12 / 0.9.13 recording with an audio interface that has inputs
 ---------------------------------------------------------------------------
 Why: playback-only tests cannot show the input path. 0.9.10 passed every
 playback test and failed this block at a 256 buffer in both modes
@@ -971,14 +971,44 @@ selected, nothing plugged in, playback only; counters after 50-85 s):
 
 AB6 Monitoring (optional): Direct monitoring on in the panel while
     recording.  OK = the input is heard without clicks in both modes.
-AB7 (0.9.12) In every "Copy status" of AB1-AB4 the Capture line ends with
-    "max FIFO fill F (now N) frames, max gap: wake X ms, read Y ms" and,
-    in Exclusive mode, the Input line reads "[... event-driven, period
-    P]" with P the device's default period (441 or 480 at 44.1 / 48 kHz
-    with most drivers) or its smallest multiple that holds the ASIO
-    buffer (882 at buffer 512 with a 441-frame default; the log: "Input
-    open (Exclusive, event-driven): ..., period P (device default | K x
-    device default | aligned by the device)").  OK = N stays near bufSize + target
+Results of 0.9.12 on the same system (2026-10-25, Yamaha Steinberg USB
+Driver, device and project at 44.1 kHz, no conversion, nothing plugged
+in, playback only, 30 s plus):
+  Shared 256:    0 / 0 / 0; max gap wake 11.3 ms, read 11.3 ms; "max FIFO
+                 fill 2446 (now 1798)"; Output glitches 2 (see
+                 KNOWN-ISSUES.txt, observations).               -> OK
+  Shared 512:    0 / 0 / 0 (0.9.11: 22 / 46); max gap 11.5 ms; "max FIFO
+                 fill 2790 (now 2602)" (backlog, see observations). -> OK
+                 KI-11 CONFIRMED FIXED.
+  Exclusive 256: event-driven, period 441: drops 427, discontinuities 13,
+                 underruns 0 in ~42 s; pulls 7255 (empty 3) = 172 per
+                 second = the output wake-up rate, every drain with a full
+                 441-frame packet (1.73 x real time); max gap read 19.8
+                 ms.                                             -> FAIL
+                 (KI-13 not fixed by the event-driven capture; cause
+                 identified: the driver hands over a period at every
+                 drain; 0.9.13 gates the drain by the stream clock)
+  Exclusive 512: period 882: 0 / 0 / 0 in ~44 s; pulls 2180 = 50 per
+                 second = one per period; reported input latency 63.22 ms
+                 (0.9.13 period rule: 441, about 41 ms).         -> OK
+AB7 (0.9.13) In every "Copy status" of AB1-AB4 the Capture line ends with
+    "max FIFO fill F (now N) frames, max gap: wake X ms, read Y ms, gated
+    G" and, in Exclusive mode, the Input line reads "[... event-driven,
+    period P]" with P the device's default period (441 or 480 at 44.1 /
+    48 kHz with most drivers) or its smallest multiple that holds HALF the
+    ASIO buffer (441 at buffer 512 and 882 at 1024 with a 441-frame
+    default; the log: "Input open (Exclusive, event-driven): ..., period P
+    (device default | K x device default | aligned by the device)" and
+    "capture gate on the stream clock (frequency F)").  OK in Exclusive
+    mode = drops 0 and discontinuities 0 at 256 AND 512; G > 0 at 256 on
+    an interface that offers a packet at every drain (UR22mkII prediction
+    at 256: pulls about 172 per second, gated about 72 per second, "max
+    per wake" 441: the gate worked); G may be 0 on a driver that reports
+    its packets correctly. "pulls" counts taken and refused drains. The
+    stop line of log.txt says "input capture
+    gate: pulls=N gated=G clock=device" ("clock=qpc" = the stream clock
+    was unusable and the timer took over: report it with the log).
+    OK (both modes) = N stays near bufSize + target
     (the reported input latency, "Input open ... FIFO target T" in the
     log) from one copy to the next (a steady N far above that = the FIFO
     keeps a backlog, the real input latency is larger than reported:

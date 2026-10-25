@@ -119,7 +119,7 @@ No reboot needed. A portable `bin.zip` with `install.bat` is also available. Ful
 | Host | Status |
 |---|---|
 | Cubase 15 (x64) - built-in, USB, HDMI and Bluetooth outputs | Tested: hours of use, Bluetooth on/off, sleep/resume |
-| Cubase 15 (x64) - Steinberg UR22mkII (USB interface, inputs) | Tested: recording, Shared and Exclusive, 256 and 512. 0.9.11: Shared 256 and Exclusive 512 clean, Shared 512 and Exclusive 256 failed (KI-11 / KI-13). 0.9.12: event-driven Exclusive capture and a margin at every buffer size, to be confirmed by TEST-GUIDE block AB |
+| Cubase 15 (x64) - Steinberg UR22mkII (USB interface, inputs) | Tested: recording, Shared and Exclusive, 256 and 512. 0.9.12: Shared clean at 256 and 512 (KI-11 fixed, confirmed); Exclusive 256 fixed in 0.9.13 (clock-gated capture, KI-13), to be confirmed by TEST-GUIDE block AB |
 | DaVinci Resolve Studio | Tested (0.9.4). Current Resolve versions also offer I/O Engine = System Audio (no ASIO needed); this driver is optional there |
 | Ableton Live, REAPER, FL Studio, Studio One, Bitwig | Not tested yet - reports welcome |
 | Cubase for Arm on a Snapdragon X Plus laptop (Arm64X, native ARM64 half) | Tested by a user: Shared mode, output, 12-18 ms with buffers 32-256 |

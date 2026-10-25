@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.12 (public beta)
+WASAPI Driver for ASIO 0.9.13 (public beta)
 ===========================================
 Build: 2026-10-25 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
@@ -35,8 +35,54 @@ ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 Changelog
 =========
 
+0.9.13 (changes from 0.9.12) - "Capture gate"; one period per period
+----------------------------------------------------------------------
+Block AB on 0.9.12 (2026-10-25, Steinberg UR22mkII, Yamaha Steinberg USB
+Driver, Windows 11 x64, Cubase 15, 44.1 kHz): Shared 256 and 512 clean
+(KI-11 confirmed fixed); Exclusive 256 still dropped (427 drops, 13
+discontinuities): with that driver every drain, 172 per second at the
+output's rhythm, found a full 441-frame packet, 1.73 times real time, and
+the capture event did not mark real periods either. Only the stream's
+clock told the truth. The output path is unchanged.
+Summary of all changes:
+- KI-13 FIXED (to be confirmed by block AB on real hardware) - the CAPTURE
+  GATE. An Exclusive capture is drained only when the capture stream's own
+  IAudioClock says a whole new period exists since the frames already
+  accepted, and never more than that: exactly one period per period,
+  whatever the driver reports and however often the audio thread asks
+  (ARCHITECTURE.txt section 65). Without a usable clock (missing,
+  failing, frozen for 20 drains) the gate runs on the system timer for the
+  rest of the run. Shared and loopback sources are not gated (the Windows
+  engine reports its packets correctly).
+- Exclusive capture period: the smallest multiple of the device's default
+  period that is >= HALF the ASIO buffer (0.9.12: the whole buffer). 512
+  at 44.1 kHz: 441 frames, reported input latency about 41 ms (0.9.12:
+  882 frames, 63 ms); 1024: 882.
+- Status: the Capture line ends with ", gated N" (drains refused by the
+  gate); Stats trace event: CaptureGated, CaptureClockFallback (27
+  fields). Log: "capture gate on the stream clock (frequency F)" at open,
+  "stop: input capture gate: pulls=N gated=M clock=device|qpc" at stop.
+- Documents: KNOWN-ISSUES.txt KI-11 (confirmed), KI-13 (0.9.12 results,
+  0.9.13 fix), two observations for 0.9.14 (output glitches counted at an
+  engine restart; plain FIFO backlog); ARCHITECTURE.txt sections 64, 65;
+  CODE-REVIEW.txt "0.9.13"; TEST-GUIDE.txt block AB (0.9.12 results, AB7
+  for 0.9.13); ROADMAP.txt.
+- Independent review of 0.9.13: 2 HIGH, 3 MED, 4 LOW, all fixed
+  (CODE-REVIEW.txt): gate decision before reading, timer credit paid back,
+  clock base armed at Start, backwards / unbounded positions handled,
+  refused drains counted as pulls.
+- Version number: getDriverVersion() returns 9130.
+Not changed: the output path, the Shared capture path, the converters,
+the installer logic, the trace provider, the panel apart from the status
+text.
+
 0.9.12 (changes from 0.9.11) - "Capture"; event-driven Exclusive capture
 -------------------------------------------------------------------------
+NOTE added after the release (block AB of 2026-10-25): KI-11 is confirmed
+fixed by this version (Shared 256 and 512 clean), KI-13 is NOT fixed by
+it on the tested interface (Exclusive 256 still drops; the event-driven
+capture made the cause visible: the driver hands over a full period at
+every drain and its event follows the output period); see 0.9.13.
 The second recording test (TEST-GUIDE.txt block AB on 0.9.11, Steinberg
 UR22mkII with the Yamaha Steinberg USB Driver, Windows 11 x64, Cubase 15,
 44.1 kHz) showed with the new "Capture:" counters WHY Exclusive mode at a

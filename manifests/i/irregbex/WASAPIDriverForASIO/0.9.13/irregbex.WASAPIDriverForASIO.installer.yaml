@@ -7,7 +7,7 @@
 # the release notes say so) keeps the 0.9.8 behaviour on ARM64: silent mode registers the x64 DLL.
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: irregbex.WASAPIDriverForASIO
-PackageVersion: 0.9.12
+PackageVersion: 0.9.13
 MinimumOSVersion: 10.0.17763.0
 InstallerType: nullsoft
 Scope: machine
@@ -19,10 +19,10 @@ InstallModes:
 ProductCode: WASAPI Driver for ASIO
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.12/WASAPI-Driver-for-ASIO-0.9.12-Setup.exe
+    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.13/WASAPI-Driver-for-ASIO-0.9.13-Setup.exe
     InstallerSha256: <SHA256 OF THE SETUP>
   - Architecture: arm64
-    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.12/WASAPI-Driver-for-ASIO-0.9.12-Setup.exe
+    InstallerUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/download/v0.9.13/WASAPI-Driver-for-ASIO-0.9.13-Setup.exe
     InstallerSha256: <SHA256 OF THE SETUP>
 ManifestType: installer
 ManifestVersion: 1.6.0

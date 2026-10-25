@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.12 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.13 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -227,7 +227,13 @@ See also QUICK-START.txt and README.txt (section numbers below).
     monitoring or the interface's own monitoring for zero-latency
     listening). In Exclusive mode the capture is now event-driven at the
     device's default period (KI-13): the Input line of the status shows
-    "[... event-driven, period N]".
+    "[... event-driven, period N]". 0.9.13: N is the smallest multiple of
+    the device's default period that holds HALF the ASIO buffer (0.9.12
+    took the whole buffer: 882 frames and 63 ms at a 512 buffer; 0.9.13:
+    441 frames, about 41 ms), and the capture is taken one period per
+    period by the stream's clock ("gated N" at the end of the Capture
+    line counts the drains that found no new period: normal, not a
+    problem).
 
 22. The input level is very low in Shared mode. (0.9.11)
     Shared mode goes through the Windows audio engine, which applies the

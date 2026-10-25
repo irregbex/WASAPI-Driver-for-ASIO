@@ -248,13 +248,30 @@ discontinuities (KI-11 partly fixed). See KNOWN-ISSUES.txt.
 - Status: "max FIFO fill F (now N)" (the plain copy path keeps whatever backlog
   it once received, so the real input latency can exceed the reported one
   until the stream restarts). DONE.
-Next: block AB on 0.9.12 with the same interface (AB1-AB4 all 0 / 0 / 0, AB7);
-the same with a USB microphone and a laptop's built-in microphone (the same
-capture path). If "now" shows a steady backlog, 0.9.13: re-centre the plain
-FIFO without discarding audio (a slow one-frame-per-block trim). Make the
-late-packet margin adaptive (measured read gap) in a later version, so
-that the reported input latency in Shared mode does not pay a fixed
-capture period on devices that deliver on time.
+Block AB on 0.9.12 (2026-10-25): Shared 256 and 512 clean (KI-11 CONFIRMED
+FIXED); Exclusive 256 still dropped (the driver hands over a full period at
+every drain, 172 per second at the output's rhythm; the event follows the
+output period too); Exclusive 512 clean with a 63 ms input latency.
+0.9.13 - "Capture gate" (DONE, to be confirmed by block AB):
+- KI-13: every Exclusive capture drain is gated by the stream's IAudioClock
+  (one period per period, whatever the driver reports; timer fallback when
+  the clock is unusable); ARCHITECTURE.txt section 65. "gated N" in the
+  Capture line. DONE.
+- Exclusive capture period = smallest multiple of the device default >= half
+  the ASIO buffer (512 -> 441, about 41 ms instead of 63 ms). DONE.
+Next: block AB on 0.9.13 with the same interface (AB1-AB4 all 0 / 0 / 0,
+AB7 with "gated" > 0 at Exclusive 256); the same with a USB microphone and a
+laptop's built-in microphone (the same capture path).
+0.9.14 (from the 0.9.12 observations, KNOWN-ISSUES.txt "Observations"):
+- Output glitch counter in Shared mode: skip the first wake-ups after a
+  start (2 glitches were counted at an engine restart with the thread never
+  late).
+- Re-centre the plain input FIFO without discarding audio (a slow trim of
+  one frame per block while the fill stays above the set point): "now" showed
+  a 17 ms backlog above the reported latency at Shared 512.
+- Make the late-packet margin adaptive (measured read gap), so that the
+  reported input latency in Shared mode does not pay a fixed capture period
+  on devices that deliver on time.
 Planned for 1.0: Exclusive mode at the device's fixed rate with the internal
 rate conversion (today Exclusive is tried only at the project's rate and
 falls back to Shared when the device is fixed at another rate, KI-12);

@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.12 - Code review
+WASAPI Driver for ASIO 0.9.13 - Code review
 ===========================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -1570,3 +1570,102 @@ R7 LOW  FIXED  (L1, applied by the reviewer) openInput: when GetService
                are cleared, so the audio thread never waits on a handle of
                a source without a capture client.
 R8 LOW  FIXED  (L2, applied by the reviewer) kept as applied.
+
+0.9.13 capture gate: one period per period by the stream clock (self-review; see the independent review below)
+----------------------------------------------------------------------------------------------------------------
+Scope: KNOWN-ISSUES.txt KI-13 (0.9.12 results: the event-driven capture
+did not change the amount the driver handed over; the stream clock is the
+only reliable rhythm) and the Exclusive capture period rule.
+ARCHITECTURE.txt sections 64 (updated) and 65 (new). Files: src/driver.cpp
+(openInput: IAudioClock of the capture client, period = smallest multiple
+of the default >= bufSize/2; start: gate state; closeSource: clock
+released; stop: gate line in the log; getStatus / onStatsTimer: capGated,
+capClockFallback; pullSource: the gate), src/driver.h (InputSource: clock,
+clockFreq, gate, gateQpc, gateClkOk, gateClkBase, gateAccepted,
+gateLastPos, gateCredit, gateStall, lastGateQpc, capGated,
+capClockFallback; StatusInfo: capGated, capClockFallback), src/panel.cpp
+(status line), src/strings_*.h (S_ST_CAPTURE ", gated %u"),
+tests/trace_test.cpp (Stats: 27 fields).
+Q1 (design)   The gate sits in pullSource, before the packet loop, for
+              sources with s.gate (every Exclusive capture). It does not
+              change WHEN the thread asks (event, output wake-up, between
+              callbacks: section 64); it decides whether a packet is taken.
+              So a driver that reports correctly loses nothing (avail
+              always covers the packet it offers), and a driver that
+              offers a period at every call is held to one period per
+              period. A real backlog (late thread) is read in full because
+              avail grew meanwhile.
+Q2 (real time) GetPosition on IAudioClock is the same non-blocking query
+              the output path already makes on every wake-up; the rest is
+              arithmetic on doubles and one QueryPerformanceCounter. No
+              allocation, lock, log or trace. The fallback decision is
+              taken on the audio thread with plain members (audio-thread
+              only) and one atomic store (capClockFallback) for the
+              status.
+Q3 (units)    IAudioClock::GetFrequency may return frames or bytes per
+              second (device dependent); position x devRate / frequency
+              gives device frames in both cases, exactly as the output's
+              clkToFrames. The base position is taken at the first drain
+              of the run (the stream has started), so a clock that counts
+              from Start or from device power-up gives the same result.
+Q4 (fallback) Timer credit bounded to four periods: after a long stall the
+              driver is not asked for more than its buffer could hold, and
+              the credit cannot accumulate across a pause. A clock that is
+              present but frozen (position unchanged for 20 refused drains
+              with a packet waiting) switches to the timer for the rest of
+              the run; the switch is one-way (no flapping).
+Q5 (thresholds) 7/8 of a period to open and +1/8 to close: a packet that is
+              one frame short of a period (alignment by the device) is
+              still accepted, and a drain that arrives a little early is
+              refused rather than taking a packet that is mostly old
+              audio. Both are fractions of the capture period, so they
+              scale with the device.
+Q6 (period rule) bufSize/2 instead of bufSize (0.9.12): the double buffer
+              of an event-driven stream holds two periods, which cover one
+              host block; the gate removed the other reason for a long
+              period (one real packet per event). Reported input latency
+              at 512 drops from 63 ms to about 41 ms on the test
+              interface.
+Q7 (counters) capGated counts refused drains (reset with the other
+              counters, including the start-up clearing); capClockFallback
+              is a state (set at start from "gate without clock", set by
+              the fallback, never cleared by a counter reset) so the status
+              keeps saying "clock=qpc" for the whole run.
+Not changed: Shared capture, loopback, extra inputs, the output path, the
+installer, the trace provider.
+
+Independent review of 0.9.13 (2 HIGH, 3 MED, 4 LOW; all FIXED in 0.9.13)
+-------------------------------------------------------------------------
+Verdict of the reviewer: safe to test on hardware after the fixes below.
+R1 HIGH FIXED  (H1) The packet loop stopped only AFTER accumulating a packet
+               (frames >= limit), so with avail in [0.875 p, 1.125 p) a
+               second full packet could be taken (two periods for one): the
+               decision is now made before reading, with the size of the
+               next packet (frames + pkt > avail + p/8 -> stop), and the
+               first packet is always taken.
+R2 HIGH FIXED  (H2) The timer credit was clamped at zero after a drain, so a
+               packet taken a little early was never paid back and the
+               fallback mode drifted fast: the credit may go negative,
+               bounded to two periods below zero (+4 above stays).
+R3 MED  FIXED  (M1) The clock base was taken at the first drain, so the
+               first event saw avail = 0 and was refused, and the base
+               depended on when the thread first asked: the audio thread
+               now arms the gate right after the capture Start (base
+               position, timer stamp, accepted = 0).
+R4 MED  FIXED  (M2) A clock position going backwards (device reset, wrap)
+               produced a huge or negative avail: the base is
+               re-synchronized and the accepted count cleared.
+R5 MED  FIXED  (M3) avail in clock mode was unbounded: capped at four
+               periods (the accepted count jumps), like the timer credit.
+R6 LOW  FIXED  (L1) A refused drain did not count as a pull nor stamp the
+               read-gap counter, so "gated" was not a subset of "pulls" and
+               "read gap" measured taken drains only: both are updated on a
+               refusal too (fillNow as well).
+R7 LOW  FIXED  (L2) The 20-drain stall rule was undocumented: ARCHITECTURE
+               section 65.
+R8 LOW  FIXED  (L3) ARCHITECTURE 65 / TEST-GUIDE AB7 predictions restated
+               with the counters as they are now (pulls include refused
+               drains; max per wake = one period).
+R9 LOW  FIXED  (L4) closeSource did not clear capClockFallback, so a Shared
+               reopen after a fallback kept "clock=qpc" in the status:
+               cleared.

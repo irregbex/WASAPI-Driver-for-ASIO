@@ -126,6 +126,25 @@ struct InputSource {
     // lastPullQpc: audio-thread only (not atomic), 0 before the first drain of a run.
     std::atomic<uint32_t> fillNow{0}, pullGapMaxUs{0};
     int64_t              lastPullQpc = 0;
+    // 0.9.13 (KI-13, "capture gate"): an Exclusive capture is drained only when the stream's own clock says a whole
+    // period of NEW audio exists. The tested USB driver (Yamaha Steinberg USB Driver) answered every
+    // GetNextPacketSize / GetBuffer with one full period whatever the elapsed time (at a 256-frame output wake-up
+    // and a 441-frame capture period: 172 packets of 441 frames per second, 1.73x real time, FIFO overfill, drops)
+    // and its capture event did not mark real periods either; the position of IAudioClock did. H sets clock /
+    // clockFreq at open (GetService on the capture client, frequency in device-dependent units like the output's
+    // clock), A owns the rest: gateClkBase = clock position at the first drain of a run, gateAccepted = frames
+    // accepted since then, gateCredit = frames the QPC fallback allows, gateStall = consecutive drains in which the
+    // clock did not advance although packets were there (20 -> fallback to QPC for the rest of the run), gateQpc =
+    // fallback active, lastGateQpc = QPC of the previous drain (fallback credit). capGated: drains refused by the
+    // gate; capClockFallback: 1 once the fallback is active (status). Polled Shared / loopback sources: gate = false.
+    IAudioClock*         clock = nullptr;
+    UINT64               clockFreq = 0;
+    bool                 gate = false, gateQpc = false, gateClkOk = false;
+    uint64_t             gateClkBase = 0, gateAccepted = 0, gateLastPos = 0;
+    double               gateCredit = 0.0;
+    int                  gateStall = 0;
+    int64_t              lastGateQpc = 0;
+    std::atomic<uint32_t> capGated{0}, capClockFallback{0};
     // 0.9.4: the device runs at its mix rate and the driver converts to the ASIO rate (fixedratio.h). conv: device
     // rate -> ASIO rate, before the FIFO. alignedIn: on the output's clock (no drift correction): FIFO frame q is
     // delivered at samplePosition q + inDelay (exact round trip, sched.h); qHead / qMade: absolute index of the
@@ -284,6 +303,8 @@ struct StatusInfo {
     uint32_t capFillNow;              // FIFO fill of the main input after its last drain (ASIO frames)
     uint32_t wakeGapMaxUs;            // longest interval between two output wake-ups of the audio thread (microseconds)
     uint32_t capReadGapMaxUs;         // longest interval between two drains of the main input (microseconds)
+    uint32_t capGated;                // 0.9.13: drains of the main input refused by the capture gate (no new period yet)
+    bool     capClockFallback;        // 0.9.13: the gate runs on QueryPerformanceCounter (the stream clock was unusable)
     bool   exclusiveWanted;           // KI-12: Mode=Exclusive is configured
     int    exclFail;                  // KI-12: 0 none; 1 the output, 2 the input fell back to Shared (Exclusive refused)
     double exclFailRate, exclFailMix; // KI-12: rate that was refused; the endpoint's mix (shared) rate at that time (0 unknown)

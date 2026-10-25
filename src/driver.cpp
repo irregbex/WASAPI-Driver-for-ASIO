@@ -1849,6 +1849,8 @@ ASIOError WasapiBridge::startThread() {
                                   s->integ = 0.0; s->underruns = 0; s->drops = 0; s->glitches = 0;
                                   s->capPulls = 0; s->capEmpty = 0; s->capMulti = 0; s->capMaxPkt = 0; s->capMaxWake = 0; s->capMaxFill = 0;   // 0.9.11
                                   s->fillNow = 0; s->pullGapMaxUs = 0; s->lastPullQpc = 0;                                                  // 0.9.12
+                                  s->gateClkOk = false; s->gateClkBase = 0; s->gateAccepted = 0; s->gateLastPos = 0; s->gateCredit = 0.0; s->gateStall = 0;   // 0.9.13
+                                  s->lastGateQpc = 0; s->gateQpc = s->gate && !s->clock; s->capGated = 0; s->capClockFallback = s->gateQpc ? 1u : 0u;
                                   if (s->event) ResetEvent(s->event); }      // 0.9.12: drop a stale capture signal from the previous cycle
     wakeGapMaxUs = 0;                     // 0.9.12
     // 0.7.0: the audio thread starts with the current live parameters and silent monitoring ramps.
@@ -1909,6 +1911,9 @@ ASIOError WasapiBridge::stopImpl() {
         (unsigned long long)cntSwitches.load(), cntOutGlitch.load(), cntTimeouts.load(), (double)loadMax.load(),
         srcIn.underruns.load(), srcIn.drops.load(), srcIn.glitches.load(), (srcIn.ratioView.load() - 1.0) * 1e6,
         srcLb.underruns.load(), srcLb.drops.load(), (srcLb.ratioView.load() - 1.0) * 1e6);
+    if (srcIn.gate)    // 0.9.13: how the capture gate worked (host thread, after the audio thread ended)
+        Log("stop: input capture gate: pulls=%u gated=%u clock=%s", srcIn.capPulls.load(), srcIn.capGated.load(),
+            srcIn.capClockFallback.load() ? "qpc" : "device");
     for (int k = 0; k < nOutEx; ++k)
         Log("  %s: underflow=%u overflow=%u ppm=%.1f", sinks[k].tag, sinks[k].underflows.load(), sinks[k].overflows.load(), (sinks[k].ratioView.load() - 1.0) * 1e6);
     for (int k = 0; k < nInEx; ++k)
@@ -2008,7 +2013,8 @@ void WasapiBridge::onStatsTimer() {
              wbtrace::U32("CaptureMultiPacketPulls", srcIn.capMulti.load()), wbtrace::U32("CaptureMaxPacket", srcIn.capMaxPkt.load()),
              wbtrace::U32("CaptureMaxPerWake", srcIn.capMaxWake.load()), wbtrace::U32("CaptureMaxFifoFill", srcIn.capMaxFill.load()),
              wbtrace::U32("CaptureFifoFillNow", srcIn.fillNow.load()), wbtrace::U32("WakeGapMaxUs", wakeGapMaxUs.load()),   // 0.9.12 (KI-11)
-             wbtrace::U32("CaptureReadGapMaxUs", srcIn.pullGapMaxUs.load()));
+             wbtrace::U32("CaptureReadGapMaxUs", srcIn.pullGapMaxUs.load()),
+             wbtrace::U32("CaptureGated", srcIn.capGated.load()), wbtrace::Bool("CaptureClockFallback", srcIn.capClockFallback.load() != 0));   // 0.9.13
 }
 
 // ---------------------------------------------------------------- WASAPI: opening streams (host thread)
@@ -2345,8 +2351,13 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         // smallest multiple of the device's default period that is >= the ASIO buffer (defFrames when bufSize fits
         // in one period): the double-buffer window is never shorter than one host block. Input latency in Exclusive
         // mode grows with large buffers accordingly (documented).
+        // 0.9.13: >= HALF the ASIO buffer instead of the whole buffer. With the capture gate (section 65) the drain
+        // no longer depends on when packets appear, and the two periods of the event-driven double buffer cover one
+        // host block of bufSize. 512 at 44.1 kHz -> 441 (reported input latency about 41 ms instead of 63 ms with the
+        // 882-frame period of 0.9.12), 1024 -> 882.
         UINT32 wantFrames = defFrames;
-        if (defFrames > 0 && (UINT32)bufSize > defFrames) wantFrames = defFrames * (UINT32)((bufSize + (long)defFrames - 1) / (long)defFrames);
+        const UINT32 halfBuf = (UINT32)((bufSize + 1) / 2);
+        if (defFrames > 0 && halfBuf > defFrames) wantFrames = defFrames * ((halfBuf + defFrames - 1) / defFrames);
         if (defFrames > 0 && initExclusive(dev, &s.client, s.fmt, s.bufFrames, capPeriod, true, devCh, wantFrames)) {
             s.event = CreateEventW(nullptr, FALSE, FALSE, nullptr);          // auto-reset: one wake-up per signal
             if (s.event && SUCCEEDED(s.client->SetEventHandle(s.event))) {
@@ -2451,6 +2462,20 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         s.eventDriven = false; s.exclusive = false;
         return;
     }
+    // 0.9.13 (KI-13, capture gate): an Exclusive capture is drained by the stream's clock, not by the packets the
+    // driver reports (ARCHITECTURE.txt section 65). IAudioClock of the capture client; GetFrequency gives the
+    // position unit (frames or bytes per second, device dependent), converted like the output's clock. Without a
+    // usable clock the gate runs on QueryPerformanceCounter from the first drain (gateQpc).
+    s.gate = s.exclusive;
+    s.gateQpc = false; s.gateClkOk = false; s.gateClkBase = 0; s.gateAccepted = 0; s.gateLastPos = 0; s.gateCredit = 0.0; s.gateStall = 0; s.lastGateQpc = 0;
+    SafeRelease(s.clock); s.clockFreq = 0;
+    if (s.gate) {
+        if (FAILED(s.client->GetService(__uuidof(IAudioClock), (void**)&s.clock)) || !s.clock ||
+            FAILED(s.clock->GetFrequency(&s.clockFreq)) || s.clockFreq == 0) {
+            SafeRelease(s.clock); s.clockFreq = 0; s.gateQpc = true;
+            Log("%s: no usable IAudioClock on the capture stream; the capture gate uses the system timer", s.tag);
+        } else Log("%s: capture gate on the stream clock (frequency %llu)", s.tag, (unsigned long long)s.clockFreq);
+    }
     s.period   = capPeriod;
     s.target   = (UINT32)lround(capPeriod * rate / s.devRate) + outPeriodAsio;   // ASIO frames
     // 0.9.11 (KI-11): one late capture packet (the Windows engine delivers with up to one period of jitter) left the
@@ -2488,7 +2513,7 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         if (s.convOn) convBudgetLeft = std::max(0.0, convBudgetLeft - fr::Cost(inQ, s.devRate, rate, ch));   // 0.9.6 (R2)
         if (!s.convOn) {                          // chosen before opening: not expected. Review fix 5: let Windows convert
             Log("%s: converter not available, reopening with Windows conversion", s.tag);
-            SafeRelease(s.cap); SafeRelease(s.client);
+            SafeRelease(s.cap); SafeRelease(s.client); SafeRelease(s.clock); s.clockFreq = 0; s.gate = false;   // 0.9.13
             if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&s.client)) || !openAuto() ||
                 FAILED(s.client->GetService(__uuidof(IAudioCaptureClient), (void**)&s.cap))) {
                 Log("%s: reopening failed, channels are silent", s.tag);
@@ -2700,6 +2725,8 @@ void WasapiBridge::closeSource(InputSource& s) {
     // COM references above (closing it would make its WaitForMultipleObjects fail inside the host's callback).
     if (s.event) { if (!threadStuck) CloseHandle(s.event); s.event = nullptr; }
     s.eventDriven = false;
+    if (threadStuck) s.clock = nullptr;                   // 0.9.13: same rule for the capture clock
+    SafeRelease(s.clock); s.clockFreq = 0; s.gate = false; s.gateQpc = false; s.capClockFallback = 0;   // review L4
     s.bufFrames = s.target = s.period = 0; s.resample = false; s.exclusive = false; s.sinc = false; s.posBase = 1.0;
     s.convOn = s.alignedIn = false; s.devRate = 0; s.inDelay = 0;   // 0.9.4
 }
@@ -2938,6 +2965,7 @@ void WasapiBridge::getStatus(StatusInfo& s) {
     s.capMaxWake = srcIn.capMaxWake.load(std::memory_order_relaxed); s.capMaxFill = srcIn.capMaxFill.load(std::memory_order_relaxed);
     // 0.9.12
     s.capFillNow = srcIn.fillNow.load(std::memory_order_relaxed); s.capReadGapMaxUs = srcIn.pullGapMaxUs.load(std::memory_order_relaxed);
+    s.capGated = srcIn.capGated.load(std::memory_order_relaxed); s.capClockFallback = srcIn.capClockFallback.load(std::memory_order_relaxed) != 0;   // 0.9.13
     s.wakeGapMaxUs = wakeGapMaxUs.load(std::memory_order_relaxed);
     s.exclusiveWanted = cfg.exclusive; s.exclFail = streamsOpen ? exclFail : 0;
     s.exclFailRate = exclFailRate; s.exclFailMix = exclFailMix; s.exclFailHr = exclFailHr;
@@ -3007,7 +3035,7 @@ void WasapiBridge::resetCounters(uint32_t what) {
     if (what & WB_RESET_STATS) {
         loadMax = 0.f; cntOutGlitch = 0; cntTimeouts = 0;
         InputSource* srcs[2 + kMaxExtra] = {&srcIn, &srcLb, &srcEx[0], &srcEx[1], &srcEx[2]};
-        for (InputSource* x : srcs) { x->underruns = 0; x->drops = 0; x->glitches = 0; x->capPulls = 0; x->capEmpty = 0; x->capMulti = 0; x->capMaxPkt = 0; x->capMaxWake = 0; x->capMaxFill = 0; x->pullGapMaxUs = 0; }
+        for (InputSource* x : srcs) { x->underruns = 0; x->drops = 0; x->glitches = 0; x->capPulls = 0; x->capEmpty = 0; x->capMulti = 0; x->capMaxPkt = 0; x->capMaxWake = 0; x->capMaxFill = 0; x->pullGapMaxUs = 0; x->capGated = 0; }
         wakeGapMaxUs = 0;   // 0.9.12
         for (OutputSink& o : sinks) { o.underflows = 0; o.overflows = 0; }
     }
@@ -3027,6 +3055,7 @@ void WasapiBridge::applyResetRequest() {
             x->capPulls.store(0, std::memory_order_relaxed); x->capEmpty.store(0, std::memory_order_relaxed); x->capMulti.store(0, std::memory_order_relaxed);   // 0.9.11
             x->capMaxPkt.store(0, std::memory_order_relaxed); x->capMaxWake.store(0, std::memory_order_relaxed); x->capMaxFill.store(0, std::memory_order_relaxed);
             x->pullGapMaxUs.store(0, std::memory_order_relaxed);   // 0.9.12
+            x->capGated.store(0, std::memory_order_relaxed);       // 0.9.13 (capClockFallback is a state, not a counter: kept)
         }
         wakeGapMaxUs.store(0, std::memory_order_relaxed);          // 0.9.12
         for (OutputSink& o : sinks) { o.underflows.store(0, std::memory_order_relaxed); o.overflows.store(0, std::memory_order_relaxed); }
@@ -3076,11 +3105,78 @@ bool WasapiBridge::pullSource(InputSource& s, IAudioCaptureClient* cap, bool isD
         s.conv.produce(made, [&](size_t, int c, float v) { if (c == 0) cur = s.fifo.pushSlot(); cur[c] = v; });
         s.qMade += made;
     };
+    // 0.9.13 (KI-13, capture gate; ARCHITECTURE.txt section 65). Exclusive sources only (s.gate). The tested USB
+    // driver handed over one full period at EVERY GetNextPacketSize / GetBuffer, whatever the elapsed time, and its
+    // capture event did not mark real periods: at a 256-frame output wake-up with a 441-frame capture period the
+    // drain ran 172 times a second and took 441 frames each time (1.73x real time; the FIFO grew and the overfill
+    // limit discarded real audio). Only the stream's clock told the truth. Rule: `avail` = device frames captured
+    // since Start (IAudioClock position taken right after Start, converted like the output's clock) minus the frames
+    // accepted so far; below 7/8 of a period nothing is read (counted in capGated); otherwise whole packets are read
+    // while accepted < avail + period/8, so that over time exactly one period is taken per period. Fallback: when
+    // the clock is missing, fails, or does not advance for 20 drains that had packets, the same rule runs on
+    // QueryPerformanceCounter credit (elapsed time x device rate) for the rest of the run (capClockFallback = 1).
+    // Everything here is a non-blocking query or arithmetic: no allocation, lock, log or trace.
+    double gateLimit = 0.0;                 // frames the gate allows this call (gated sources only)
+    bool gateOn = false;
+    const double period = (double)(s.period ? s.period : 1);
+    if (s.gate) {
+        LARGE_INTEGER t; QueryPerformanceCounter(&t);
+        bool haveAvail = false, clkMoved = true; double avail = 0.0;
+        if (!s.gateQpc && s.clock) {
+            UINT64 pos = 0;
+            if (SUCCEEDED(s.clock->GetPosition(&pos, nullptr))) {
+                if (!s.gateClkOk) { s.gateClkBase = pos; s.gateClkOk = true; }
+                // review M2: a position that went backwards (device reset, counter wrap) re-synchronizes the base
+                if (pos < s.gateLastPos || pos < s.gateClkBase) { s.gateClkBase = pos; s.gateAccepted = 0; }
+                clkMoved = pos != s.gateLastPos; s.gateLastPos = pos;
+                const double frames64 = (double)(pos - s.gateClkBase) * ((double)s.devRate / (double)s.clockFreq);
+                avail = frames64 - (double)s.gateAccepted;
+                // review M3: a backlog larger than four periods is not replayed (the capture buffer cannot hold it);
+                // the accepted count jumps so that avail stays at four periods
+                if (avail > period * 4.0) { s.gateAccepted = (uint64_t)(frames64 - period * 4.0); avail = period * 4.0; }
+                haveAvail = true;
+            }
+        }
+        if (!haveAvail && !s.gateQpc) {    // clock lost or never there: switch to the timer from here on
+            s.gateQpc = true; s.capClockFallback.store(1, std::memory_order_relaxed);
+            s.gateCredit = 0.0; s.lastGateQpc = 0;
+        }
+        if (s.gateQpc) {
+            if (s.lastGateQpc && qpcFreq > 0) s.gateCredit += (double)(t.QuadPart - s.lastGateQpc) / qpcFreq * (double)s.devRate;
+            s.lastGateQpc = t.QuadPart;
+            if (s.gateCredit > period * 4.0) s.gateCredit = period * 4.0;   // bounded: a long stall is not replayed
+            avail = s.gateCredit; haveAvail = true;
+        }
+        if (avail < period * 0.875) {
+            // Refused. Clock mode: a clock that does not move while the driver keeps offering packets is unusable
+            // (20 refusals in a row with a packet waiting -> timer fallback for the rest of the run).
+            if (!s.gateQpc && !clkMoved && SUCCEEDED(cap->GetNextPacketSize(&pkt)) && pkt > 0) {
+                if (++s.gateStall >= 20) { s.gateQpc = true; s.capClockFallback.store(1, std::memory_order_relaxed); s.gateCredit = 0.0; s.lastGateQpc = t.QuadPart; }
+            } else if (clkMoved) s.gateStall = 0;
+            // review L1: a refused drain still counts as a pull and as a read for the gap counter (gated is a
+            // subset of pulls; "read gap" measures the interval between drains, taken or refused)
+            s.capGated.fetch_add(1, std::memory_order_relaxed);
+            s.capPulls.fetch_add(1, std::memory_order_relaxed);
+            s.fillNow.store((uint32_t)s.fifo.size(), std::memory_order_relaxed);
+            if (s.lastPullQpc && qpcFreq > 0) {
+                const double gapUs = (double)(t.QuadPart - s.lastPullQpc) * 1e6 / qpcFreq;
+                if (gapUs > (double)s.pullGapMaxUs.load(std::memory_order_relaxed)) s.pullGapMaxUs.store((uint32_t)(gapUs < 4e9 ? gapUs : 4e9), std::memory_order_relaxed);
+            }
+            s.lastPullQpc = t.QuadPart;
+            return false;
+        }
+        if (clkMoved) s.gateStall = 0;
+        gateLimit = avail + period * 0.125;
+        gateOn = true;
+    }
     // 0.9.8: at most 256 packets per wake-up (a device that keeps reporting packets cannot hold the audio thread in
     // this loop; what is left is read at the next wake-up).
     // 0.9.11 (KI-13 diagnostics): packets and frames of this call, kept as atomics for the status report.
     uint32_t packets = 0, frames = 0;
     for (int guard = 0; guard < 256 && SUCCEEDED(hr = cap->GetNextPacketSize(&pkt)) && pkt > 0; ++guard) {
+        // 0.9.13 (review H1): decided BEFORE reading, with the size of the next packet; the first packet is always
+        // taken (avail >= 7/8 period here). avail in [0.875 p, 1.875 p) -> one packet; a real backlog -> two or more.
+        if (gateOn && frames > 0 && (double)frames + (double)pkt > gateLimit) break;
         BYTE* d = nullptr; UINT32 n = 0; DWORD flags = 0;
         hr = cap->GetBuffer(&d, &n, &flags, nullptr, nullptr);
         if (FAILED(hr)) break;
@@ -3103,6 +3199,14 @@ bool WasapiBridge::pullSource(InputSource& s, IAudioCaptureClient* cap, bool isD
         if (s.convOn) drain();             // per packet: the converter's ring only holds about one buffer
     }
     const bool invalid = FAILED(hr);
+    if (gateOn) {
+        // 0.9.13: book what was taken. Stall detection (clock mode): packets were there but the clock position did
+        // not move since the previous drain -> after 20 such drains the timer takes over for the rest of the run.
+        // review H2: the timer credit may go negative (a packet taken a little early is paid back by the next
+        // elapsed time), bounded to two periods below zero; the +4 periods bound above stays.
+        if (s.gateQpc) { s.gateCredit -= (double)frames; if (s.gateCredit < -period * 2.0) s.gateCredit = -period * 2.0; }
+        else s.gateAccepted += frames;
+    }
     size_t fill = s.fifo.size();
     s.capPulls.fetch_add(1, std::memory_order_relaxed);
     // 0.9.12 (KI-11 diagnostics): fill after this drain and the longest interval between two drains of this source
@@ -3569,10 +3673,19 @@ void WasapiBridge::run() {
     BYTE* p = nullptr;
     const UINT32 prefill = outExclusive ? outBufFrames : outFill;   // 0.9.4: Shared keeps outFill queued
     if (SUCCEEDED(rc->GetBuffer(prefill, &p)) && SUCCEEDED(rc->ReleaseBuffer(prefill, AUDCLNT_BUFFERFLAGS_SILENT))) written = prefill;
-    if (ic) ic->Start();
+    // 0.9.13 (review M1): the capture gate's clock base is taken right after Start (a non-blocking GetPosition), so
+    // that the first drain already sees one period of new audio instead of defining the base itself.
+    auto gateArm = [&](InputSource& g) {
+        if (!g.gate) return;
+        LARGE_INTEGER t; QueryPerformanceCounter(&t);
+        g.lastGateQpc = t.QuadPart; g.gateCredit = 0.0; g.gateAccepted = 0; g.gateStall = 0;
+        UINT64 p0 = 0;
+        if (!g.gateQpc && g.clock && SUCCEEDED(g.clock->GetPosition(&p0, nullptr))) { g.gateClkBase = g.gateLastPos = p0; g.gateClkOk = true; }
+    };
+    if (ic) { ic->Start(); gateArm(srcIn); }
     if (lc) lc->Start();
     for (int k = 0; k < kMaxExtra; ++k) {
-        if (xc[k]) xc[k]->Start();
+        if (xc[k]) { xc[k]->Start(); gateArm(srcEx[k]); }
         if (sc[k]) {                       // pre-fill with silence up to the target and start
             OutputSink& o = sinks[k];
             if (o.targetPad && SUCCEEDED(sr[k]->GetBuffer(o.targetPad, &p)) && SUCCEEDED(sr[k]->ReleaseBuffer(o.targetPad, AUDCLNT_BUFFERFLAGS_SILENT)))

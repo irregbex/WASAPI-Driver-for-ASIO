@@ -7,7 +7,7 @@
 # Validate with: winget validate --manifest <folder>
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
 PackageIdentifier: irregbex.WASAPIDriverForASIO
-PackageVersion: 0.9.12
+PackageVersion: 0.9.13
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0
