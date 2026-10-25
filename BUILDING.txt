@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.10 - Source code and building
+WASAPI Driver for ASIO 0.9.11 - Source code and building
 ========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -37,7 +37,7 @@ Building (Linux or WSL, cross-compiling)
 Installer
   Needs installer/lang_en.nsh, lang_es.nsh, header.bmp, welcome.bmp and
   app.ico (a copy of src/res/app.ico) next to the .nsi.
-  makensis -DVERSION=0.9.10 installer/WasapiDriver.nsi (nsis package), with
+  makensis -DVERSION=0.9.11 installer/WasapiDriver.nsi (nsis package), with
   the 3 DLLs, WasapiDriverDiag.exe, WasapiDriverTest.exe, LICENSE.txt and
   the documents README.txt, QUICK-START.txt, FAQ.txt, COMPATIBILITY.txt,
   TEST-GUIDE.txt, COPYRIGHT.txt,

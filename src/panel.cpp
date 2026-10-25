@@ -1266,12 +1266,17 @@ static HWND PickOwner(HWND hostWnd) {
 // 0.7.0 (F1). Saves the on-screen settings (and the active profile name) to config.ini and hands them to the
 // driver, which applies LIVE settings at once and asks the host to restart it for RESET settings. The panel stays
 // open; the result is shown in the bottom bar for a few seconds.
-static void Apply(PanelState* p) {
+// 0.9.11 ("Apply and Close", independent review R3): returns true when the panel may close right away (the changes
+// are live, or the DAW restarts the driver to apply them). False when something must stay visible: the changes
+// apply only at the next driver load (ResetOnReload), no instance is held by the host (saved only), or the
+// host-profile mapping was saved; the panel then stays open and shows applyMsg as 0.7.0-0.9.10 always did.
+static bool Apply(PanelState* p) {
     Config c = p->drv->config();
     ReadControls(p, c);
     c.activeProfile = CurProfile(p);
     SaveConfig(c);
     p->applied = true;
+    bool mayClose = false;
     // 0.8.0 (G3): the mapping for this program is stored in [HostProfiles]; it is used at the next driver load.
     bool mapChanged = false;
     if (!p->hostExe.empty()) {
@@ -1283,16 +1288,17 @@ static void Apply(PanelState* p) {
         p->applyMsg = T(S_MSG_SAVED_RELEASED);
     } else {
         switch (p->drv->applyPanelChanges(c)) {
-        case ApplyResult::Live:           p->applyMsg = T(S_MSG_LIVE); break;
-        case ApplyResult::ResetRequested: p->applyMsg = T(S_MSG_RESET); break;
+        case ApplyResult::Live:           p->applyMsg = T(S_MSG_LIVE); mayClose = true; break;
+        case ApplyResult::ResetRequested: p->applyMsg = T(S_MSG_RESET); mayClose = true; break;
         case ApplyResult::ResetOnReload:  p->applyMsg = T(S_MSG_RELOAD); break;
         }
     }
-    if (mapChanged) p->applyMsg += T(S_MSG_HP_SAVED);
+    if (mapChanged) { p->applyMsg += T(S_MSG_HP_SAVED); mayClose = false; }
     p->applyTick = GetTickCount();
     if (HWND b = GetDlgItem(p->wnd, ID_SAFEBTN); b && !p->drv->safeMode()) ShowWindow(b, SW_HIDE);
     RECT bar = {0, S(p, p->ch - 64), S(p, p->cw), S(p, p->ch)};
     InvalidateRect(p->wnd, &bar, FALSE);
+    return mayClose;
 }
 
 // 0.9.6 (KI-4): true when the panel currently selects at least one recording device: the main Input device is
@@ -1631,7 +1637,21 @@ static std::wstring StatusText(const StatusInfo& s, const Config& c) {
         swprintf(b, 3200, T(S_ST_NOSTREAMS),
                  s.nIn, s.nOut);
     } else {
-        const wchar_t* mode = s.outExclusive ? T(S_EXCLUSIVE) : s.outLowLatency ? T(S_SHARED_LL_FULL) : T(S_SHARED_STD);
+        const wchar_t* modeName = s.outExclusive ? T(S_EXCLUSIVE) : s.outLowLatency ? T(S_SHARED_LL_FULL) : T(S_SHARED_STD);
+        // 0.9.11 (KI-12): Mode=Exclusive configured but the stream runs Shared: say why (a device fixed at another
+        // rate by its own driver is the usual reason), instead of a bare "Shared" that contradicts the Mode combo.
+        // Review R2: exclFailHr == 0 means IsFormatSupported refused every format (no Initialize was reached).
+        auto exclNote = [&](const wchar_t* base) -> std::wstring {
+            if (s.exclFailMix > 0 && std::fabs(s.exclFailMix - s.exclFailRate) >= 0.5) return FmtW(T(S_ST_EXCL_FIXED), base, s.exclFailRate, s.exclFailMix);
+            if (s.exclFailHr == 0) return FmtW(T(S_ST_EXCL_NOFMT), base, s.exclFailRate);
+            return FmtW(T(S_ST_EXCL_REFUSED), base, (unsigned long)s.exclFailHr);
+        };
+        std::wstring modeStr = modeName;
+        if (s.exclusiveWanted && !s.outExclusive && s.exclFail == 1) modeStr = exclNote(modeName);
+        const wchar_t* mode = modeStr.c_str();
+        // Review R1: the output opened Exclusive but the main input did not (exclFail == 2): said on the Input line
+        std::wstring inStr = s.hasInput ? s.inName : std::wstring(T(S_NONE_PAREN));
+        if (s.exclusiveWanted && s.hasInput && s.exclFail == 2) inStr = exclNote(s.inName.c_str());
         // 0.9.0: one translated format per line (the placeholders are checked by tests/strings_test.cpp)
         // 0.9.4: engine line (low-latency period, device rate, internal rate conversion)
         std::wstring eng;
@@ -1642,13 +1662,18 @@ static std::wstring StatusText(const StatusInfo& s, const Config& c) {
             eng = FmtW(T(S_ST_ENGINE), kind, s.outPeriod, s.outDevRate > 0 ? 1000.0 * s.outPeriod / s.outDevRate : 0.0, s.outDevRate, conv.c_str());
         }
         std::wstring r = FmtW(T(S_ST_MODE), mode) + eng + FmtW(T(S_ST_OUTPUT), s.outName.c_str(), s.outFmt, s.outPeriod) +
-            FmtW(T(S_ST_INPUT), s.hasInput ? s.inName.c_str() : T(S_NONE_PAREN), s.inFmt) +
+            FmtW(T(S_ST_INPUT), inStr.c_str(), s.inFmt) +
             FmtW(T(S_ST_BUFFER), s.bufSize, s.rate, s.nIn, s.nOut) +
             FmtW(T(S_ST_LAT), 1000.0 * s.inLat / s.rate, 1000.0 * s.outLat / s.rate) +
             FmtW(T(S_ST_GLITCH), s.outGlitches, s.timeouts) + FmtW(T(S_ST_INPUTS), s.inUnderruns, s.inDrops, s.inGlitches) +
+            // 0.9.11 (KI-13): what the capture client delivered (only with an input; all zero before the first pull)
+            (s.hasInput ? FmtW(T(S_ST_CAPTURE), s.capPulls, s.capEmpty, s.capMulti, s.capMaxPkt, s.capMaxWake, s.capMaxFill) : std::wstring()) +
             FmtW(T(S_ST_DRIFT), s.inPpm, s.inResample ? T(S_CORRECTING) : T(S_NO_CORRECTION), s.hasLoopback ? T(S_ON_L) : T(S_OFF_L),
                  s.lbPpm, s.monitorActive ? T(S_ON_L) : T(S_OFF_L)) +
-            FmtW(T(S_ST_DSP), s.loadNow, s.loadMax, s.sinc ? L"sinc" : L"Hermite", s.dither ? L"TPDF" : T(S_NO));
+            // 0.9.11: the engine that really converts the main output (0.9.10 printed the drift resampler's kind here,
+            // "Hermite" even while the Engine line said sinc or soxr); the drift resampler only when it is active
+            FmtW(T(S_ST_DSP), s.loadNow, s.loadMax, s.outConv ? (s.convSoxr ? L"soxr HQ" : s.convSinc ? L"sinc" : L"Hermite") : T(S_CONV_NONE), s.dither ? L"TPDF" : T(S_NO)) +
+            (s.inResample ? FmtW(T(S_ST_DRIFTRES), s.sinc ? L"sinc" : L"Hermite") : std::wstring());
         wcsncpy(b, r.c_str(), 3199); b[3199] = 0;
     }
     return std::wstring(b) + more;
@@ -2360,10 +2385,11 @@ static void BuildControls(PanelState* p) {
         if (l) SetPropW(l, L"wbdim", (HANDLE)1);
     }
 
-    // ---- Bottom bar (always visible). 0.7.0: "Apply" keeps the panel open; "Close" discards unapplied changes.
+    // ---- Bottom bar (always visible). 0.7.0: "Apply" kept the panel open; "Close" discards unapplied changes.
+    // 0.9.11: "Apply and Close" (170 px for the longest translation) saves, applies and closes the panel.
     Btn(p, TAB_ALL, T(S_CLOSE), p->cw - 16 - 110, p->ch - 52, 110, 36, IDCANCEL, 1, true);
-    Btn(p, TAB_ALL, T(S_APPLY), p->cw - 16 - 110 - 12 - 110, p->ch - 52, 110, 36, IDOK, 2, true);
-    if (p->drv->safeMode()) Btn(p, TAB_ALL, T(S_USE_MY_SETTINGS), p->cw - 16 - 232 - 12 - 200, p->ch - 52, 200, 36, ID_SAFEBTN, 1, true);
+    Btn(p, TAB_ALL, T(S_APPLY), p->cw - 16 - 110 - 12 - 170, p->ch - 52, 170, 36, IDOK, 2, true);
+    if (p->drv->safeMode()) Btn(p, TAB_ALL, T(S_USE_MY_SETTINGS), p->cw - 16 - 292 - 12 - 200, p->ch - 52, 200, 36, ID_SAFEBTN, 1, true);
 
     AssignMnemonics(p);                    // 0.9.1 (B1): Alt+letter for the tabs, Apply and Close
     RefreshProfiles(p, c.activeProfile);
@@ -3013,6 +3039,8 @@ static void PaintPanel(PanelState* p, HDC dc, const RECT& rc) {
     FillRectC(dc, S(p, 16), S(p, p->ch - 64), S(p, p->cw - 16), S(p, p->ch - 63), g_th.line);
     wchar_t sum[256];
     const bool safeBanner = p->drv->safeMode() && p->rebind == 0;
+    // 0.9.11 (KI-12): Mode=Exclusive configured, stream running Shared (amber, like the privacy notice)
+    const bool exclFall = p->stValid && p->st.streamsOpen && p->st.exclusiveWanted && p->st.exclFail != 0;   // review R1: output (1) or input (2)
     if (p->rebind == 1) swprintf(sum, 256, T(S_RESTARTING));
     else if (p->rebind == 2) swprintf(sum, 256, T(S_DAW_RELEASED));
     else if (!p->applyMsg.empty()) swprintf(sum, 256, L"%ls", p->applyMsg.c_str());
@@ -3020,10 +3048,11 @@ static void PaintPanel(PanelState* p, HDC dc, const RECT& rc) {
     else if (p->stValid && p->st.streamsOpen)
         swprintf(sum, 256, T(S_SUM_FMT),
                  p->st.outExclusive ? T(S_EXCLUSIVE) : p->st.outLowLatency ? T(S_SHARED_LL) : T(S_SHARED_STD),
-                 p->st.rate, p->st.nIn, p->st.nOut, p->st.captureDenied ? T(S_SUM_PRIV) : L"");
+                 p->st.rate, p->st.nIn, p->st.nOut, p->st.captureDenied ? T(S_SUM_PRIV) : exclFall ? (p->st.exclFail == 2 ? T(S_SUM_EXCLFALL_IN) : T(S_SUM_EXCLFALL)) : L"");
     else swprintf(sum, 256, T(S_SUM_NOSTREAM));
-    RECT sr = {S(p, 20), S(p, p->ch - 54), S(p, p->cw - (safeBanner ? 470 : 260)), S(p, p->ch - 16)};
-    const COLORREF col = p->rebind ? g_th.amber : !p->applyMsg.empty() ? g_th.accent : (safeBanner || (p->stValid && p->st.captureDenied)) ? g_th.amber : g_th.dim;
+    // 0.9.11: the Apply button is 170 px wide (its text became "Apply and Close"): the summary stops before it
+    RECT sr = {S(p, 20), S(p, p->ch - 54), S(p, p->cw - (safeBanner ? 530 : 320)), S(p, p->ch - 16)};
+    const COLORREF col = p->rebind ? g_th.amber : !p->applyMsg.empty() ? g_th.accent : (safeBanner || (p->stValid && (p->st.captureDenied || exclFall))) ? g_th.amber : g_th.dim;
     TextC(dc, p->font, col, sum, sr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
@@ -3136,7 +3165,9 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         switch (LOWORD(wp)) {
-        case IDOK: Apply(p); return 0;                      // 0.7.0: the panel stays open after Apply
+        case IDOK:                                          // 0.9.11: "Apply and Close" (0.7.0-0.9.10: the panel stayed open)
+            if (Apply(p)) { if (p->owner) EnableWindow(p->owner, TRUE); DestroyWindow(h); }   // review R3: only when nothing must stay visible
+            return 0;
         case ID_SETNONE:                                   // 0.7.1 (C): Input device = (None - no inputs)
             // 0.9.6 (KI-4): also clears the extra inputs (an empty selection): they would be blocked by the same
             // Windows setting, and the warning now stays visible while any input is selected. Then hide the row.

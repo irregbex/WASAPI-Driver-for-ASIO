@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.10 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.11 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -112,6 +112,12 @@ See also QUICK-START.txt and README.txt (section numbers below).
     invalidates every shared stream on it. Uninstall that driver if you do
     not need it and select WASAPI Driver for ASIO in Resolve > Preferences >
     System > Audio I/O. KNOWN-ISSUES.txt KI-1.
+    Note (0.9.11): current DaVinci Resolve versions offer I/O Engine =
+    "System Audio" in Preferences > System > Audio I/O (Windows audio
+    directly, with its own buffer size and input/output device lists).
+    With that engine Resolve needs no ASIO driver at all, and the problem
+    above does not occur. Choose this driver in Resolve only if you want
+    ASIO there (for example to share one driver and one setup with Cubase).
 
 15. Cubase runs, the transport moves, but there is no sound and the
     driver's meters do not move.
@@ -145,7 +151,8 @@ See also QUICK-START.txt and README.txt (section numbers below).
     running under emulation both use it (each loads its own half of the
     file; the x64 DAW gets native-speed driver code). 32-bit DAWs use the
     x86 DLL as everywhere. The Arm64X DLL is built and checked automatically
-    but has not run on real Windows on Arm hardware yet (KNOWN-ISSUES.txt
+    and a user confirmed it with native ARM64 Cubase on a Snapdragon X Plus
+    laptop; emulated x64 DAWs are not reported yet (KNOWN-ISSUES.txt
     KI-9): reports are very welcome (TEST-GUIDE.txt block Z). If a release
     says it was built without the Arm64X DLL, the Setup asks instead
     whether your DAW is native ARM64 or x64, as in 0.9.8 (only that kind of
@@ -188,3 +195,38 @@ See also QUICK-START.txt and README.txt (section numbers below).
     DAW at that rate: Auto or Sinc, or set Windows and the project to the same rate
     and no conversion is needed at all. The DAW is told the exact latency in
     every case (README section 41, KNOWN-ISSUES.txt KI-10).
+
+21. The panel says Exclusive but the status says Shared. Why? (0.9.11)
+    The driver tried Exclusive mode at the project's rate and the device
+    refused every format, so it fell back to Shared mode (which works at
+    any rate). Since 0.9.11 the status line says so: "Active mode: Shared
+    ... (Exclusive not available at 44100 Hz; the device is fixed at
+    48000 Hz by its own driver or the Windows default format)", and the
+    panel's bottom bar shows "Exclusive not available, running Shared".
+    The usual reason is a device whose own driver fixes the rate: in
+    Windows > Settings > System > Sound > the device > Properties, the
+    "Default format" is greyed out at another rate. What to do: set the
+    device to the project's rate in the manufacturer's control panel (for
+    example "Yamaha Steinberg USB Driver" in the Control Panel for a
+    Steinberg UR interface, once that driver is installed), or change the
+    Windows default format when it is not greyed out, or set the project
+    to the device's rate. Shared mode is fine for most work; Exclusive
+    only saves a few milliseconds. KNOWN-ISSUES.txt KI-12.
+
+22. The input level is very low in Shared mode. (0.9.11)
+    Shared mode goes through the Windows audio engine, which applies the
+    device's input volume: Windows > Settings > System > Sound > Input >
+    the device > "Input volume". On a system that never used a microphone
+    in Windows it was found at 1 %, which turned a clipping interface
+    preamp into -48 dBFS in the driver. Set it to 100 and leave the gain to
+    the interface. Also turn off "Audio enhancements" for that device.
+    Exclusive mode bypasses this volume. If the level is still low with a
+    condenser microphone, check the +48 V switch of the interface.
+
+23. My interface has two inputs but the driver shows one "Line" input.
+    (0.9.11)
+    Windows exposes the two inputs as one stereo endpoint (input 1 = left,
+    input 2 = right); the driver passes it to the DAW as two ASIO input
+    channels. Split them in the DAW: Cubase > Studio > Audio Connections >
+    Inputs > Add Bus > Mono, one bus per channel. The same applies to the
+    manufacturer's own ASIO driver.

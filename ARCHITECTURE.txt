@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.10 (public beta) - Architecture
+WASAPI Driver for ASIO 0.9.11 (public beta) - Architecture
 ==========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -2325,3 +2325,143 @@ Files: src/frsoxr.h (SoxrCore), src/fixedratio.h (Quality::Soxr, Engine,
 SoxrMacs, configure(q), produceSoxr), src/sched.h (Config::soxr for the
 model), driver.cpp (pref from cfg.frEngine, fallback log, engine line),
 third_party/soxr (library, configuration, README-vendored.txt).
+
+61. INPUT FIFO OVERFILL LIMITS AND THE CAPTURE BUFFER (0.9.11, KI-13)
+---------------------------------------------------------------------
+Every capture source feeds a MultiFifo (ASIO-rate frames) from pullSource
+(audio thread, after every wake-up and, since 0.9.11, after every host
+callback of a wake-up, section 62). pullSource drains every packet the
+IAudioCaptureClient reports and then bounds the fill: without drift
+correction the fill is the input latency, so a real surplus must be
+dropped, with drift correction the PI controller keeps the fill at its
+set point and a surplus means the controller lost track; the aligned
+converted path (section 54) only guards the capacity because readSource
+discards what is older than the next block itself.
+
+Up to 0.9.10 the limits were, in ASIO frames,
+    plain:    bufSize*2 + target*3      (drop to bufSize + target)
+    drift:    bufSize*4 + target*6      (drop to bufSize + target, pos reset)
+    aligned:  inDelay + bufSize*4 + exHi*2   (drop to half of it)
+and ignored how much the capture client can hand over in ONE call. A
+polled Exclusive capture (initExclusive with event=false asks for a buffer
+of 4 x the output period or 4 x the ASIO buffer, whichever is larger; the
+device may round up, 1536 frames for a 256-frame period on a tested USB
+interface) delivers everything its buffer holds when it is read: if the
+audio thread read it one period late, or the device driver fills it in
+bursts, one call brings most of the buffer. That is real audio (every
+frame is played by the device exactly once), but with 768 frames already
+waiting (bufSize + target after a normal read) a 1536-frame call reached
+2304 > 2048 and 1536 frames were dropped. The symptom (first recording
+test, 0.9.10): about 10 drops per second, no underruns, no
+discontinuities, an unusable recording at a 256 buffer; clean at 512,
+whose limit (4096) the bursts did not reach.
+
+0.9.11 adds the capture buffer, in ASIO frames (ceil(bufFrames * rate /
+devRate) for a converted source, bufFrames otherwise), to the three limits.
+A backlog of the whole capture buffer can never trigger a drop; a surplus
+larger than that is still dropped as before. openStreams sizes every FIFO
+as base + capture buffer x4 + target x6 (+ inDelay), so each limit lies
+below the capacity (MultiFifo::pushSlot would otherwise overwrite the
+oldest frame silently).
+
+Diagnostics (atomics kept by the audio thread, read by getStatus on H and
+by the Stats trace event every 10 s; the audio thread never logs or
+traces): per source capPulls, capEmpty (no packet), capMulti (2 packets or
+more), capMaxPkt (largest packet, device frames), capMaxWake (most frames
+in one call), capMaxFill (highest fill after a call). "Copy status" prints
+them for the main input ("Capture: pulls ... max FIFO fill ... frames");
+the Stats event carries CapturePulls .. CaptureMaxFifoFill. They are reset
+with the other counters (start, Reset counters). Reading them in a report:
+max packet = the capture period; max per wake close to the capture buffer
+= the thread is sometimes a period late or the device bursts (harmless
+since 0.9.11); max FIFO fill growing from report to report = a real
+surplus (clock mismatch without drift correction).
+capEmpty close to half of capPulls is normal with two callbacks per
+wake-up (section 62): the extra pull between the callbacks usually finds
+no new packet. The capture buffer in ASIO frames is computed once per
+open (InputSource::capBufAsio, openStreams), not on the audio thread.
+
+62. CAPTURE DRAINED BETWEEN HOST CALLBACKS; LATE-PACKET MARGIN (0.9.11, KI-11)
+------------------------------------------------------------------------------
+The audio thread wakes on the output event (section 54: engine period, 480
+frames = 10 ms in the low-latency Shared engine), drains the capture
+clients, and then runs as many host callbacks as the output needs: with
+an ASIO buffer shorter than the engine period (256 at 44.1 kHz against a
+441-frame period) two callbacks per wake-up, more with on-demand
+conversion. Up to 0.9.10 the capture clients were drained only before the
+callbacks. A Shared capture stream opened with IAudioClient3 has a buffer
+of about two periods (974 frames here); while the host processed two
+callbacks (its DSP load peaks were up to 45 %) the engine could fill it,
+and when the capture buffer is full the Windows engine discards packets
+and flags the next one with AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY (the
+driver counts it as a discontinuity / "glitch"; the missing frames then
+show as an underrun). Observed in the first recording test: 8 underruns
+and 27 discontinuities in 30 s at 256, none at 512 (one callback per
+wake-up).
+
+0.9.11: pullAll (the lambda in the audio thread) is called at the start of
+the wake-up as before AND after every bufferSwitch of the wake-up while
+more callbacks are needed (both loops: the on-demand conversion loop and
+the plain outFifo loop). Cost: one GetNextPacketSize per source and
+callback when nothing arrived. The same reset bookkeeping applies (one
+RR_CAPTURE reset per cycle).
+
+Late-packet margin: the FIFO target of a Shared source is capture period
++ output period (ASIO frames); priming waits for bufSize + target + 4. The
+Windows engine delivers capture packets with up to one period of jitter.
+With one callback per wake-up a late packet is covered by the target; with
+two callbacks per wake-up the second one could find less than bufSize
+frames (1142 - 512 - 512 < 256 after a late packet) and underrun, which
+also re-primes the source (silence until the fill recovers). openInput
+now adds one capture period to the target when bufSize < capture period
+(ASIO frames); the log says "ASIO buffer 256 < capture period 441: FIFO
+target +441 frames (late-packet margin)" and the reported input latency
+grows by that period (10 ms at 256 with a 441-frame period). Exclusive
+captures (period = ASIO buffer) and buffers of one period or more are
+unchanged. The aligned converted path (section 54) keeps its own exact
+schedule (sched::InLatency) and is not affected by the margin.
+
+63. EXCLUSIVE FALLBACK REASON (0.9.11, KI-12)
+---------------------------------------------
+initExclusive (section 9) tries every candidate format at the ASIO rate and
+returns false when none is accepted; openOutput / openInput then open
+Shared. Up to 0.9.10 only the log told, and the panel's Mode combo
+(Exclusive) contradicted the status ("Active mode: Shared ..."). The usual
+cause is a device whose own driver fixes the rate (the Windows "Default
+format" is greyed out): IsFormatSupported(EXCLUSIVE) refuses every format
+at any other rate.
+
+0.9.11: initExclusive records, for the FIRST failure of an open only
+(independent review R1: a later attempt, the main input after a failed
+output or an extra output, keeps the first reason), exclFailRate (the rate
+tried), exclFailHr (the last Initialize HRESULT, 0 when IsFormatSupported
+refused everything) and exclFailMix (the endpoint's mix-format rate, read
+with GetMixFormat on the activated client before the attempts) in the
+driver (H only; cleared by openStreams); the callers set exclFail = 1
+(output) or 2 (main input, when the output succeeded). getStatus copies
+them with exclusiveWanted = cfg.exclusive. The panel: with exclFail = 1
+the "Active mode" line becomes "<mode> (Exclusive not available at R Hz;
+the device is fixed at M Hz by its own driver or the Windows default
+format)" when the mix rate differs from the ASIO rate, "<mode> (Exclusive:
+no format accepted at R Hz)" when exclFailHr is 0, else "<mode> (Exclusive
+refused, hr=0x...)"; with exclFail = 2 the same note follows the device
+name on the Input line. The bottom bar shows S_SUM_EXCLFALL (output) or
+S_SUM_EXCLFALL_IN (input) in amber while the streams are open and
+Mode=Exclusive is configured. The log line reads "Exclusive: no format accepted at R Hz (the
+device's shared-mode rate is M Hz: its own driver or the Windows default
+format fixes it)". Planned for 1.0: when the ASIO rate is refused, open
+Exclusive at the mix rate and run the fixed-ratio converter (section 54)
+on the Exclusive stream.
+
+Control panel notes (0.9.11): "Apply and Close" (IDOK runs Apply and, when
+it returns true (ApplyResult::Live or ResetRequested), the IDCANCEL path:
+owner re-enabled, DestroyWindow; for ResetOnReload, "saved only" and a
+saved host-profile mapping the panel stays open showing applyMsg). Enter
+on the panel presses the default button, so Enter applies and closes too.
+The button is 170 px wide so the
+longest translation ("Übernehmen und schließen") needs neither the small
+font nor an ellipsis (LayoutAudit); the bottom-bar summary rectangle ends
+60 px earlier. The DSP line of the status names the engine that converts
+the main output (outConv / convSinc / convSoxr) and, only while drift
+correction runs, the drift resampler's kind (StatusInfo::sinc).
+

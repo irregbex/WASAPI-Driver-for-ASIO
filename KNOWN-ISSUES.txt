@@ -14,6 +14,9 @@ UNDER INVESTIGATION, OPEN (driver bug, fix pending).
 KI-1  Opening DaVinci Resolve cuts all Windows audio (YouTube, recordings)
 ---------------------------------------------------------------------------
 Status: CONFIRMED - caused by another ASIO driver, not by this driver.
+Note (0.9.11): current DaVinci Resolve versions have I/O Engine = "System Audio" (Preferences > System > Audio
+I/O), which uses Windows audio directly and loads no ASIO driver; with it this issue cannot occur and this driver is
+not needed for Resolve (FAQ 14).
 Note (2026-10): this was the OLD "Generic Low Latency ASIO Driver" (asioglld.dll). Steinberg's
 current "Steinberg built-in ASIO Driver" (asiobtin.dll, 1.0.9 of 18 December 2024) is a different driver; in our test it
 ran in shared mode and other apps kept playing. Its panel still shows the old name in some
@@ -244,7 +247,14 @@ trace (TRACING.txt): the AsioCall events show the call and the code returned.
 
 KI-9  Arm64X DLL not yet tested on real Windows on Arm hardware (0.9.9)
 -----------------------------------------------------------------------
-Status: OPEN - testers with a Windows on Arm PC welcome.
+Status: PARTLY CONFIRMED (2026-10) - the native ARM64 half works on real hardware; the ARM64EC half
+(emulated x64 hosts) is still untested. Testers welcome.
+
+First field report (Steinberg forum, October 2026): version 0.9.10 on a Lenovo IdeaPad Slim 5x,
+Snapdragon X Plus, built-in Qualcomm Aqstic audio, 44.1 kHz, native ARM64 Cubase, Shared mode,
+output only. Reported output latency: buffer 256 = 18.1 ms, 128 = 14.4 ms, 64 = 12.9 ms, 32 = 12.2 ms
+(the buffer plus a constant ~11.5 ms from the Windows engine period, as expected in Shared mode).
+The tester noted that Exclusive mode only added latency on that machine.
 
 What is known
   - WasapiDriverARM64X.dll (native ARM64 + ARM64EC code in one file) is
@@ -252,8 +262,8 @@ What is known
     there with dumpbin: the image is ARM64X, it exports exactly the four COM
     entry points and imports no Visual C++ runtime DLL (static runtime). The
     result is the ::notice annotation of the "arm64x" job of every run.
-  - It has NOT been loaded by a real ASIO host yet: neither by a native ARM64
-    host (ARM64 half) nor by an emulated x64 host (ARM64EC half). The x64,
+  - A native ARM64 host (Cubase for Arm) has loaded and played through it (see the first
+    field report above). An emulated x64 host (ARM64EC half) has not been reported yet. The x64,
     x86 and plain ARM64 DLLs are unchanged and keep their test status.
   - Linker warning LNK4279 (SetFilePointerEx, icall push thunks) is expected
     and considered benign (CODE-REVIEW.txt "0.9.9 MSVC / Arm64X"); a real
@@ -303,3 +313,121 @@ What to do
     Windows and the DAW to the same rate (no conversion at all).
   - The Arm64X DLL is the only build whose soxr code is compiled by MSVC; it
     is built in CI only (see KI-9 for its test status).
+
+KI-11 Input underruns and discontinuities in Shared mode at a 256 buffer (0.9.10)
+--------------------------------------------------------------------------------
+Status: FIXED (0.9.11). Found in the first recording test with an audio
+interface that has inputs.
+
+Symptom
+  - Windows 11 x64, Cubase 15, Steinberg UR22mkII through the Microsoft USB
+    audio class driver (endpoint "Line (Steinberg UR22mkII)", fixed at
+    24 bit / 48000 Hz), project at 44.1 kHz, Shared mode with "Low latency"
+    on, microphone on input 1, recording 30 s while a song played.
+  - Buffer 512: "Inputs: underruns 0, drops 0, discontinuities 0", clean
+    recording. Buffer 256: "underruns 8, drops 0, discontinuities 27" in
+    one run (1 / 1 in a second run), audible dropouts in the recording.
+    Output glitches 0 in every run.
+What the log showed
+  - "Output: low-latency Shared (IAudioClient3) period 480 frames at
+    48000 Hz; internal rate conversion 44100->48000 Hz (sinc)" and "Input
+    open (Shared): buffer 974, period 441, FIFO target 882, same hardware as
+    output=1, drift correction=0": the input runs at the DAW rate (its mix
+    rate was 44.1 kHz), one 441-frame packet per 10 ms engine period,
+    capture buffer of about two periods.
+Cause (confirmed by the arithmetic, fixed in 0.9.11)
+  - With a 256 buffer the host runs two callbacks per 10 ms wake-up. The
+    audio thread drained the capture client only at the start of a wake-up;
+    while the host processed its two callbacks (DSP load peaks up to 45 %),
+    the small capture buffer overflowed and Windows dropped packets, which
+    it flags as discontinuities. Each lost packet then left the FIFO short
+    (underrun).
+  - Independently, one late packet (the Windows engine delivers with up to
+    one period of jitter) with a FIFO target of two periods left the second
+    callback of a wake-up without data.
+Fix (0.9.11)
+  - The capture clients are drained again after every host callback of a
+    wake-up (ARCHITECTURE.txt section 62).
+  - When the ASIO buffer is shorter than the capture period, the FIFO
+    target includes one more capture period (+10 ms of reported input
+    latency at 256 with a 441-frame period; logged). Buffers of one period
+    or more are unchanged.
+Workaround on 0.9.10: buffer 512 or larger when recording in Shared mode.
+
+
+KI-12 Mode = Exclusive silently runs Shared when the device is fixed at another rate (0.9.10)
+--------------------------------------------------------------------------------------------
+Status: EXPLAINED in the status since 0.9.11; opening Exclusive at the
+device's fixed rate (with internal conversion) is planned for 1.0.
+
+Symptom
+  - Same interface through the Microsoft USB audio class driver: Windows
+    shows its default format "2 channel, 24 bit, 48000 Hz" greyed out (the
+    device's own firmware or driver fixes the rate). With a 44.1 kHz project
+    and Mode = Exclusive, the panel's Mode combo says Exclusive while "Copy
+    status" says "Active mode: Shared low latency (IAudioClient3)", and
+    nothing explains the difference.
+What the log showed
+  - "Output: trying Exclusive", "Exclusive: no format accepted at 44100 Hz",
+    "Output: Exclusive not available -> Shared", the same for the input.
+    The driver tries Exclusive only at the DAW's rate (every container
+    format, every channel count) and falls back to Shared, where Windows
+    (or the driver's own converter) handles the rate difference.
+0.9.11
+  - The status line says why: "Active mode: Shared ... (Exclusive not
+    available at 44100 Hz; the device is fixed at 48000 Hz by its own
+    driver or the Windows default format)", or "(Exclusive refused,
+    hr=0x...)" for any other error; the panel's bottom bar shows "Exclusive
+    not available, running Shared" in amber; the log line names the
+    device's shared-mode rate.
+What to do
+  - Set the device to the project's rate in the manufacturer's control
+    panel (with the manufacturer's driver installed; the UR22mkII accepted
+    Exclusive at 44.1 kHz as soon as the Yamaha Steinberg USB Driver was
+    installed and set to 44100 Hz), or in Windows > Sound > the device >
+    Properties > Advanced > Default format when it is not greyed out, or
+    set the project to the device's rate. Otherwise Shared mode works
+    (FAQ 21).
+
+
+KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
+------------------------------------------------------------
+Status: FIXED (0.9.11). The most serious of the three recording findings.
+
+Symptom
+  - Same system, now with the Yamaha Steinberg USB Driver installed and set
+    to 44100 Hz; Mode = Exclusive accepted ("Active mode: Exclusive",
+    "Line (Steinberg UR22mkII) [2ch int24, period 256 frames]", reported
+    latency 17.41 ms in / 17.41 ms out).
+  - Buffer 256: the input drop counter grew steadily, about 10 per second
+    (25 a few seconds after opening, 240, then 1234 after a 30 s recording
+    plus playback), underruns 0, discontinuities 0, output glitches 0. The
+    recording was unusable ("sounds horrible"). Buffer 512 (period 512,
+    34.83 ms in / out): 0 drops in 60 s.
+What the log showed
+  - "Exclusive OK: 2ch int24, buffer 256 frames, period 256 frames
+    (5.80 ms), device min period 3.00 ms" for the output and "Exclusive OK:
+    2ch int24, buffer 1536 frames, period 256 frames (5.80 ms)", "Input
+    open (Exclusive): 2ch int24, buffer 1536, period 256, FIFO target 512,
+    same hardware as output=1, drift correction=0" for the input (polled
+    capture with a buffer of six periods, no drift correction: same clock).
+Cause (fixed in 0.9.11)
+  - The overfill limit of the input FIFO without drift correction was
+    bufSize*2 + target*3 = 2048 frames, and every call above it discarded
+    fill - (bufSize + target) frames: with 768 frames waiting after a
+    normal read, one capture call delivering 1536 frames (everything the
+    capture buffer held: the audio thread serviced it a period late, or
+    the device driver delivers in bursts) took the fill to 2304 and 1536
+    real frames (35 ms) were thrown away, every time it happened. No
+    underrun followed because 768 frames remained. At 512 the limit (4096)
+    was never reached.
+Fix (0.9.11)
+  - The three overfill limits include the whole capture buffer (in ASIO
+    frames), and the FIFO capacity grew to match (ARCHITECTURE.txt section
+    61). A backlog of the capture buffer is kept, never dropped. New
+    counters in "Copy status" ("Capture: pulls ..., max packet ..., max per
+    wake ..., max FIFO fill ...") show how the capture client delivers, so
+    a report can tell a burst from a real surplus.
+Workaround on 0.9.10: buffer 512 or larger when recording in Exclusive
+mode.
+

@@ -106,6 +106,13 @@ struct InputSource {
     double               pos = 1.0, ratio = 1.0, fillEma = 0.0, integ = 0.0;
     std::atomic<double>  ratioView{1.0};
     std::atomic<uint32_t> underruns{0}, drops{0}, glitches{0};
+    // 0.9.11 (KI-13 diagnostics): what the capture client delivered, kept by the audio thread as plain atomics (the
+    // audio thread never traces or logs); read by getStatus / onStatsTimer, reset with the counters above.
+    // capPulls: pullSource calls; capEmpty: calls that found no packet; capMulti: calls that found 2 packets or more;
+    // capMaxPkt: largest packet (device frames); capMaxWake: most frames delivered by one call (device frames);
+    // capMaxFill: highest FIFO fill right after a call (ASIO frames).
+    std::atomic<uint32_t> capPulls{0}, capEmpty{0}, capMulti{0}, capMaxPkt{0}, capMaxWake{0}, capMaxFill{0};
+    uint32_t             capBufAsio = 0;        // 0.9.11: capture buffer in ASIO frames (openStreams; pullSource's overfill limits)
     // 0.9.4: the device runs at its mix rate and the driver converts to the ASIO rate (fixedratio.h). conv: device
     // rate -> ASIO rate, before the FIFO. alignedIn: on the output's clock (no drift correction): FIFO frame q is
     // delivered at samplePosition q + inDelay (exact round trip, sched.h); qHead / qMade: absolute index of the
@@ -258,6 +265,12 @@ struct StatusInfo {
     bool   limiterOn;                 // G2
     bool   rateAuto;                  // G4: SampleRate=Auto
     std::wstring hostProfile;         // G3: profile applied for this program ("" = none)
+    // 0.9.11
+    uint32_t capPulls, capEmpty, capMulti, capMaxPkt, capMaxWake, capMaxFill;   // KI-13: capture delivery of the main input
+    bool   exclusiveWanted;           // KI-12: Mode=Exclusive is configured
+    int    exclFail;                  // KI-12: 0 none; 1 the output, 2 the input fell back to Shared (Exclusive refused)
+    double exclFailRate, exclFailMix; // KI-12: rate that was refused; the endpoint's mix (shared) rate at that time (0 unknown)
+    long   exclFailHr;                // KI-12: last HRESULT of the refused Initialize (0 = no format accepted at all)
 };
 
 // Meter snapshot for the panel (H).
@@ -497,6 +510,11 @@ private:
     // 0.5.1 (H): a capture stream was denied by Windows privacy settings (microphone) at the last open
     bool                 captureDenied = false;
     HRESULT              lastExclHr = S_OK;            // last Initialize failure inside initExclusive
+    // 0.9.11 (KI-12): why the last Exclusive attempt of the main output / input fell back to Shared (H only; cleared
+    // by openStreams). exclFailMix = the endpoint's mix rate read when no format was accepted (0 if unknown).
+    int                  exclFail = 0;
+    double               exclFailRate = 0, exclFailMix = 0;
+    long                 exclFailHr = 0;
     void                 noteCaptureHr(HRESULT hr, const char* tag);
 
     HANDLE outEvent = nullptr, stopEvent = nullptr, thread = nullptr;

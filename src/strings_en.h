@@ -119,7 +119,7 @@ inline void Fill_en(const wchar_t** t) {
     t[S_SETTINGS_FOLDER] = L"Settings folder";
     t[S_RESET_COUNTERS] = L"Reset counters";
     t[S_CLOSE] = L"Close";
-    t[S_APPLY] = L"Apply";
+    t[S_APPLY] = L"Apply and Close";
     t[S_USE_MY_SETTINGS] = L"Use my settings again";
     t[S_MSG_LIVE] = L"Applied live.";
     t[S_MSG_RESET] = L"Saved. The DAW will restart the driver.";
@@ -171,7 +171,7 @@ inline void Fill_en(const wchar_t** t) {
     t[S_ST_GLITCH] = L"Output glitches: %u   Timeouts: %u\r\n";
     t[S_ST_INPUTS] = L"Inputs: underruns %u, drops %u, discontinuities %u\r\n";
     t[S_ST_DRIFT] = L"Input drift: %+.1f ppm (%ls)   Loopback: %ls (%+.1f ppm)   Direct monitoring: %ls\r\n";
-    t[S_ST_DSP] = L"DSP load: now %.0f%% / max %.0f%%   Resampler: %ls   Dither: %ls";
+    t[S_ST_DSP] = L"DSP load: now %.0f%% / max %.0f%%   Rate conversion: %ls   Dither: %ls";
     t[S_NONE_PAREN] = L"(none)";
     t[S_CORRECTING] = L"correcting";
     t[S_NO_CORRECTION] = L"no correction";
@@ -367,7 +367,7 @@ inline void Fill_en(const wchar_t** t) {
     t[S_TIP_UPDWEEKLY] = L"Checks for a new version at most once a week, when you open the panel. Off by default.";
     t[S_TIP_UPDDL] = L"Downloads the new Setup and checks its SHA-256 and signature before offering to install it.";
     t[S_TIP_UPDRUN] = L"Starts the verified Setup after you confirm. Close the DAW first.";
-    t[S_TIP_APPLY] = L"Saves and applies the changes. Settings marked with a dot make the DAW restart the driver (1-2 s of silence).";
+    t[S_TIP_APPLY] = L"Saves and applies the changes; closes the panel when they are live or the DAW restarts the driver, else stays open and says why. Dotted settings restart the driver (1-2 s of silence).";
     t[S_TIP_CLOSE] = L"Closes the panel. Changes that were not applied are discarded.";
     t[S_TIP_SAFE] = L"Leaves safe mode and uses your own settings again.";
     t[S_TIP_NAMEEDIT] = L"Name of the profile, up to 40 characters.";
@@ -391,6 +391,15 @@ inline void Fill_en(const wchar_t** t) {
     t[S_FRE_SOXR] = L"soxr (best quality, +8-10 ms)";
     t[S_FRE_SINC] = L"Sinc (low latency)";
     t[S_TIP_FRENG] = L"When the ASIO rate differs from the device rate (e.g. 44.1 kHz project, 48 kHz device). Auto/Sinc: 1.5 ms, SNR 115 dB. soxr: SNR 132 dB, no aliasing, but ~8-10 ms more latency (more at 16-32 kHz). Hermite: lightest.";
+    // 0.9.11: capture delivery (KI-13), rate-conversion engine in the DSP line, Exclusive fallback (KI-12)
+    t[S_ST_CAPTURE] = L"Capture: pulls %u (empty %u, multi-packet %u), max packet %u, max per wake %u, max FIFO fill %u frames\r\n";
+    t[S_ST_DRIFTRES] = L"   Drift resampler: %ls";
+    t[S_CONV_NONE] = L"none";
+    t[S_ST_EXCL_FIXED] = L"%ls (Exclusive not available at %.0f Hz; the device is fixed at %.0f Hz by its own driver or the Windows default format)";
+    t[S_ST_EXCL_REFUSED] = L"%ls (Exclusive refused, hr=0x%08lX)";
+    t[S_SUM_EXCLFALL] = L"  \x00B7  Exclusive not available, running Shared";
+    t[S_ST_EXCL_NOFMT] = L"%ls (Exclusive: no format accepted at %.0f Hz)";
+    t[S_SUM_EXCLFALL_IN] = L"  \x00B7  Exclusive input not available, input runs Shared";
 }
 
 }  // namespace lang

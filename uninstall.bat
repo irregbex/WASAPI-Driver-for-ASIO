@@ -9,7 +9,7 @@ rem 0.9.9: the keys are the same whichever DLL was registered (x64, ARM64, Arm64
 rem Arm64X registration.
 setlocal
 color 8B
-title WASAPI Driver for ASIO 0.9.10 - Uninstall
+title WASAPI Driver for ASIO 0.9.11 - Uninstall
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin

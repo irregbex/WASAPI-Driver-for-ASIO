@@ -105,7 +105,7 @@ int main() {
         printf("    %d tips for %d controls and items\n", n, (int)(sizeof tips::kRequired / sizeof tips::kRequired[0]));
     }
     SetLang(kFr);
-    Check(wcscmp(T(S_APPLY), L"Appliquer") == 0 && wcscmp(TIn(kEn, S_APPLY), L"Apply") == 0, "T() / TIn() lookups", 0);
+    Check(wcscmp(T(S_APPLY), L"Appliquer et fermer") == 0 && wcscmp(TIn(kEn, S_APPLY), L"Apply and Close") == 0, "T() / TIn() lookups", 0);   // 0.9.11
     SetLang(99);
     Check(Current() == kEn && *T(S_COUNT) == 0, "invalid language and id are safe", Current());
     printf("RESULT: %s\n", g_fail ? "FAILED" : "PASSED");

@@ -1298,3 +1298,139 @@ R7 LOW  FIXED  The trace events did not say which converter runs: OutputOpen
                "Hermite", empty without conversion); TRACING.txt updated.
 R8 LOW  FIXED  applySafeSettings (safe mode after a crash) did not reset the
                new key: cfg.frEngine = FrEngine::Auto (the 0.9.9 converter).
+
+0.9.11 input path: FIFO limits, capture draining, Exclusive fallback, panel (self-review; 0 HIGH, 0 MED, 3 LOW FIXED, 4 INFO)
+----------------------------------------------------------------------------------------------------------------------------------
+Scope: the three findings of the first recording test (KNOWN-ISSUES.txt
+KI-11, KI-12, KI-13; ARCHITECTURE.txt sections 61-63), the capture
+counters, "Apply and Close" and the status text. Files: src/driver.cpp
+(initExclusive, openOutput, openInput, openStreams, getStatus, onStatsTimer,
+resetCounters, applyResetRequest, start, pullSource, audio thread),
+src/driver.h (InputSource, StatusInfo, WasapiBridge), src/panel.cpp
+(StatusText, DrawBottom, buttons, IDOK), src/strings_*.h, strings_ids.inc,
+tests/strings_test.cpp, src/common.h, the .rc files, the .bat titles.
+Checked by the five local builds (0 warnings from src/), the 18 offline
+tests (ALL PASSED) and makensis. Not run on Windows here (TEST-GUIDE.txt
+block AB is the acceptance test on real hardware).
+N1 LOW  FIXED  pullSource's overfill limits ignored the capture buffer
+               (KI-13): limits + capture buffer in ASIO frames (ceil(
+               bufFrames * rate / devRate) when the source converts, since
+               the FIFO holds ASIO-rate frames). The FIFO capacity in
+               openStreams went from base + bufFrames*2 + target*2 to base +
+               capture buffer*4 + target*6, so the largest limit
+               (bufSize*4 + target*6 + capture buffer; base already holds
+               bufSize*6) is below the capacity for every path; MultiFifo's
+               clamp (2^22 frames) is far above any value the 0.9.8 device
+               guard (bufFrames, period <= 2^20, target <= 2^21) lets
+               through for realistic devices.
+N2 LOW  FIXED  The capture clients were drained once per wake-up (KI-11):
+               pullAll (lambda, captures icap/lcap/xcap and capResetPosted)
+               runs before the callbacks and after every bufferSwitch while
+               more callbacks follow (both loops). The extra calls cost one
+               GetNextPacketSize per source when nothing arrived.
+               Real-time safety unchanged: pullSource allocates nothing.
+               Ordering: readSource (inside bufferSwitch) still sees the
+               FIFO state produced by the previous pull; the aligned path
+               works on absolute frame indices (qHead / qMade), the drift
+               path on the fill after consumption; neither depends on how
+               many pulls happen between two reads.
+N3 LOW  FIXED  Late-packet margin (KI-11): target += capture period (ASIO
+               frames) only when bufSize < capture period and the source is
+               Shared. Applied in openInput before the converted-source
+               branches: the aligned converted path overwrites target with
+               sched::InLatency (its schedule is exact; the margin is not
+               needed there), the drift-corrected converted path keeps it
+               and adds lookA; the "Windows converts" reopen computes it
+               again. The reported input latency includes the margin
+               (latenciesNow uses target), as the documentation says.
+N4 INFO        The KI-13 fix follows from the arithmetic of the logged
+               numbers (limit 2048, capture buffer 1536, 768 waiting after
+               a read) and the symptom (drops without underruns or
+               discontinuities, clean at 512). The mechanism that makes a
+               polled Exclusive capture deliver up to its whole buffer in
+               one call (thread a period late, or driver bursts) is not
+               observable without the new counters; block AB with the
+               "Capture:" line (max per wake, max FIFO fill) confirms or
+               refutes it on real hardware. If max FIFO fill keeps growing
+               between reports, the surplus is real (clock mismatch) and
+               the next step is drift correction for that source.
+N5 INFO        KI-12 is explained, not fixed: Exclusive is still tried only
+               at the ASIO rate. exclFail / exclFailRate / exclFailMix /
+               exclFailHr are H-only (set in initExclusive and its callers,
+               cleared in openStreams, copied in getStatus); the audio
+               thread never touches them. GetMixFormat on the activated
+               client before the attempts adds one call per Exclusive open.
+N6 INFO        "Apply and Close": IDOK runs Apply and, when Apply returns
+               true, the IDCANCEL sequence (EnableWindow(owner),
+               DestroyWindow), which is what pressing Close right after
+               Apply did in 0.9.10. Apply returns true only for
+               ApplyResult::Live and ResetRequested (the changes are in
+               effect or the DAW restarts the driver). For ResetOnReload
+               (applies at the next driver load), the "saved, no instance
+               held" case and a saved host-profile mapping the panel stays
+               open and shows applyMsg as before (independent review R3).
+               The log always keeps "Panel: configuration saved / applied
+               live". Enter on the panel presses the default button, so
+               Enter now applies and closes too. Alt+A mnemonic: the
+               longest translation fits 170 px (LayoutAudit will log
+               "small font" if a DPI/font combination disagrees; no
+               ellipsis expected).
+N7 INFO        Strings: six new ids at the end of strings_ids.inc (S_COUNT
+               grows; the table is indexed by id, so every language has all
+               of them: strings_test checks the five tables and that the
+               placeholders match English). S_ST_DSP changed its third
+               placeholder's meaning (engine name) but not its type; the
+               test's T()/TIn() lookup was updated to "Apply and Close".
+Checked, no defect: resetCounters / applyResetRequest / start clear the
+six new atomics with the old ones (srcs array now shared by the three);
+the Stats event adds six U32 fields (encoder limit per event not reached:
+trace_test's largest event is bigger); StatusInfo is value-initialised in
+UpdateStatus (StatusInfo s{}) so the new fields are 0 when streams are
+closed; the Copy status line is printed only with hasInput.
+
+Independent review of 0.9.11 (0 HIGH, 1 MED, 5 LOW; all FIXED in 0.9.11)
+-------------------------------------------------------------------------
+Verdict of the reviewer: safe to test on hardware after the fixes below.
+R1 MED  FIXED  initExclusive overwrote exclFailRate / exclFailHr /
+               exclFailMix on every call, so a later attempt (the main
+               input after the output failed, an extra output in openSink)
+               replaced the reason of the first failure. Now only the first
+               failure of an open is recorded (`first = exclFail == 0`);
+               the log line still prints the mix rate of the call it
+               belongs to (local mixRate).
+R2 LOW  FIXED  exclFail == 2 (the output opened Exclusive, the main input
+               did not) was never shown: the status line "Active mode:
+               Exclusive" was right and nothing said the input runs
+               Shared. StatusText adds the same note to the Input line
+               ("<device> (Exclusive not available at ... / no format
+               accepted / refused ...)") and the bottom bar shows "Exclusive
+               input not available, input runs Shared" (S_SUM_EXCLFALL_IN,
+               five languages).
+R3 LOW  FIXED  exclFailHr == 0 means IsFormatSupported refused every
+               candidate and no Initialize was reached; the status printed
+               "(Exclusive refused, hr=0x00000000)". New S_ST_EXCL_NOFMT
+               "(Exclusive: no format accepted at R Hz)" for that case when
+               the "fixed at another rate" explanation does not apply.
+R4 LOW  FIXED  "Apply and Close" closed the panel unconditionally, hiding
+               applyMsg in the cases where it matters (applies at the next
+               driver load; saved only because the host holds no instance;
+               host-profile mapping saved). Apply() returns whether the
+               panel may close (Live, ResetRequested); otherwise it stays
+               open as in 0.9.10. The button's help tip says so (N6).
+R5 LOW  FIXED  The Loopback source (openLoopback) had no late-packet
+               margin although it is a Shared capture with a 10 ms period:
+               target = period + output period + (bufSize < period ?
+               period : 0), as the device input (KI-11).
+R6 LOW  FIXED  pullSource recomputed the capture buffer in ASIO frames
+               (ceil, a division) on every call on the audio thread:
+               InputSource::capBufAsio is computed once in openStreams (the
+               same lambda that sizes the FIFOs) and read by the three
+               overfill limits.
+Checked, no defect: the Stats event with the six new fields stays within
+the 512-byte metadata buffer (384 bytes measured with tlg.h); the capture
+counters are per source and reset together with the old ones; capEmpty of
+about half the pulls is normal with two callbacks per wake-up (the extra
+pull between callbacks usually finds nothing; ARCHITECTURE.txt section
+61); the five builds give 0 warnings, the 18 offline tests pass, makensis
+builds the 0.9.11 Setup with 0 warnings.
+

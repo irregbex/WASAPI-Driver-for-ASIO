@@ -119,7 +119,7 @@ inline void Fill_es(const wchar_t** t) {
     t[S_SETTINGS_FOLDER] = L"Carpeta de configuración";
     t[S_RESET_COUNTERS] = L"Reiniciar contadores";
     t[S_CLOSE] = L"Cerrar";
-    t[S_APPLY] = L"Aplicar";
+    t[S_APPLY] = L"Aplicar y cerrar";
     t[S_USE_MY_SETTINGS] = L"Volver a mi configuración";
     t[S_MSG_LIVE] = L"Aplicado en vivo.";
     t[S_MSG_RESET] = L"Guardado. La DAW reiniciará el driver.";
@@ -171,7 +171,7 @@ inline void Fill_es(const wchar_t** t) {
     t[S_ST_GLITCH] = L"Fallos de salida: %u   Timeouts: %u\r\n";
     t[S_ST_INPUTS] = L"Entradas: underruns %u, descartes %u, discontinuidades %u\r\n";
     t[S_ST_DRIFT] = L"Deriva de entrada: %+.1f ppm (%ls)   Loopback: %ls (%+.1f ppm)   Monitoreo directo: %ls\r\n";
-    t[S_ST_DSP] = L"Carga DSP: actual %.0f%% / máx. %.0f%%   Remuestreo: %ls   Dither: %ls";
+    t[S_ST_DSP] = L"Carga DSP: actual %.0f%% / máx. %.0f%%   Conversión de frecuencia: %ls   Dither: %ls";
     t[S_NONE_PAREN] = L"(ninguna)";
     t[S_CORRECTING] = L"corrigiendo";
     t[S_NO_CORRECTION] = L"sin corrección";
@@ -367,7 +367,7 @@ inline void Fill_es(const wchar_t** t) {
     t[S_TIP_UPDWEEKLY] = L"Busca una versión nueva como máximo una vez por semana, al abrir el panel. Desactivado por defecto.";
     t[S_TIP_UPDDL] = L"Descarga el nuevo instalador y revisa su SHA-256 y su firma antes de ofrecer instalarlo.";
     t[S_TIP_UPDRUN] = L"Inicia el instalador verificado tras tu confirmación. Cierra antes la DAW.";
-    t[S_TIP_APPLY] = L"Guarda y aplica los cambios. Los ajustes marcados con un punto hacen que la DAW reinicie el driver (1-2 s de silencio).";
+    t[S_TIP_APPLY] = L"Guarda y aplica los cambios; cierra el panel si quedan activos o la DAW reinicia el driver, si no sigue abierto y dice por qué. Los ajustes con punto reinician el driver (1-2 s de silencio).";
     t[S_TIP_CLOSE] = L"Cierra el panel. Los cambios no aplicados se descartan.";
     t[S_TIP_SAFE] = L"Sale del modo seguro y vuelve a usar tus ajustes.";
     t[S_TIP_NAMEEDIT] = L"Nombre del perfil, hasta 40 caracteres.";
@@ -391,6 +391,15 @@ inline void Fill_es(const wchar_t** t) {
     t[S_FRE_SOXR] = L"soxr (mejor calidad, +8-10 ms)";
     t[S_FRE_SINC] = L"Sinc (baja latencia)";
     t[S_TIP_FRENG] = L"Si la frecuencia ASIO difiere de la del equipo (p. ej. proyecto 44,1 kHz, equipo 48 kHz). Auto/Sinc: 1,5 ms, SNR 115 dB. soxr: SNR 132 dB, sin aliasing, ~8-10 ms más de latencia (más a 16-32 kHz). Hermite: ligero.";
+    // 0.9.11: capture delivery (KI-13), rate-conversion engine in the DSP line, Exclusive fallback (KI-12)
+    t[S_ST_CAPTURE] = L"Captura: lecturas %u (vacías %u, varios paquetes %u), paquete máx. %u, máx. por ciclo %u, llenado máx. del FIFO %u frames\r\n";
+    t[S_ST_DRIFTRES] = L"   Remuestreo de deriva: %ls";
+    t[S_CONV_NONE] = L"ninguna";
+    t[S_ST_EXCL_FIXED] = L"%ls (Exclusivo no disponible a %.0f Hz; el equipo está fijado a %.0f Hz por su propio driver o por el formato predeterminado de Windows)";
+    t[S_ST_EXCL_REFUSED] = L"%ls (Exclusivo rechazado, hr=0x%08lX)";
+    t[S_SUM_EXCLFALL] = L"  \x00B7  Exclusivo no disponible, funcionando en Compartido";
+    t[S_ST_EXCL_NOFMT] = L"%ls (Exclusivo: ningún formato aceptado a %.0f Hz)";
+    t[S_SUM_EXCLFALL_IN] = L"  \x00B7  Entrada exclusiva no disponible, la entrada funciona en Compartido";
 }
 
 }  // namespace lang

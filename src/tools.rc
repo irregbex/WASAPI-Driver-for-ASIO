@@ -26,8 +26,8 @@
 #define WB_TOOL_FILE "WasapiDriverDiag.exe\0"
 #endif
 1 VERSIONINFO
-FILEVERSION 0,9,10,0
-PRODUCTVERSION 0,9,10,0
+FILEVERSION 0,9,11,0
+PRODUCTVERSION 0,9,11,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -38,8 +38,8 @@ BEGIN
       VALUE "FileDescription", WB_TOOL_DESC
       VALUE "OriginalFilename", WB_TOOL_FILE
       VALUE "ProductName", "WASAPI Driver for ASIO\0"
-      VALUE "FileVersion", "0.9.10\0"
-      VALUE "ProductVersion", "0.9.10\0"
+      VALUE "FileVersion", "0.9.11\0"
+      VALUE "ProductVersion", "0.9.11\0"
       VALUE "LegalCopyright", "GPL-3.0-or-later. ASIO is a registered trademark of Steinberg Media Technologies GmbH.\0"
     END
   END

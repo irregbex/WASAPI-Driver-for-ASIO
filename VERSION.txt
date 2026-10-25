@@ -1,6 +1,6 @@
-WASAPI Driver for ASIO 0.9.10 (public beta)
+WASAPI Driver for ASIO 0.9.11 (public beta)
 ===========================================
-Build: 2026-10-23 UTC
+Build: 2026-10-25 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
   x86:   mingw-w64 GCC 13.2 i686, -O2, static linking
   ARM64: Zig 0.16.0 (clang), aarch64-windows-gnu, -O2 (UCRT)
@@ -27,13 +27,111 @@ Build: 2026-10-23 UTC
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 9100 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
+getDriverVersion() = 9110 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
                      up to 0.9.9 it was major * 1000 + minor * 100 + patch * 10)
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.11 (changes from 0.9.10) - "Inputs"; fixes from the first recording test
+---------------------------------------------------------------------------
+The first test with an audio interface that has inputs (a Steinberg
+UR22mkII on Windows 11 x64 with Cubase 15, recording a microphone while a
+song played) found three input-path problems that playback-only testing
+could not show. The output path is unchanged (0 output glitches in every
+run of that test); only the input side and the control panel changed.
+Summary of all changes:
+- KI-13 FIXED - input drops in Exclusive mode at small buffers. With the
+  manufacturer's driver, Exclusive mode, 44.1 kHz, ASIO buffer 256: the
+  input counted about 10 drops per second (no underruns) and the recording
+  was unusable; at 512 it was clean. Cause: the overfill limit of the
+  input FIFO (bufSize*2 + target*3 = 2048 frames) did not take the capture
+  buffer into account. A polled Exclusive capture client (1536 buffered
+  frames here, period 256) can hand over everything its buffer holds in
+  one call when the audio thread was late for a period or the device
+  delivers in bursts; that backlog is real audio, but it crossed the limit
+  and was discarded (fill - (bufSize + target) frames, about 35 ms, each
+  time). The three overfill limits of pullSource now include the whole
+  capture buffer (in ASIO frames for converted inputs); the FIFO capacity
+  grew accordingly (capture buffer x4 + target x6 on top of the base).
+  Drops are now reserved for a real surplus (a capture clock faster than
+  the output's without drift correction, or callbacks stopped for a long
+  time).
+- KI-11 FIXED - input underruns and discontinuities in Shared mode at small
+  buffers. Shared mode (IAudioClient3), output at 48 kHz, input at 44.1 kHz
+  (capture period 441 frames, FIFO target 882), ASIO buffer 256: 8
+  underruns and 27 discontinuities in 30 s (audible dropouts in the
+  recording); 512 clean. Two causes, two changes: (a) with a buffer shorter
+  than the engine period the host runs two or more callbacks per wake-up,
+  and while they ran the capture buffer (about two periods in Shared mode)
+  could overflow, so Windows dropped packets and flagged discontinuities;
+  the audio thread now drains the capture clients again after every host
+  callback of a wake-up, not only at the start of it. (b) one late capture
+  packet (the Windows engine delivers with up to one period of jitter) left
+  the FIFO short for the second callback: when the ASIO buffer is shorter
+  than the capture period, the FIFO target now includes one more capture
+  period (at 256 with a 441-frame period: +10 ms of reported input latency,
+  logged as "FIFO target +441 frames (late-packet margin)"; 512 and larger,
+  and Exclusive captures with the period equal to the buffer, are
+  unchanged; the Loopback source gets the same margin).
+- KI-12 - silent fallback from Exclusive to Shared now explained. With a
+  device whose own driver (or the Windows "Default format") fixes the rate
+  at 48 kHz, Mode=Exclusive at 44.1 kHz fails ("no format accepted at
+  44100 Hz") and the driver runs Shared; the panel's Mode combo said
+  Exclusive while the status said Shared, with nothing in between. The
+  status line now reads e.g. "Active mode: Shared (Exclusive not
+  available at 44100 Hz; the device is fixed at 48000 Hz by its own driver
+  or the Windows default format)" (or "(Exclusive refused, hr=...)" when
+  the reason is another error, "(Exclusive: no format accepted at
+  44100 Hz)" when no reason is known), the bottom bar of the panel shows
+  "Exclusive not available, running Shared" in amber, the log names the
+  device's shared-mode rate, and FAQ 21 explains what to do. When only the
+  input could not open Exclusive, the note follows the input's name and the
+  bar says "Exclusive input not available, input runs Shared". Opening
+  Exclusive at the device's fixed rate with internal conversion is planned
+  for 1.0 (ROADMAP.txt).
+- Diagnostics for the capture path (KI-13): the audio thread keeps six
+  counters per input (plain atomics, no tracing from the audio thread):
+  pulls, pulls that found no packet, pulls that found two packets or more,
+  largest packet, most frames delivered by one pull, highest FIFO fill
+  after a pull. "Copy status" prints them in a new line ("Capture: pulls
+  ... max FIFO fill ... frames", only with an input) and the ETW "Stats"
+  event carries them (CapturePulls, CaptureEmptyPulls,
+  CaptureMultiPacketPulls, CaptureMaxPacket, CaptureMaxPerWake,
+  CaptureMaxFifoFill). "Reset counters" clears them.
+- Control panel: the "Apply" button is now "Apply and Close" (five
+  languages): it saves, applies and closes the panel in one click when the
+  changes are live or the DAW restarts the driver (0.7.0 to 0.9.10 kept the
+  panel open after Apply; "Close" still discards unapplied changes). When
+  something must be read first (the changes apply at the next driver load,
+  nothing applied because the DAW holds no driver instance, a host-profile
+  mapping saved) the panel stays open and shows it, as before. Enter
+  presses this button. The button is wider (170 px) so no translation is
+  shortened.
+- Status report: the DSP line printed "Resampler: Hermite" (the kind of
+  drift-correction resampler, even when drift correction was off) next to
+  an Engine line that said sinc or soxr. It now prints "Rate conversion:
+  soxr HQ / sinc / Hermite / none" (the engine that converts the main
+  output) and, only while drift correction is active, "Drift resampler:
+  sinc / Hermite".
+- FAQ 22: the input level is very low in Shared mode (the Windows input
+  volume of the device, found at 1 % on a real system; Exclusive mode
+  bypasses it). FAQ 23: an interface with two inputs appears as one stereo
+  "Line" endpoint (split it with mono buses in the DAW).
+- Documents: KNOWN-ISSUES.txt KI-11, KI-12, KI-13; ARCHITECTURE.txt
+  sections 61-63; CODE-REVIEW.txt "0.9.11" and "Independent review of
+  0.9.11" (1 MED, 5 LOW, all fixed); TEST-GUIDE.txt blocks AA
+  (0.9.10 soxr / trace folder, now with the results) and AB (recording
+  with an interface: Shared and Exclusive, 256 and 512); README and
+  COMPATIBILITY (Steinberg UR22mkII tested, inputs, Shared and Exclusive).
+- FAQ 14, COMPATIBILITY, KNOWN-ISSUES KI-1: current DaVinci Resolve
+  versions offer I/O Engine = "System Audio" (Windows audio without ASIO),
+  so this driver is optional for Resolve.
+- Version number: getDriverVersion() returns 9110.
+Not changed: the output path, the converters, the installer logic, the
+tools, the Arm64X build, CI.
 
 0.9.10 (changes from 0.9.9) - "soxr"
 ------------------------------------

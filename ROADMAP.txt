@@ -218,3 +218,22 @@ Done in 0.9.10 (soxr)
 Next: listening and latency results with soxr on real hardware (TEST-GUIDE.txt
 block AA); possibly a lower-latency soxr recipe (shorter FFT blocks need a
 different filter split).
+
+Done in 0.9.11 (inputs; fixes from the first recording test)
+------------------------------------------------------------
+- KI-13: input drops in Exclusive mode at small buffers (overfill limit
+  without the capture buffer). FIXED.
+- KI-11: input underruns / discontinuities in Shared mode at small buffers
+  (capture drained after every host callback; late-packet margin). FIXED.
+- KI-12: the Exclusive -> Shared fallback is now explained in the status and
+  the panel (device fixed at another rate). EXPLAINED.
+- Capture delivery counters in "Copy status" and the Stats trace event;
+  "Apply and Close"; "Rate conversion" in the DSP line. DONE.
+Next: repeat TEST-GUIDE.txt block AB (recording, Shared and Exclusive, 256 and
+512) on 0.9.11 with an interface that has inputs; the same with a USB
+microphone and a laptop's built-in microphone (the same capture path).
+Planned for 1.0: Exclusive mode at the device's fixed rate with the internal
+rate conversion (today Exclusive is tried only at the project's rate and
+falls back to Shared when the device is fixed at another rate, KI-12);
+a dedicated capture thread (event-driven capture independent of the output
+wake-ups) if block AB still shows discontinuities on some device.

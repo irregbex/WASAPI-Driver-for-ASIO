@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.10 (public beta) - Test guide
+WASAPI Driver for ASIO 0.9.11 (public beta) - Test guide
 ========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -11,7 +11,7 @@ the report.
 
 Preparation
 -----------
-P0  Install WASAPI-Driver-for-ASIO-0.9.10-Setup.exe (README section 3).
+P0  Install WASAPI-Driver-for-ASIO-0.9.11-Setup.exe (README section 3).
     OK = it finishes without errors and "WASAPI Driver for ASIO" appears in
     the DAW.
 
@@ -885,7 +885,67 @@ AA7 Settings and profiles: save a profile with Rate conversion = Sinc, load
     another profile, then the first again.  OK = the combo follows the
     profile; config.ini [General] has FixedRatioEngine=Auto|Soxr|Sinc|Hermite.
 AA8 The 0.9.10 build reports its version: Status tab / About show 0.9.10;
-    the automatic test report says "version 9100".
+    the automatic test report says "version 9100" (0.9.11: 9110).
+AA9 (0.9.10) Diagnostic trace folder: Start menu > "WASAPI Driver for ASIO
+    Start trace", play 30 s in the DAW, "... Stop trace".  OK = Explorer
+    opens C:\Users\Public\Documents\WASAPI Driver for ASIO\Traces with the
+    new .etl selected (any account that answered the UAC prompt), and
+    TRACING.txt's check (tracerpt) finds events of the WASAPIDriverForASIO
+    provider with no user or computer names.
+Results on the maintainer's system (Windows 11 x64, Cubase 15, Bluetooth
+earbuds, 44.1 kHz project on a 48 kHz device): AA1 soxr selected and
+applied without errors, clean sound, output latency +8-10 ms as expected;
+AA9 trace of 1.6 MB with 159 provider events (DriverLoaded Version=0.9.10,
+AsioCall, Stats, OutputOpen, AsioBuffers, StreamsClosed), 0 events lost,
+saved in the Public folder. Regression on 0.9.10 (blocks C and W):
+Bluetooth case on/off without a dialog, buffer 256 -> 512 -> 256 with 0
+glitches, sleep / resume with the engine reopened by itself.
+
+Block AB - 0.9.11 recording with an audio interface that has inputs
+-------------------------------------------------------------------
+Why: playback-only tests cannot show the input path. 0.9.10 passed every
+playback test and failed this block at a 256 buffer in both modes
+(KNOWN-ISSUES.txt KI-11, KI-13). Needs a USB (or other) interface with at
+least one input and a microphone or an instrument on input 1, the
+manufacturer's driver installed if there is one, and a DAW project at
+44.1 kHz with one audio track that plays a song. Cubase names below.
+Preparation: Windows > Settings > System > Sound > Input > the interface
+> Input volume 100 (FAQ 22). Panel: Output and Input = the interface,
+Advanced > "Write log.txt" on. Cubase > Studio > Audio Connections >
+Inputs: one mono bus per input (FAQ 23); an audio track with Input =
+input 1, record-enabled.
+Each run: set Mode and Buffer, Apply (the DAW restarts the driver), then
+panel > Status > "Reset counters" (or change the buffer and back), record
+30 s while the song plays, Stop, play the recording from the start and
+listen, then "Copy status" and keep the text.
+AB1 Shared, buffer 512.  OK = "Inputs: underruns 0, drops 0,
+    discontinuities 0", "Output glitches: 0", the recording has no holes or
+    clicks, the voice/instrument is in time with the song.
+AB2 Shared, buffer 256.  OK = the same (0.9.10 here: underruns 8,
+    discontinuities 27 in 30 s, audible dropouts). Note the reported input
+    latency: with a capture period longer than the buffer it includes one
+    extra period (log: "FIFO target +N frames (late-packet margin)").
+AB3 Exclusive, buffer 512.  OK = "Active mode: Exclusive", counters 0,
+    clean recording. If the status says "Shared (Exclusive not available at
+    44100 Hz; the device is fixed at 48000 Hz ...)": set the interface to
+    44100 Hz in the manufacturer's control panel (FAQ 21) and repeat; if
+    that is not possible, note it and skip AB3/AB4 (KI-12).
+AB4 Exclusive, buffer 256.  OK = counters 0 (0.9.10 here: drops growing
+    about 10 per second, recording unusable), clean recording, reported
+    latency equal in and out (e.g. 17.4 ms at 44.1 kHz).
+AB5 In every "Copy status" of AB1-AB4 the new line "Capture: pulls N
+    (empty E, multi-packet M), max packet P, max per wake W, max FIFO fill
+    F frames" is present.  OK = P is the capture period (e.g. 441, 480 or
+    256), W is at most the capture buffer ("Input open ... buffer B" in the
+    log), F stays below bufSize*2 + target*3 + B. Send the four texts with
+    the report when anything else fails: they tell a burst from a real
+    surplus.
+AB6 Monitoring (optional): Direct monitoring on in the panel while
+    recording.  OK = the input is heard without clicks in both modes.
+If AB1-AB4 fails: send log.txt (with the "Input open" line), the four
+"Copy status" texts, the interface model and the driver it uses (Windows
+> Device Manager > the interface > Driver), and whether the manufacturer's
+driver was installed.
 
 Useful data for the report
 --------------------------
