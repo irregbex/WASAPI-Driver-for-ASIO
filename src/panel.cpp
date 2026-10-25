@@ -1667,7 +1667,9 @@ static std::wstring StatusText(const StatusInfo& s, const Config& c) {
             FmtW(T(S_ST_LAT), 1000.0 * s.inLat / s.rate, 1000.0 * s.outLat / s.rate) +
             FmtW(T(S_ST_GLITCH), s.outGlitches, s.timeouts) + FmtW(T(S_ST_INPUTS), s.inUnderruns, s.inDrops, s.inGlitches) +
             // 0.9.11 (KI-13): what the capture client delivered (only with an input; all zero before the first pull)
-            (s.hasInput ? FmtW(T(S_ST_CAPTURE), s.capPulls, s.capEmpty, s.capMulti, s.capMaxPkt, s.capMaxWake, s.capMaxFill) : std::wstring()) +
+            // 0.9.12: fill now and the two gap counters (ms with one decimal; microseconds inside the driver)
+            (s.hasInput ? FmtW(T(S_ST_CAPTURE), s.capPulls, s.capEmpty, s.capMulti, s.capMaxPkt, s.capMaxWake, s.capMaxFill, s.capFillNow,
+                               s.wakeGapMaxUs / 1000.0, s.capReadGapMaxUs / 1000.0) : std::wstring()) +
             FmtW(T(S_ST_DRIFT), s.inPpm, s.inResample ? T(S_CORRECTING) : T(S_NO_CORRECTION), s.hasLoopback ? T(S_ON_L) : T(S_OFF_L),
                  s.lbPpm, s.monitorActive ? T(S_ON_L) : T(S_OFF_L)) +
             // 0.9.11: the engine that really converts the main output (0.9.10 printed the drift resampler's kind here,

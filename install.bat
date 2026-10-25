@@ -14,7 +14,7 @@ rem Without that file (or after renaming it) the 0.9.8 question (native ARM64 or
 rem keep WasapiDriver32.dll in the 32-bit view (WOW6432Node), as before.
 setlocal
 color 4A
-title WASAPI Driver for ASIO 0.9.11 - Install
+title WASAPI Driver for ASIO 0.9.12 - Install
 fltmc >nul 2>&1
 if not errorlevel 1 goto :admin
 if /i "%~1"=="elevated" goto :noadmin

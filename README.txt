@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.11 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+WASAPI Driver for ASIO(R) 0.9.12 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
 ======================================================================================================================
 
 A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
@@ -6,10 +6,10 @@ devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cuba
 DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
 earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
 
-WHERE TO GET IT (0.9.11, public beta)
+WHERE TO GET IT (0.9.12, public beta)
 -------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.11. Open its release (or a newer
+  The current public beta is version 0.9.12. Open its release (or a newer
   release) and download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
@@ -83,7 +83,7 @@ in the installation folder.
 
 RELEASE FOLDER LAYOUT
 ---------------------
-  WASAPI-Driver-for-ASIO-0.9.11-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
+  WASAPI-Driver-for-ASIO-0.9.12-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
   README.txt          This file (complete manual).
   Docs\               QUICK-START.txt (one page), FAQ.txt, COMPATIBILITY.txt (tested hosts and devices),
                       VERSION.txt (changelog), TEST-GUIDE.txt (test plan), ROADMAP.txt, TRACING.txt
@@ -213,12 +213,12 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.11-Setup.exe from the 0.9.11 release
+  0. Download WASAPI-Driver-for-ASIO-0.9.12-Setup.exe from the 0.9.12 release
      (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
      optionally compare its SHA-256 with SHA256SUMS.txt. For a newer version,
      use that version's release assets.
   1. Close the DAW.
-  2. Double-click WASAPI-Driver-for-ASIO-0.9.11-Setup.exe.
+  2. Double-click WASAPI-Driver-for-ASIO-0.9.12-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
      not digitally signed).
   4. UAC: Yes. Welcome > Next. Notices > Next. License: I Agree. Folder: keep
@@ -881,7 +881,7 @@ Diagnostic traces (.etl, 0.9.8) are written only when you record one, where
   automatic resets are not delivered.
 - No Authenticode signature unless a release was built with a certificate
   (SIGNING.txt); unsigned files make SmartScreen warn.
-- Features from 0.2.x to 0.9.11 have not been fully tested on real hardware
+- Features from 0.2.x to 0.9.12 have not been fully tested on real hardware
   yet (see TEST-GUIDE.txt and COMPATIBILITY.txt). Beta features are listed
   in section 36.
 
@@ -1306,16 +1306,19 @@ The update check is beta until the project has a public release.
 ----------------------------------------------------------------------
 0.9.1 to 0.9.6 are release candidates and 0.9.7 is the first public beta;
 0.9.8 hardens it (robustness, tests, diagnostic tracing), 0.9.9 adds the
-Arm64X DLL for Windows on Arm, 0.9.10 the soxr rate conversion and 0.9.11
-the input-path fixes from the first recording test (beta):
+Arm64X DLL for Windows on Arm, 0.9.10 the soxr rate conversion, 0.9.11
+and 0.9.12 the input-path fixes from the recording tests (beta):
 no new features until 1.0, only fixes
 (0.9.2 adds help tips and 0.9.3 the application icon, accepted as exceptions:
 interface only, no audio change; 0.9.4 extends the low-latency engine to
 every sample rate, see section 41).
 Stable (tested on real hardware, see COMPATIBILITY.txt):
 - one output device and one input device, Shared and Exclusive mode
-  (0.9.11: recording with a USB interface, Steinberg UR22mkII, tested in
-  both modes at 256 and 512 after the KI-11 / KI-13 fixes);
+  (recording with a USB interface, Steinberg UR22mkII, tested in both
+  modes at 256 and 512: on 0.9.11 Shared 256 and Exclusive 512 were clean,
+  Shared 512 and Exclusive 256 failed; 0.9.12 fixes both, event-driven
+  Exclusive capture and a margin at every buffer size, to be confirmed by
+  TEST-GUIDE block AB; see KNOWN-ISSUES KI-11 / KI-13);
 - buffer sizes, fixed sample rates, drift correction, resampler, gain,
   limiter, latency offsets, loopback, direct monitoring, profiles;
 - control panel, monitor window, tray icon, themes, languages, visuals;

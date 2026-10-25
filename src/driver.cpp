@@ -1847,7 +1847,10 @@ ASIOError WasapiBridge::startThread() {
     for (UINT32 i = 0; i < primDelayFrames; ++i) { float* f = primDelay.pushSlot(); for (int c = 0; c < primDelay.ch; ++c) f[c] = 0.f; }
     for (InputSource* s : srcs) { s->fifo.clear(); s->primed = false; s->pos = s->posBase; s->ratio = 1.0; s->ratioView = 1.0;
                                   s->integ = 0.0; s->underruns = 0; s->drops = 0; s->glitches = 0;
-                                  s->capPulls = 0; s->capEmpty = 0; s->capMulti = 0; s->capMaxPkt = 0; s->capMaxWake = 0; s->capMaxFill = 0; }   // 0.9.11
+                                  s->capPulls = 0; s->capEmpty = 0; s->capMulti = 0; s->capMaxPkt = 0; s->capMaxWake = 0; s->capMaxFill = 0;   // 0.9.11
+                                  s->fillNow = 0; s->pullGapMaxUs = 0; s->lastPullQpc = 0;                                                  // 0.9.12
+                                  if (s->event) ResetEvent(s->event); }      // 0.9.12: drop a stale capture signal from the previous cycle
+    wakeGapMaxUs = 0;                     // 0.9.12
     // 0.7.0: the audio thread starts with the current live parameters and silent monitoring ramps.
     lv = liveH; lvSeq = pubLive.version();
     for (int c = 0; c < kMaxCh; ++c) { hostRampL[c].cur = 0.f; hostRampR[c].cur = 0.f; }
@@ -2003,7 +2006,9 @@ void WasapiBridge::onStatsTimer() {
              wbtrace::U32("MonitorUnderruns", monUnder.load()),
              wbtrace::U32("CapturePulls", srcIn.capPulls.load()), wbtrace::U32("CaptureEmptyPulls", srcIn.capEmpty.load()),      // 0.9.11 (KI-13)
              wbtrace::U32("CaptureMultiPacketPulls", srcIn.capMulti.load()), wbtrace::U32("CaptureMaxPacket", srcIn.capMaxPkt.load()),
-             wbtrace::U32("CaptureMaxPerWake", srcIn.capMaxWake.load()), wbtrace::U32("CaptureMaxFifoFill", srcIn.capMaxFill.load()));
+             wbtrace::U32("CaptureMaxPerWake", srcIn.capMaxWake.load()), wbtrace::U32("CaptureMaxFifoFill", srcIn.capMaxFill.load()),
+             wbtrace::U32("CaptureFifoFillNow", srcIn.fillNow.load()), wbtrace::U32("WakeGapMaxUs", wakeGapMaxUs.load()),   // 0.9.12 (KI-11)
+             wbtrace::U32("CaptureReadGapMaxUs", srcIn.pullGapMaxUs.load()));
 }
 
 // ---------------------------------------------------------------- WASAPI: opening streams (host thread)
@@ -2013,7 +2018,11 @@ void WasapiBridge::onStatsTimer() {
 // current rate with wantCh channels; on AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED it retries with the aligned duration.
 // out/fmt/frames/period receive the client, format, buffer size and period. Returns false if nothing worked
 // (lastExclHr keeps the last HRESULT so the caller can detect privacy blocking).
-bool WasapiBridge::initExclusive(IMMDevice* dev, IAudioClient** out, DevFmt& fmt, UINT32& frames, UINT32& period, bool event, int wantCh) {
+// 0.9.12 (KI-13): periodFrames > 0 asks for that periodicity (frames at `rate`) instead of the ASIO buffer size; an
+// event-driven capture passes the device's default period, the one its driver processes natively, so that every
+// event carries exactly one real packet. With a periodicity of its own choice (256 frames) the Yamaha Steinberg USB
+// driver reported 512-frame packets at every 256-frame wake-up in polled mode, twice the audio that existed.
+bool WasapiBridge::initExclusive(IMMDevice* dev, IAudioClient** out, DevFmt& fmt, UINT32& frames, UINT32& period, bool event, int wantCh, UINT32 periodFrames) {
     static const int cand[][3] = {{32, 32, 1}, {32, 32, 0}, {32, 24, 0}, {24, 24, 0}, {16, 16, 0}};
     int chans[3] = {wantCh, 2, 1}; int list[3]; int nch = 0;
     for (int c : chans) { bool dup = false; for (int j = 0; j < nch; ++j) if (list[j] == c) dup = true; if (!dup) list[nch++] = c; }
@@ -2031,7 +2040,7 @@ bool WasapiBridge::initExclusive(IMMDevice* dev, IAudioClient** out, DevFmt& fmt
     if (first) exclFailMix = mixRate;
     REFERENCE_TIME defP = 0, minP = 0;
     c->GetDevicePeriod(&defP, &minP);
-    REFERENCE_TIME want = (REFERENCE_TIME)(10000000.0 * bufSize / rate + 0.5);
+    REFERENCE_TIME want = (REFERENCE_TIME)(10000000.0 * (periodFrames ? (double)periodFrames : (double)bufSize) / rate + 0.5);
     if (want < minP) want = minP;
     REFERENCE_TIME dur = want;
     if (!event) {
@@ -2310,13 +2319,54 @@ void WasapiBridge::openDeviceInput() {
 // are already set. tryExclusive only for the main input with Mode=Exclusive.
 void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GUID& container, bool tryExclusive) {
     HRESULT hr;
-    s.exclusive = false;
+    s.exclusive = false; s.eventDriven = false;
+    if (s.event) { CloseHandle(s.event); s.event = nullptr; }   // 0.9.12: never two handles for one source
     UINT32 capPeriod = 0;
     if (tryExclusive) {
         Log("%s: trying Exclusive", s.tag);
         lastExclHr = S_OK;
-        if (initExclusive(dev, &s.client, s.fmt, s.bufFrames, capPeriod, false, devCh)) s.exclusive = true;
-        else { noteCaptureHr(lastExclHr, s.tag); if (&s == &srcIn && !exclFail) exclFail = 2; Log("%s: Exclusive not available -> Shared", s.tag); }   // 0.9.11 (KI-12)
+        // 0.9.12 (KI-13): event-driven capture at the device's DEFAULT period (its driver's native packet; minimum
+        // period if the default is below it), buffer = period (event mode requires equal values). 0.9.11 and earlier
+        // polled the capture from the output wake-up with a periodicity of the ASIO buffer size and a buffer of four
+        // periods; the Yamaha Steinberg USB driver then reported 512-frame packets at every 256-frame wake-up (twice
+        // real time, the FIFO grew 256 frames per wake-up and the overfill limit discarded real audio: KI-13).
+        UINT32 defFrames = 0;
+        {
+            IAudioClient* probe = nullptr;
+            if (SUCCEEDED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&probe)) && probe) {
+                REFERENCE_TIME defP = 0, minP = 0;
+                if (SUCCEEDED(probe->GetDevicePeriod(&defP, &minP))) defFrames = RefTimeFrames(rate, (double)(defP > minP ? defP : minP));
+                probe->Release();
+            }
+        }
+        // Independent review of 0.9.12 (H1/M1): an event-driven stream double-buffers ONE period; if the output
+        // service of a wake-up (the host callback for one ASIO block) lasts longer than a capture period, the
+        // packet signalled meanwhile would be overwritten before it is drained. The periodicity is therefore the
+        // smallest multiple of the device's default period that is >= the ASIO buffer (defFrames when bufSize fits
+        // in one period): the double-buffer window is never shorter than one host block. Input latency in Exclusive
+        // mode grows with large buffers accordingly (documented).
+        UINT32 wantFrames = defFrames;
+        if (defFrames > 0 && (UINT32)bufSize > defFrames) wantFrames = defFrames * (UINT32)((bufSize + (long)defFrames - 1) / (long)defFrames);
+        if (defFrames > 0 && initExclusive(dev, &s.client, s.fmt, s.bufFrames, capPeriod, true, devCh, wantFrames)) {
+            s.event = CreateEventW(nullptr, FALSE, FALSE, nullptr);          // auto-reset: one wake-up per signal
+            if (s.event && SUCCEEDED(s.client->SetEventHandle(s.event))) {
+                s.exclusive = true; s.eventDriven = true;
+                if (capPeriod == defFrames) snprintf(s.periodNote, sizeof s.periodNote, "device default");
+                else if (capPeriod == wantFrames) snprintf(s.periodNote, sizeof s.periodNote, "%u x device default", wantFrames / defFrames);
+                else snprintf(s.periodNote, sizeof s.periodNote, "aligned by the device; default %u", defFrames);
+            }
+            else {
+                // Fallback: Shared, as when no Exclusive format is accepted (KI-12 report). Not expected on a device
+                // that just accepted the event-driven Initialize.
+                Log("%s: event-driven Exclusive: %s failed -> Shared", s.tag, s.event ? "SetEventHandle" : "CreateEvent");
+                if (s.event) { CloseHandle(s.event); s.event = nullptr; }
+                SafeRelease(s.client); s.bufFrames = 0; capPeriod = 0;
+                if (&s == &srcIn && !exclFail) { exclFail = 2; exclFailRate = rate; exclFailHr = (long)E_FAIL; exclFailMix = 0; }
+            }
+        } else {
+            if (defFrames == 0) { Log("%s: GetDevicePeriod failed, no event-driven Exclusive capture", s.tag); if (!exclFail) { exclFailRate = rate; exclFailHr = (long)E_FAIL; exclFailMix = 0; } }
+            noteCaptureHr(lastExclHr, s.tag); if (&s == &srcIn && !exclFail) exclFail = 2; Log("%s: Exclusive not available -> Shared", s.tag);   // 0.9.11 (KI-12)
+        }
     }
     s.convOn = s.alignedIn = false; s.devRate = rate; s.inDelay = 0; s.qOff = 0;
     bool atMix = false;                       // 0.9.4: opened at the device's mix format and rate
@@ -2395,17 +2445,23 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
         if (mix) CoTaskMemFree(mix);
         if (!atMix && !openAuto()) return;
     }
-    if (FAILED(s.client->GetService(__uuidof(IAudioCaptureClient), (void**)&s.cap))) { Log("%s: GetService failed", s.tag); SafeRelease(s.client); return; }
+    if (FAILED(s.client->GetService(__uuidof(IAudioCaptureClient), (void**)&s.cap))) {
+        Log("%s: GetService failed", s.tag); SafeRelease(s.client);
+        if (s.event) { CloseHandle(s.event); s.event = nullptr; }   // 0.9.12 (review): no event-driven flags without a client
+        s.eventDriven = false; s.exclusive = false;
+        return;
+    }
     s.period   = capPeriod;
     s.target   = (UINT32)lround(capPeriod * rate / s.devRate) + outPeriodAsio;   // ASIO frames
-    // 0.9.11 (KI-11): with an ASIO buffer shorter than the capture period the host runs two or more callbacks per
-    // wake-up, so one late capture packet (Shared mode: the Windows engine delivers with up to one period of jitter)
-    // left the FIFO short for the second callback (256 frames with a 441-frame period: underruns and audible
-    // dropouts; 512: clean). One more capture period of margin only in that case (an Exclusive capture with the
-    // period equal to the ASIO buffer, or a buffer of at least one period, is unchanged).
+    // 0.9.11 (KI-11): one late capture packet (the Windows engine delivers with up to one period of jitter) left the
+    // FIFO short for the next callback (256 frames with a 441-frame period: underruns and audible dropouts). 0.9.11
+    // added one capture period of margin only when the ASIO buffer was shorter than the period; the test of 0.9.11
+    // (TEST-GUIDE block AB) then showed the same underruns at 512 (22 underruns / 46 discontinuities in 85 s, where
+    // a 512 block consumed the FIFO down to about 390 frames before a late packet), so 0.9.12 adds the margin at
+    // every buffer size, for Shared and for the event-driven Exclusive capture alike (its packets arrive on their own
+    // event, out of phase with the output). The reported input latency includes it (+1 capture period).
     const UINT32 capPeriodAsio = (UINT32)lround(capPeriod * rate / s.devRate);
-    const bool   jitterMargin = !s.exclusive && capPeriodAsio > 0 && (UINT32)bufSize < capPeriodAsio;
-    if (jitterMargin) { s.target += capPeriodAsio; Log("%s: ASIO buffer %ld < capture period %u: FIFO target +%u frames (late-packet margin)", s.tag, bufSize, capPeriodAsio, capPeriodAsio); }
+    if (capPeriodAsio > 0) { s.target += capPeriodAsio; Log("%s: FIFO target +%u frames (late-packet margin of one capture period)", s.tag, capPeriodAsio); }
     // Auto: correct drift only when input and output are on different physical hardware (different or unknown ContainerId)
     // {00000000-0000-0000-FFFF-FFFFFFFFFFFF} = ContainerId shared by all built-in devices (does not imply the same clock)
     static const GUID zero = {};
@@ -2439,7 +2495,7 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
                 SafeRelease(s.cap); SafeRelease(s.client); s.bufFrames = s.target = s.period = 0; return;
             }
             s.period = capPeriod;
-            s.target = capPeriod + outPeriodAsio + ((UINT32)bufSize < capPeriod ? capPeriod : 0);   // 0.9.11 (KI-11) margin as above
+            s.target = capPeriod + outPeriodAsio + capPeriod;   // 0.9.12 (KI-11): late-packet margin as above, at every buffer size
             char b[32]; FmtStr(s.fmt, b, sizeof b);
             Log("%s open (Shared, Windows converts): %s, buffer %u, period %u, FIFO target %u, drift correction=%d",
                 s.tag, b, s.bufFrames, capPeriod, s.target, (int)s.resample);
@@ -2458,9 +2514,14 @@ void WasapiBridge::openInput(InputSource& s, IMMDevice* dev, int devCh, const GU
             s.conv.engineName(), s.conv.ahead(), s.alignedIn ? ", aligned to the output clock" : ", drift-corrected", s.inDelay);
     }
     char b[32]; FmtStr(s.fmt, b, sizeof b);
-    Log("%s open (%s): %s, buffer %u, period %u, FIFO target %u, same hardware as output=%d, drift correction=%d",
-        s.tag, s.exclusive ? "Exclusive" : "Shared", b, s.bufFrames, capPeriod, s.target, (int)sameBox, (int)s.resample);
+    if (s.eventDriven)
+        Log("%s open (Exclusive, event-driven): %s, period %u (%s), buffer %u, FIFO target %u, same hardware as output=%d, drift correction=%d",
+            s.tag, b, capPeriod, s.periodNote, s.bufFrames, s.target, (int)sameBox, (int)s.resample);
+    else
+        Log("%s open (%s): %s, buffer %u, period %u, FIFO target %u, same hardware as output=%d, drift correction=%d",
+            s.tag, s.exclusive ? "Exclusive" : "Shared", b, s.bufFrames, capPeriod, s.target, (int)sameBox, (int)s.resample);
     WB_TRACE(wbtrace::kLvlInfo, wbtrace::kKwStream, "InputOpen", wbtrace::Str("Source", s.tag), wbtrace::Bool("Exclusive", s.exclusive),
+             wbtrace::Bool("EventDriven", s.eventDriven),   // 0.9.12 (KI-13)
              wbtrace::Str("Format", b), wbtrace::F64("DeviceRate", s.devRate), wbtrace::U32("BufferFrames", s.bufFrames),
              wbtrace::U32("PeriodFrames", capPeriod), wbtrace::U32("TargetFrames", s.target), wbtrace::Bool("SameHardware", sameBox),
              wbtrace::Bool("DriftCorrection", s.resample), wbtrace::Bool("Converting", s.convOn), wbtrace::Bool("AlignedToOutput", s.alignedIn),
@@ -2517,7 +2578,7 @@ void WasapiBridge::openLoopback() {
     if (FAILED(s.client->GetService(__uuidof(IAudioCaptureClient), (void**)&s.cap))) { Log("Loopback: GetService failed"); SafeRelease(s.client); return; }
     s.client->GetBufferSize(&s.bufFrames);
     s.period = (UINT32)(rate * 0.010);
-    s.target = s.period + outPeriodAsio + ((UINT32)bufSize < s.period ? s.period : 0);   // 0.9.11 (KI-11, review R4): late-packet margin as the device input
+    s.target = s.period + outPeriodAsio + s.period;   // 0.9.12 (KI-11): late-packet margin at every buffer size, as the device input
     Log("Loopback open (%s): buffer %u frames, target %u, drift correction=%d", lbName, s.bufFrames, s.target, (int)s.resample);
     WB_TRACE(wbtrace::kLvlInfo, wbtrace::kKwStream, "LoopbackOpen", wbtrace::Str("Mode", lbName), wbtrace::U32("BufferFrames", s.bufFrames),
              wbtrace::U32("TargetFrames", s.target), wbtrace::Bool("DriftCorrection", s.resample));
@@ -2635,6 +2696,10 @@ bool WasapiBridge::openStreams() {
 void WasapiBridge::closeSource(InputSource& s) {
     if (threadStuck) { s.cap = nullptr; s.client = nullptr; }   // leak: the stuck thread still holds references
     SafeRelease(s.cap); SafeRelease(s.client);
+    // 0.9.12: the capture event. A stuck audio thread may still be waiting on it: the handle is leaked then, like the
+    // COM references above (closing it would make its WaitForMultipleObjects fail inside the host's callback).
+    if (s.event) { if (!threadStuck) CloseHandle(s.event); s.event = nullptr; }
+    s.eventDriven = false;
     s.bufFrames = s.target = s.period = 0; s.resample = false; s.exclusive = false; s.sinc = false; s.posBase = 1.0;
     s.convOn = s.alignedIn = false; s.devRate = 0; s.inDelay = 0;   // 0.9.4
 }
@@ -2834,7 +2899,13 @@ void WasapiBridge::buildRoute() {
 void WasapiBridge::getStatus(StatusInfo& s) {
     s.streamsOpen = streamsOpen; s.outExclusive = outExclusive; s.outLowLatency = outLowLatency;
     FmtStr(outFmt, s.outFmt, sizeof s.outFmt);
-    if (srcIn.client) FmtStr(srcIn.fmt, s.inFmt, sizeof s.inFmt); else strcpy(s.inFmt, "-");
+    if (srcIn.client) {
+        FmtStr(srcIn.fmt, s.inFmt, sizeof s.inFmt);
+        if (srcIn.eventDriven) {         // 0.9.12 (KI-13): "[2ch int24, event-driven, period 441]"
+            char t[48]; snprintf(t, sizeof t, ", event-driven, period %u", srcIn.period);
+            strncat(s.inFmt, t, sizeof s.inFmt - strlen(s.inFmt) - 1);
+        }
+    } else strcpy(s.inFmt, "-");
     s.rate = rate; s.bufSize = bufSize; s.outPeriod = outPeriod;
     s.engineKind = streamsOpen ? engineKind : -1; s.outDevRate = outDevRate; s.mixRate = mixRateOpen;
     s.outConv = streamsOpen && outConvOn;
@@ -2865,6 +2936,9 @@ void WasapiBridge::getStatus(StatusInfo& s) {
     s.capPulls = srcIn.capPulls.load(std::memory_order_relaxed); s.capEmpty = srcIn.capEmpty.load(std::memory_order_relaxed);
     s.capMulti = srcIn.capMulti.load(std::memory_order_relaxed); s.capMaxPkt = srcIn.capMaxPkt.load(std::memory_order_relaxed);
     s.capMaxWake = srcIn.capMaxWake.load(std::memory_order_relaxed); s.capMaxFill = srcIn.capMaxFill.load(std::memory_order_relaxed);
+    // 0.9.12
+    s.capFillNow = srcIn.fillNow.load(std::memory_order_relaxed); s.capReadGapMaxUs = srcIn.pullGapMaxUs.load(std::memory_order_relaxed);
+    s.wakeGapMaxUs = wakeGapMaxUs.load(std::memory_order_relaxed);
     s.exclusiveWanted = cfg.exclusive; s.exclFail = streamsOpen ? exclFail : 0;
     s.exclFailRate = exclFailRate; s.exclFailMix = exclFailMix; s.exclFailHr = exclFailHr;
     // 0.9.0 (H4): these lines are shown in the panel, so they use the interface language (lang::T); the log and
@@ -2933,7 +3007,8 @@ void WasapiBridge::resetCounters(uint32_t what) {
     if (what & WB_RESET_STATS) {
         loadMax = 0.f; cntOutGlitch = 0; cntTimeouts = 0;
         InputSource* srcs[2 + kMaxExtra] = {&srcIn, &srcLb, &srcEx[0], &srcEx[1], &srcEx[2]};
-        for (InputSource* x : srcs) { x->underruns = 0; x->drops = 0; x->glitches = 0; x->capPulls = 0; x->capEmpty = 0; x->capMulti = 0; x->capMaxPkt = 0; x->capMaxWake = 0; x->capMaxFill = 0; }
+        for (InputSource* x : srcs) { x->underruns = 0; x->drops = 0; x->glitches = 0; x->capPulls = 0; x->capEmpty = 0; x->capMulti = 0; x->capMaxPkt = 0; x->capMaxWake = 0; x->capMaxFill = 0; x->pullGapMaxUs = 0; }
+        wakeGapMaxUs = 0;   // 0.9.12
         for (OutputSink& o : sinks) { o.underflows = 0; o.overflows = 0; }
     }
 }
@@ -2951,7 +3026,9 @@ void WasapiBridge::applyResetRequest() {
             x->underruns.store(0, std::memory_order_relaxed); x->drops.store(0, std::memory_order_relaxed); x->glitches.store(0, std::memory_order_relaxed);
             x->capPulls.store(0, std::memory_order_relaxed); x->capEmpty.store(0, std::memory_order_relaxed); x->capMulti.store(0, std::memory_order_relaxed);   // 0.9.11
             x->capMaxPkt.store(0, std::memory_order_relaxed); x->capMaxWake.store(0, std::memory_order_relaxed); x->capMaxFill.store(0, std::memory_order_relaxed);
+            x->pullGapMaxUs.store(0, std::memory_order_relaxed);   // 0.9.12
         }
+        wakeGapMaxUs.store(0, std::memory_order_relaxed);          // 0.9.12
         for (OutputSink& o : sinks) { o.underflows.store(0, std::memory_order_relaxed); o.overflows.store(0, std::memory_order_relaxed); }
     }
 }
@@ -3028,6 +3105,17 @@ bool WasapiBridge::pullSource(InputSource& s, IAudioCaptureClient* cap, bool isD
     const bool invalid = FAILED(hr);
     size_t fill = s.fifo.size();
     s.capPulls.fetch_add(1, std::memory_order_relaxed);
+    // 0.9.12 (KI-11 diagnostics): fill after this drain and the longest interval between two drains of this source
+    // (QueryPerformanceCounter: a non-blocking read, real-time safe).
+    s.fillNow.store((uint32_t)fill, std::memory_order_relaxed);
+    {
+        LARGE_INTEGER t; QueryPerformanceCounter(&t);
+        if (s.lastPullQpc && qpcFreq > 0) {
+            const double gapUs = (double)(t.QuadPart - s.lastPullQpc) * 1e6 / qpcFreq;
+            if (gapUs > (double)s.pullGapMaxUs.load(std::memory_order_relaxed)) s.pullGapMaxUs.store((uint32_t)(gapUs < 4e9 ? gapUs : 4e9), std::memory_order_relaxed);
+        }
+        s.lastPullQpc = t.QuadPart;
+    }
     if (packets == 0) s.capEmpty.fetch_add(1, std::memory_order_relaxed);
     else if (packets >= 2) s.capMulti.fetch_add(1, std::memory_order_relaxed);
     if (frames > s.capMaxWake.load(std::memory_order_relaxed)) s.capMaxWake.store(frames, std::memory_order_relaxed);
@@ -3430,6 +3518,7 @@ void WasapiBridge::run() {
     }
     bool sinkResetPosted = false;
     LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
+    qpcFreq = (double)qf.QuadPart;        // 0.9.12: pullSource's gap counter
     const double blockSec = bufSize / rateRun;
     qpcToLoad = 100.0 / ((double)qf.QuadPart * blockSec);        // QPC ticks -> % of the block
     loadAlpha = 1.0 - exp(-blockSec / 0.3);                     // load EMA, tau 300 ms
@@ -3445,6 +3534,36 @@ void WasapiBridge::run() {
     uint32_t wakes = 0;
     bool capResetPosted = false;
     bool stopNow = false;
+    // 0.9.12 (KI-11 diagnostics / start-up transient): output wake-ups of this run, the QPC of the previous one (gap
+    // counter) and the one-time reset of the input counters one second after the start: the first second of a
+    // stream (priming, the host's first callbacks, the capture engine settling) counted underruns / discontinuities
+    // that have nothing to do with steady-state behaviour (1 underrun / 2 discontinuities in the first 85 wake-ups of
+    // a clean run in the 0.9.11 test).
+    uint32_t outWakes = 0;
+    int64_t prevOutWake = 0;
+    bool startupReset = false;
+    // Review M2: one second of output wake-ups = device rate / output period (device frames); the clearing itself
+    // goes through resetReq / applyResetRequest (one point of truth for WB_RESET_STATS).
+    const uint32_t startupWakes = (uint32_t)ceil(outDevRate / (double)(outPeriod > 0 ? outPeriod : 1));
+    const double qpcPerUs = (double)qf.QuadPart / 1e6;
+    // 0.9.12 (KI-13): event-driven Exclusive capture sources wait with their own event next to the output event.
+    // Handle order (review H1): stop = 0, capture events = 1..nEv, output = nEv + 1. WaitForMultipleObjects returns
+    // the LOWEST signalled index, so a capture packet that is pending together with the output event is drained
+    // before the (long) output service; evSrc[i] / evCap[i] belong to handle h[1 + i]. Those sources are never
+    // drained by pullAll unless their event is already signalled (checked with a zero wait, see pullAll).
+    HANDLE h[2 + 1 + kMaxExtra] = {stopEvent};
+    InputSource* evSrc[1 + kMaxExtra] = {};
+    IAudioCaptureClient* evCap[1 + kMaxExtra] = {};
+    DWORD nEv = 0;
+    if (icap && srcIn.eventDriven && srcIn.event) { evSrc[nEv] = &srcIn; evCap[nEv] = icap; h[1 + nEv++] = srcIn.event; }
+    for (int k = 0; k < kMaxExtra; ++k)
+        if (xcap[k] && srcEx[k].eventDriven && srcEx[k].event) { evSrc[nEv] = &srcEx[k]; evCap[nEv] = xcap[k]; h[1 + nEv++] = srcEx[k].event; }
+    const DWORD outIdx = 1 + nEv;              // index of the output event in h
+    h[outIdx] = outEvent;
+    const DWORD nh = outIdx + 1;
+    const bool inPolled = icap && !srcIn.eventDriven;
+    bool exPolled[kMaxExtra] = {};
+    for (int k = 0; k < kMaxExtra; ++k) exPolled[k] = xcap[k] && !srcEx[k].eventDriven;
     const bool headroom = outFill >= outPeriod + outPeriod / 2;   // only then does padding = 0 mean a real glitch
 
     BYTE* p = nullptr;
@@ -3463,7 +3582,6 @@ void WasapiBridge::run() {
     }
     HRESULT hr = oc->Start();
 
-    HANDLE h[2] = {stopEvent, outEvent};
     // 0.9.8 (review H-list, no unbounded wait on device IO): the render event is awaited 2 s at a time; after 5
     // consecutive timeouts (10 s without a single event: device stalled or gone without a notification) the thread
     // ends with HRESULT_FROM_WIN32(ERROR_TIMEOUT) and the host is asked for a reset, instead of waiting forever.
@@ -3483,25 +3601,65 @@ void WasapiBridge::run() {
     };
     uint64_t lastProbe = 0;
     bool lastProbeOk = probePosition(lastProbe);
+    // 0.9.12 (KI-13): with capture events in the wait, a dead output stream no longer shows as WAIT_TIMEOUT (the
+    // capture keeps waking the thread), so the idle check is driven by time: one "idle tick" every 2 s without an
+    // output event, whether the Wait timed out or a capture event woke the thread. Same rule as before: five ticks
+    // (10 s) with a frozen device position end the stream.
+    const int64_t idleTickQpc = (int64_t)(2.0 * (double)qf.QuadPart);
+    int64_t lastOutEventQpc = 0, lastIdleTickQpc = 0;
+    { LARGE_INTEGER t; QueryPerformanceCounter(&t); lastOutEventQpc = lastIdleTickQpc = t.QuadPart; }
+    auto idleTick = [&]() -> bool {           // returns true when the thread must end (ERROR_TIMEOUT)
+        uint64_t v = 0;
+        const bool ok = probePosition(v);
+        if (ok && lastProbeOk && v != lastProbe) movedWhileIdle = true;
+        lastProbe = v; lastProbeOk = ok;
+        if (++idleTimeouts >= 5) {
+            if (movedWhileIdle) { idleTimeouts = 0; movedWhileIdle = false; return false; }   // still moving: keep waiting
+            return true;
+        }
+        return false;
+    };
     while (SUCCEEDED(hr)) {
-        DWORD w = WaitForMultipleObjects(2, h, FALSE, 2000);
+        DWORD w = WaitForMultipleObjects(nh, h, FALSE, 2000);
         if (w == WAIT_OBJECT_0) break;
         if (w == WAIT_TIMEOUT) {
-            ++cntTimeouts;
-            uint64_t v = 0;
-            const bool ok = probePosition(v);
-            if (ok && lastProbeOk && v != lastProbe) movedWhileIdle = true;
-            lastProbe = v; lastProbeOk = ok;
-            if (++idleTimeouts >= 5) {
-                if (movedWhileIdle) { idleTimeouts = 0; movedWhileIdle = false; continue; }   // still moving: keep waiting
-                hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT); break;
+            ++cntTimeouts;                     // review L3: only real Wait timeouts count
+            { LARGE_INTEGER t; QueryPerformanceCounter(&t); lastIdleTickQpc = t.QuadPart; }
+            if (idleTick()) { hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT); break; }
+            continue;
+        }
+        if (w >= WAIT_OBJECT_0 + 1 && w < WAIT_OBJECT_0 + outIdx) {
+            // 0.9.12 (KI-13): one event-driven capture source has one packet ready: drain it and go back to waiting.
+            // The output is not touched here (its own event drives it); only the time-based idle check runs.
+            const DWORD i = w - WAIT_OBJECT_0 - 1;
+            if (evCap[i] && pullSource(*evSrc[i], evCap[i], evSrc[i] == &srcIn) && !capResetPosted) { capResetPosted = true; postReset(RR_CAPTURE); }
+            LARGE_INTEGER t; QueryPerformanceCounter(&t);
+            if (t.QuadPart - lastOutEventQpc >= idleTickQpc && t.QuadPart - lastIdleTickQpc >= idleTickQpc) {
+                lastIdleTickQpc = t.QuadPart;
+                if (idleTick()) { hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT); break; }
             }
             continue;
         }
-        if (w != WAIT_OBJECT_0 + 1) { hr = HRESULT_FROM_WIN32(GetLastError()); if (SUCCEEDED(hr)) hr = E_FAIL; break; }
+        if (w != WAIT_OBJECT_0 + outIdx) { hr = HRESULT_FROM_WIN32(GetLastError()); if (SUCCEEDED(hr)) hr = E_FAIL; break; }
         idleTimeouts = 0; movedWhileIdle = false;
         wakeNs = (double)timeGetTime() * 1e6; firstOfWake = true;
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
+        lastOutEventQpc = lastIdleTickQpc = now.QuadPart;
+        // 0.9.12 (KI-11 diagnostics): longest interval between two output wake-ups (the first one is skipped) and the
+        // one-time reset of the input counters after about one second (start-up transient, see above).
+        if (prevOutWake) {
+            const double gapUs = (double)(now.QuadPart - prevOutWake) / qpcPerUs;
+            if (gapUs > (double)wakeGapMaxUs.load(std::memory_order_relaxed)) wakeGapMaxUs.store((uint32_t)(gapUs < 4e9 ? gapUs : 4e9), std::memory_order_relaxed);
+        }
+        prevOutWake = now.QuadPart;
+        if (outWakes < 0xFFFFFFFFu) ++outWakes;
+        if (!startupReset && outWakes >= startupWakes) {
+            // Review M2: the same clearing as the panel's "Reset counters" (every WB_RESET_STATS counter: input
+            // counters, gap counters, output glitches, timeouts, DSP load max, extra-output counters), through the
+            // request flag that applyResetRequest consumes right below (atomics only; no logging).
+            startupReset = true;
+            resetReq.fetch_or(WB_RESET_STATS, std::memory_order_release);
+        }
         applyResetRequest();
         // F1: newest live parameters (seqlock read, never blocks; a publication in progress is picked up next time).
         pubLive.tryRead(lv, lvSeq);
@@ -3536,11 +3694,18 @@ void WasapiBridge::run() {
         // 0.9.11 (KI-11): the capture clients are drained here and again after every host callback below. With an
         // ASIO buffer shorter than the engine period the host runs two or more callbacks per wake-up; while they ran,
         // a Shared capture buffer (about two periods) could overflow and Windows flagged discontinuities (lost input).
+        // 0.9.12 (KI-13): only the POLLED sources (Shared, loopback); an event-driven Exclusive capture is drained on
+        // its own event above.
+        // Review H1/M1 (2): an event-driven source whose event is ALREADY signalled (a packet arrived while the host
+        // callback ran) is drained here too, with a zero wait that consumes the auto-reset signal, so that the packet
+        // is not overwritten by the next one during a long output service.
         auto pullAll = [&]() {
             bool inv = false;
-            if (icap) inv |= pullSource(srcIn, icap, true);
+            if (inPolled) inv |= pullSource(srcIn, icap, true);
             if (lcap) inv |= pullSource(srcLb, lcap, false);
-            for (int k = 0; k < kMaxExtra; ++k) if (xcap[k]) inv |= pullSource(srcEx[k], xcap[k], false);
+            for (int k = 0; k < kMaxExtra; ++k) if (exPolled[k]) inv |= pullSource(srcEx[k], xcap[k], false);
+            for (DWORD i = 0; i < nEv; ++i)
+                if (evCap[i] && WaitForSingleObject(evSrc[i]->event, 0) == WAIT_OBJECT_0) inv |= pullSource(*evSrc[i], evCap[i], evSrc[i] == &srcIn);
             if (inv && !capResetPosted) { capResetPosted = true; postReset(RR_CAPTURE); }   // only once per cycle
         };
         pullAll();

@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.11 (public beta)
+WASAPI Driver for ASIO 0.9.12 (public beta)
 ===========================================
 Build: 2026-10-25 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
@@ -27,13 +27,102 @@ Build: 2026-10-25 UTC
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 9110 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
+getDriverVersion() = 9120 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
                      up to 0.9.9 it was major * 1000 + minor * 100 + patch * 10)
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.12 (changes from 0.9.11) - "Capture"; event-driven Exclusive capture
+-------------------------------------------------------------------------
+The second recording test (TEST-GUIDE.txt block AB on 0.9.11, Steinberg
+UR22mkII with the Yamaha Steinberg USB Driver, Windows 11 x64, Cubase 15,
+44.1 kHz) showed with the new "Capture:" counters WHY Exclusive mode at a
+256 buffer still dropped and that a 512 buffer in Shared mode also lost
+input. Both fixes are in this version; the output path is unchanged.
+Summary of all changes:
+- KI-13 FIXED (to be confirmed by block AB on real hardware) - Exclusive
+  capture is now EVENT-DRIVEN. 0.9.11 and earlier opened an Exclusive
+  capture stream in polled mode (periodicity = the ASIO buffer size, a
+  buffer of four periods) and drained it from the output wake-up with
+  GetNextPacketSize. The Yamaha driver answered that call with 512-frame
+  packets at EVERY 256-frame wake-up ("max packet 512 ... 1024", "empty 17
+  of 8368 pulls"): twice the audio that existed. The FIFO grew by 256
+  frames per wake-up and the overfill limit discarded real audio about
+  once per 17 wake-ups (504 drops in 50 s, unusable recording). The limit
+  change of 0.9.11 could only move the drop point. Now the capture stream
+  is opened with AUDCLNT_STREAMFLAGS_EVENTCALLBACK, a periodicity equal to
+  the device's DEFAULT period (what its driver processes natively; its
+  minimum period if the default is below it) and a buffer of one period;
+  the device driver signals an event of the stream's own once per period
+  with exactly one packet, the audio thread waits on {stop, output event,
+  capture events} and drains that source only when its event fires, never
+  from the output wake-up. Nothing is polled, so no interpretation of
+  GetNextPacketSize is needed. Independent review (R1): the periodicity
+  is the smallest multiple of the device's default period that holds one
+  ASIO buffer (the event-driven stream double-buffers one period, and a
+  host callback must never outlast that window), the capture events come
+  before the output event in the wait (a pending packet is drained before
+  the long output service) and a packet already signalled is also drained
+  between host callbacks. Input latency in Exclusive mode with buffers
+  larger than the device's default period grows to that multiple (512 at
+  44.1 kHz with a 441-frame default: period 882, about 20 ms). The FIFO
+  target is one capture period + one output period + one capture period
+  of margin (see KI-11). The log line reads "Input open (Exclusive,
+  event-driven): ..., period N (device default | K x device default |
+  aligned by the device), buffer N, FIFO target T"; the status shows "[2ch
+  int24, event-driven, period N]". If the event mode cannot be set up the
+  input falls back to Shared and the status says so (KI-12 report). A dead
+  output stream is still detected with capture events arriving: the
+  2-second idle check is now driven by the time since the last OUTPUT
+  event (one check every 2 s, five frozen checks end the stream), not by
+  the Wait timeout alone. ARCHITECTURE.txt section 64.
+- KI-11 FIXED (to be confirmed) - the late-packet margin of one capture
+  period in the FIFO target is now added at EVERY ASIO buffer size in
+  Shared mode (and for the loopback source and the event-driven Exclusive
+  capture), not only when the buffer is shorter than the capture period.
+  On 0.9.11 a 512 buffer with a 441-frame period had no margin, a 512
+  block consumed the FIFO down to about 390 frames and one late packet was
+  an underrun (22 underruns / 46 discontinuities in 85 s on the same system
+  where 256, with the margin, was clean). The reported input latency in
+  Shared mode grows by one capture period at every buffer size (about
+  10 ms at 44.1 / 48 kHz with the Windows engine; 0.9.11 had it below one
+  period only), to be confirmed by block AB; a later version may make the
+  margin adaptive (ROADMAP.txt).
+- Diagnostics for the capture path, second round: the "Capture:" line of
+  "Copy status" now ends with "max FIFO fill N (now M) frames, max gap:
+  wake X ms, read Y ms". "now" is the fill after the last drain (the plain
+  copy path keeps whatever backlog it once received, so the real input
+  latency can exceed the reported one until the stream restarts: a large
+  steady "now" shows that). "wake" is the longest interval between two
+  output wake-ups of the audio thread, "read" the longest interval between
+  two drains of the main input: a large wake gap with discontinuities
+  means the audio thread was held (the host's callback, the system), a
+  small one with discontinuities means the capture engine glitched by
+  itself. Both are QueryPerformanceCounter differences kept as atomics (the
+  audio thread still never logs or traces). The Stats trace event carries
+  the three new values (CaptureFifoFillNow, WakeGapMaxUs,
+  CaptureReadGapMaxUs; 25 fields, 440 of 512 metadata bytes, checked by
+  tests/trace_test.cpp).
+- Counters exclude the first second: one second after the stream starts
+  (the output wake-ups of one second) the audio thread requests the same
+  clearing as the panel's "Reset counters" (every statistics counter:
+  inputs, the Capture line, the gap counters, output glitches, timeouts,
+  DSP load max) once (independent review R2). The start-up transient
+  (priming, the host's first callbacks, the capture engine settling)
+  counted 1 underrun / 2 discontinuities in the first 85 wake-ups of an
+  otherwise clean run and had to be explained in every report.
+- Documents: KNOWN-ISSUES.txt KI-11 / KI-13 (status, the 0.9.11
+  measurements, the fix, the known limit); ARCHITECTURE.txt sections 61
+  (updated) and 64 (new); CODE-REVIEW.txt "0.9.12" and "Independent review
+  of 0.9.12" (1 HIGH, 2 MED, 6 LOW, all fixed); TEST-GUIDE.txt block AB
+  (AB7: the gap counters; 0.9.12 is validated by AB1-AB4); ROADMAP.txt.
+- Version number: getDriverVersion() returns 9120.
+Not changed: the output path, the converters, the Shared capture path
+(still polled from the output wake-up and between callbacks), the panel
+layout, the installer logic, the tools, the CI workflows.
 
 0.9.11 (changes from 0.9.10) - "Inputs"; fixes from the first recording test
 ---------------------------------------------------------------------------
@@ -42,8 +131,17 @@ UR22mkII on Windows 11 x64 with Cubase 15, recording a microphone while a
 song played) found three input-path problems that playback-only testing
 could not show. The output path is unchanged (0 output glitches in every
 run of that test); only the input side and the control panel changed.
+NOTE added after the release (test of 2026-10-25 with the new "Capture:"
+counters, KNOWN-ISSUES.txt KI-11 / KI-13): KI-13 is NOT fixed by this
+version (Exclusive 256 still drops: the capture client reports 512-frame
+packets in every 256-frame wake, twice real time; the overfill limit only
+moves the drop point) and KI-11 is fixed at 256 but a 512 buffer in Shared
+mode now shows underruns / discontinuities on the same system. Both go to
+0.9.12 (event-driven Exclusive capture; late-packet margin at every buffer
+size; timing counters). Recording in Exclusive mode: use buffer 512 or
+larger on 0.9.11.
 Summary of all changes:
-- KI-13 FIXED - input drops in Exclusive mode at small buffers. With the
+- KI-13 (NOT fixed; see the note below) - input drops in Exclusive mode at small buffers. With the
   manufacturer's driver, Exclusive mode, 44.1 kHz, ASIO buffer 256: the
   input counted about 10 drops per second (no underruns) and the recording
   was unusable; at 512 it was clean. Cause: the overfill limit of the
@@ -59,7 +157,7 @@ Summary of all changes:
   Drops are now reserved for a real surplus (a capture clock faster than
   the output's without drift correction, or callbacks stopped for a long
   time).
-- KI-11 FIXED - input underruns and discontinuities in Shared mode at small
+- KI-11 PARTLY FIXED (256 clean; 512 still fails, see the note below) - input underruns and discontinuities in Shared mode at small
   buffers. Shared mode (IAudioClient3), output at 48 kHz, input at 44.1 kHz
   (capture period 441 frames, FIFO target 882), ASIO buffer 256: 8
   underruns and 27 discontinuities in 30 s (audible dropouts in the

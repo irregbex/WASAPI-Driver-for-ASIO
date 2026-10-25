@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.11 - Compatibility table
+WASAPI Driver for ASIO(R) 0.9.12 - Compatibility table
 ======================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -29,8 +29,12 @@ Cubase 15 (x64)      USB audio interface       (see reports)        tested OK
 Cubase 15 (x64)      Steinberg UR22mkII        Shared and Exclusive tested     Recording (mic on input 1) while
                      (USB, 2 in / 2 out)       256 and 512                     playing, 0.9.10: 512 clean in both
                                                                                modes; 256 had input dropouts
-                                                                               (KI-11 Shared, KI-13 Exclusive),
-                                                                               fixed in 0.9.11; Exclusive needs
+                                                                               (KI-11 Shared, KI-13 Exclusive);
+                                                                               0.9.11: Shared 256 and Exclusive
+                                                                               512 clean, Shared 512 and
+                                                                               Exclusive 256 failed; 0.9.12
+                                                                               (event-driven capture, margin)
+                                                                               to be confirmed; Exclusive needs
                                                                                the Yamaha Steinberg USB Driver set
                                                                                to the project rate (KI-12)
 Cubase 15 (x64)      BT headphones -> speakers Shared (0.9.4)       tested OK  BT removed: output moved to the

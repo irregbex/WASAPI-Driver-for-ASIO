@@ -229,11 +229,35 @@ Done in 0.9.11 (inputs; fixes from the first recording test)
   the panel (device fixed at another rate). EXPLAINED.
 - Capture delivery counters in "Copy status" and the Stats trace event;
   "Apply and Close"; "Rate conversion" in the DSP line. DONE.
-Next: repeat TEST-GUIDE.txt block AB (recording, Shared and Exclusive, 256 and
-512) on 0.9.11 with an interface that has inputs; the same with a USB
-microphone and a laptop's built-in microphone (the same capture path).
+Block AB repeated on 0.9.11 (2026-10-25): Shared 256 and Exclusive 512 clean;
+Exclusive 256 still drops (KI-13 OPEN: the capture client reports 512-frame
+packets in every 256-frame wake) and Shared 512 shows underruns /
+discontinuities (KI-11 partly fixed). See KNOWN-ISSUES.txt.
+0.9.12 - "Capture" (DONE, to be confirmed by block AB):
+- KI-13: Exclusive capture opened event-driven (AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+  own event per source, periodicity = the device's default period, one packet
+  per event); the audio thread waits on {stop, output event, capture events}
+  and only drains a source on its event. No more polling of GetNextPacketSize
+  for an Exclusive capture (ARCHITECTURE.txt section 64). DONE.
+- KI-11: the late-packet margin (one capture period) at every buffer size in
+  Shared mode (and loopback, and the event-driven capture); "max gap: wake X
+  ms, read Y ms" in "Copy status" (longest interval between wake-ups, longest
+  interval between capture reads) to tell a late audio thread from a
+  capture-engine glitch; input counters cleared one second after the stream
+  starts (start-up transient). DONE.
+- Status: "max FIFO fill F (now N)" (the plain copy path keeps whatever backlog
+  it once received, so the real input latency can exceed the reported one
+  until the stream restarts). DONE.
+Next: block AB on 0.9.12 with the same interface (AB1-AB4 all 0 / 0 / 0, AB7);
+the same with a USB microphone and a laptop's built-in microphone (the same
+capture path). If "now" shows a steady backlog, 0.9.13: re-centre the plain
+FIFO without discarding audio (a slow one-frame-per-block trim). Make the
+late-packet margin adaptive (measured read gap) in a later version, so
+that the reported input latency in Shared mode does not pay a fixed
+capture period on devices that deliver on time.
 Planned for 1.0: Exclusive mode at the device's fixed rate with the internal
 rate conversion (today Exclusive is tried only at the project's rate and
 falls back to Shared when the device is fixed at another rate, KI-12);
-a dedicated capture thread (event-driven capture independent of the output
-wake-ups) if block AB still shows discontinuities on some device.
+a dedicated capture thread for the SHARED capture (its own event, independent
+of the output wake-ups) if block AB still shows discontinuities on some
+device in Shared mode.

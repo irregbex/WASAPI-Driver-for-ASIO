@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.11 (public beta) - Test guide
+WASAPI Driver for ASIO 0.9.12 (public beta) - Test guide
 ========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -901,11 +901,16 @@ saved in the Public folder. Regression on 0.9.10 (blocks C and W):
 Bluetooth case on/off without a dialog, buffer 256 -> 512 -> 256 with 0
 glitches, sleep / resume with the engine reopened by itself.
 
-Block AB - 0.9.11 recording with an audio interface that has inputs
--------------------------------------------------------------------
+Block AB - 0.9.11 / 0.9.12 recording with an audio interface that has inputs
+---------------------------------------------------------------------------
 Why: playback-only tests cannot show the input path. 0.9.10 passed every
 playback test and failed this block at a 256 buffer in both modes
-(KNOWN-ISSUES.txt KI-11, KI-13). Needs a USB (or other) interface with at
+(KNOWN-ISSUES.txt KI-11, KI-13); 0.9.11 passed Shared 256 and Exclusive
+512 and failed Shared 512 and Exclusive 256 (results below). 0.9.12
+(event-driven Exclusive capture, margin at every buffer size) is
+VALIDATED BY AB1-AB4 OF THIS BLOCK: all four runs must count 0 / 0 / 0.
+The input counters now exclude the first second of a stream, so a status
+copied right after Apply no longer shows the start-up transient. Needs a USB (or other) interface with at
 least one input and a microphone or an instrument on input 1, the
 manufacturer's driver installed if there is one, and a DAW project at
 44.1 kHz with one audio track that plays a song. Cubase names below.
@@ -940,8 +945,49 @@ AB5 In every "Copy status" of AB1-AB4 the new line "Capture: pulls N
     log), F stays below bufSize*2 + target*3 + B. Send the four texts with
     the report when anything else fails: they tell a burst from a real
     surplus.
+Results of 0.9.11 on the same system (2026-10-25, Yamaha Steinberg USB
+Driver installed, device and project at 44.1 kHz, no conversion, Input
+selected, nothing plugged in, playback only; counters after 50-85 s):
+  Shared 256:    underruns 0, drops 0, discontinuities 0 (0.9.10: 8 / 27).
+                 Capture: packets of 441, max 2 per wake (348 times),
+                 max FIFO fill 3078.                             -> OK
+  Shared 512:    underruns 22, drops 0, discontinuities 46 (one every
+                 2 s). Capture: max per wake 970 = the whole capture
+                 buffer (974): the capture buffer filled up, so the audio
+                 thread did not read it for >= 22 ms, or the capture engine
+                 itself glitched; at 512 no late-packet margin is added
+                 (512 >= 441), so one lost packet is an underrun. -> FAIL
+                 (new finding; 0.9.10 at 512 with the Microsoft class
+                 driver was clean)
+  Exclusive 256: drops 504 in ~50 s (1 per 16.6 wakes), underruns 0,
+                 discontinuities 0. Capture: pulls ~170/s (= one per
+                 256-frame output period), empty 17, packets of 512 (max
+                 1024) in EVERY wake: the driver reports 512 frames per
+                 256-frame period, twice real time, so the FIFO grows 256
+                 per wake and the overfill limit discards. -> FAIL (KI-13
+                 not fixed by the limit change; cause identified)
+  Exclusive 512: underruns 0, drops 0, discontinuities 0 in ~51 s; packets
+                 of 512 per 512-frame wake, balanced.             -> OK
+
 AB6 Monitoring (optional): Direct monitoring on in the panel while
     recording.  OK = the input is heard without clicks in both modes.
+AB7 (0.9.12) In every "Copy status" of AB1-AB4 the Capture line ends with
+    "max FIFO fill F (now N) frames, max gap: wake X ms, read Y ms" and,
+    in Exclusive mode, the Input line reads "[... event-driven, period
+    P]" with P the device's default period (441 or 480 at 44.1 / 48 kHz
+    with most drivers) or its smallest multiple that holds the ASIO
+    buffer (882 at buffer 512 with a 441-frame default; the log: "Input
+    open (Exclusive, event-driven): ..., period P (device default | K x
+    device default | aligned by the device)").  OK = N stays near bufSize + target
+    (the reported input latency, "Input open ... FIFO target T" in the
+    log) from one copy to the next (a steady N far above that = the FIFO
+    keeps a backlog, the real input latency is larger than reported:
+    report it), X below two output periods most of the time (a larger X
+    together with discontinuities = the audio thread was held by the host
+    or the system), Y below two capture periods (a larger Y with
+    discontinuities = the capture engine glitched by itself). In Exclusive
+    mode "pulls" must be about one per capture period (not one per output
+    wake-up), "max packet" = P and "max per wake" = P.
 If AB1-AB4 fails: send log.txt (with the "Input open" line), the four
 "Copy status" texts, the interface model and the driver it uses (Windows
 > Device Manager > the interface > Driver), and whether the manufacturer's

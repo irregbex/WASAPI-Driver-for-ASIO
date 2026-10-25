@@ -316,8 +316,22 @@ What to do
 
 KI-11 Input underruns and discontinuities in Shared mode at a 256 buffer (0.9.10)
 --------------------------------------------------------------------------------
-Status: FIXED (0.9.11). Found in the first recording test with an audio
-interface that has inputs.
+Status: FIXED (0.9.12), to be confirmed by TEST-GUIDE.txt block AB on real
+hardware. History: 0.9.11 fixed buffer 256 (0 / 0 / 0 after 70 s where
+0.9.10 counted 8 underruns / 27 discontinuities) but buffer 512 on the
+same system (Yamaha Steinberg USB Driver, 44.1 kHz, no conversion) then
+counted 22 underruns / 46 discontinuities in ~85 s: "max per wake 970" =
+the whole capture buffer (974 frames), so the capture buffer filled up
+(the audio thread did not read it for >= 22 ms, or the capture engine
+glitched), and at 512 no late-packet margin was added (512 >= 441), so one
+lost packet was an underrun. 0.9.12: the margin of one capture period is
+added at every buffer size in Shared mode (and for the loopback source and
+the event-driven Exclusive capture), and the "Capture:" line gains two
+timing counters ("max gap: wake X ms, read Y ms": longest interval between
+output wake-ups / between drains of the input) that tell a late audio
+thread from a capture-engine glitch; the input counters also exclude the
+first second of a stream (start-up transient). Found in the first
+recording test with an audio interface that has inputs.
 
 Symptom
   - Windows 11 x64, Cubase 15, Steinberg UR22mkII through the Microsoft USB
@@ -351,8 +365,19 @@ Fix (0.9.11)
   - When the ASIO buffer is shorter than the capture period, the FIFO
     target includes one more capture period (+10 ms of reported input
     latency at 256 with a 441-frame period; logged). Buffers of one period
-    or more are unchanged.
-Workaround on 0.9.10: buffer 512 or larger when recording in Shared mode.
+    or more were unchanged - and failed at 512 (see Status).
+Fix (0.9.12)
+  - The margin of one capture period is part of the FIFO target at every
+    buffer size (Shared, loopback, event-driven Exclusive). Reported input
+    latency in Shared mode: + one capture period (about 10 ms with the
+    Windows engine at 44.1 / 48 kHz) at every buffer size (0.9.11 added it
+    below one period only); to be confirmed by block AB. A later version
+    may make the margin adaptive (measured read gap, ROADMAP.txt).
+  - "Copy status": "max gap: wake X ms, read Y ms" and "max FIFO fill N
+    (now M)"; counters cleared once, one second after the start.
+Workaround on 0.9.10 / 0.9.11: buffer 256 (0.9.11) or any buffer with the
+counters watched; report the "Capture:" line with the gap values if block
+AB still counts underruns or discontinuities on 0.9.12.
 
 
 KI-12 Mode = Exclusive silently runs Shared when the device is fixed at another rate (0.9.10)
@@ -392,7 +417,38 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
-Status: FIXED (0.9.11). The most serious of the three recording findings.
+Status: FIXED (0.9.12), to be confirmed by TEST-GUIDE.txt block AB on real
+hardware. NOT fixed by 0.9.11 (the limit change only moved the drop
+point); cause identified on 2026-10-25 with the 0.9.11 counters.
+What 0.9.11 showed (new "Capture:" counters, Exclusive 256, Yamaha
+Steinberg USB Driver, 44.1 kHz): the capture client delivers a packet of
+512 frames (up to 1024) in EVERY wake of the 256-frame output period
+(pulls ~170/s, empty 17 of 8368), i.e. it reports twice the real amount of
+audio; the FIFO grows 256 frames per wake and the overfill limit discards
+(504 drops in ~50 s, 1 per 16.6 wakes, no underruns, no discontinuities).
+At 512 the packets are 512 per 512-frame wake and everything is balanced.
+The polled Exclusive capture of this driver reports its packets with a
+fixed 512-frame granularity whatever periodicity was requested.
+Fix (0.9.12): the Exclusive capture is opened event-driven
+(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, an event of its own, periodicity =
+the smallest multiple of the device's default period that holds one ASIO
+buffer, buffer = one period, one packet per event) and drained by the
+audio thread when that event fires, before the output service when both
+are pending, and between host callbacks when a packet is already
+signalled; GetNextPacketSize is no longer interpreted for an Exclusive
+capture (ARCHITECTURE.txt section 64). The log says "Input open
+(Exclusive, event-driven): ... period N (device default | K x device
+default | aligned by the device)"; the status "[... event-driven, period
+N]". Known limit (independent review of 0.9.12): the device
+double-buffers one capture period, so a packet is lost (a discontinuity
+in the counters) only if one host callback lasts longer than that period;
+the period is at least one ASIO block and the thread drains before and
+between callbacks, so that needs a callback longer than its own block
+time, which is an output dropout as well (DSP load above 100 %). Input
+latency in Exclusive mode with buffers larger than the device's default
+period grows to that multiple (e.g. 512 at 44.1 kHz with a 441-frame
+default: period 882). Workaround on 0.9.10 / 0.9.11: buffer 512 or larger
+when recording in Exclusive mode.
 
 Symptom
   - Same system, now with the Yamaha Steinberg USB Driver installed and set

@@ -1,5 +1,5 @@
-WASAPI Driver for ASIO 0.9.9 - Code review
-==========================================
+WASAPI Driver for ASIO 0.9.12 - Code review
+===========================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
@@ -1434,3 +1434,139 @@ pull between callbacks usually finds nothing; ARCHITECTURE.txt section
 61); the five builds give 0 warnings, the 18 offline tests pass, makensis
 builds the 0.9.11 Setup with 0 warnings.
 
+0.9.12 capture path: event-driven Exclusive capture, margin, gap counters (self-review; 6 INFO; see the independent review below)
+-----------------------------------------------------------------------------------------------------------------------
+Scope: KNOWN-ISSUES.txt KI-13 (root cause from the 0.9.11 counters) and
+KI-11 at 512; ARCHITECTURE.txt sections 61 (updated), 62 (updated) and
+64 (new). Files: src/driver.cpp (initExclusive, openInput, openLoopback,
+closeSource, start, resetCounters, applyResetRequest, getStatus,
+onStatsTimer, pullSource, run), src/driver.h (InputSource: event,
+eventDriven, fillNow, pullGapMaxUs, lastPullQpc; StatusInfo: capFillNow,
+wakeGapMaxUs, capReadGapMaxUs, inEventDriven, inFmt[64]; WasapiBridge:
+wakeGapMaxUs, qpcFreq, initExclusive's periodFrames), src/panel.cpp
+(StatusText), src/strings_*.h (S_ST_CAPTURE), tests/trace_test.cpp (the
+Stats event fits), src/common.h, the .rc files, the .bat titles, the
+manifests. Checked by the five local builds (0 warnings from src/), the
+18 offline tests (ALL PASSED) and makensis. Not run on Windows here:
+TEST-GUIDE.txt block AB (AB1-AB4 with the "Capture:" line, AB7) is the
+acceptance test.
+P1 INFO        Event-driven Exclusive capture (KI-13). initExclusive gained
+               periodFrames (0 = the ASIO buffer rule, unchanged for the
+               output and the extra outputs); openInput reads the device's
+               default period with a probe client (one Activate +
+               GetDevicePeriod per Exclusive open, H thread) and passes it.
+               Event mode: periodicity = buffer = that period; the aligned
+               retry (AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) sets both to the
+               aligned size as the output does. The capture event is an
+               auto-reset event owned by InputSource (H creates in
+               openInput, closes in closeSource; a stuck audio thread leaks
+               it like the COM references, so its Wait never sees a closed
+               handle). start() resets it. SetEventHandle failure -> Shared
+               with exclFail = 2 (section 63), logged.
+P2 INFO        Audio thread wait: {stop, out, ev...} with the real count
+               (2 + number of event-driven sources, at most 2 + 1 +
+               kMaxExtra); a capture index drains that one source
+               (pullSource once; postReset(RR_CAPTURE) once per cycle as
+               before) and continues. pullAll and the between-callback
+               pulls skip event-driven sources (inPolled / exPolled flags
+               computed once before the loop). Nothing in the capture
+               branch allocates, locks or logs: pullSource,
+               QueryPerformanceCounter, atomics.
+P3 INFO        Idle detection with capture events: the previous
+               "five WAIT_TIMEOUTs" rule would never fire while a capture
+               event wakes the thread every period, so the idle tick is
+               time-based (2 s since the last output event AND 2 s since
+               the last tick, QPC). WAIT_TIMEOUT keeps calling the same
+               tick. Behaviour without event-driven sources is unchanged
+               (every Wait returns the output event or times out; the tick
+               runs only on timeouts, as before). cntTimeouts counts ticks.
+P4 INFO        Margin at every buffer size (KI-11): target = capture period
+               + output period + capture period for Shared sources (both
+               openInput branches: the mix-rate path and the "Windows
+               converts" reopen), the loopback source and the event-driven
+               Exclusive capture; the aligned converted path still
+               overwrites target with sched::InLatency (exact schedule).
+               The FIFO capacity (target x6, section 61) covers the larger
+               target. Reported input latency: + one capture period at
+               buffers of one period or more (documented in VERSION.txt
+               and FAQ).
+P5 INFO        Counters: fillNow / pullGapMaxUs (per source) and
+               wakeGapMaxUs (thread) are atomics with a single writer (the
+               audio thread) and relaxed loads on H; lastPullQpc is
+               audio-thread only and reset by start() before the thread
+               exists; qpcFreq is written by the thread before its loop
+               and only read inside pullSource on the same thread. Gap
+               values are capped at 4e9 us before the uint32 store. The
+               one-second start-up clearing runs once per run on the audio
+               thread (startupReset, outWakes >= ceil(rate / outPeriod))
+               and clears the same set as applyResetRequest's
+               WB_RESET_STATS for inputs (not loadMax / output glitches:
+               those never showed a start-up transient). The Stats event
+               has 25 fields, about 440 of 512 metadata bytes
+               (tests/trace_test.cpp builds the same field list and checks
+               finish()).
+P6 INFO        Status text: S_ST_CAPTURE gained %u (now) and two %.1f
+               (ms = us / 1000.0, computed in StatusText); the five tables
+               keep the placeholders identical to English (strings_test).
+               inFmt grew to 64 bytes for ", event-driven, period N"
+               (strncat bounded). The line is still printed only with
+               hasInput. StatusInfo is value-initialised, so the new fields
+               are 0 with closed streams.
+Checked, no defect: the Shared capture path is untouched except for the
+margin; the output path is untouched; the stop sequence (ic->Stop / Reset
+/ Release) is the same for an event-driven client; openInput closes a
+leftover event handle before trying again (never two handles per source);
+closeSource runs after the thread ended (stop) in every normal path.
+
+Independent review of 0.9.12 (1 HIGH, 2 MED, 6 LOW; all FIXED in 0.9.12)
+-------------------------------------------------------------------------
+Verdict of the reviewer: safe to test on hardware after the fixes below.
+R1 HIGH FIXED  (H1/M1) An event-driven stream double-buffers ONE period:
+               when the output service of a wake-up (the host callback for
+               one ASIO block) lasts longer than a capture period, the
+               packet signalled meanwhile is overwritten by the next one
+               before the thread drains it (lost input, counted as a
+               discontinuity by the device). Three measures, all applied:
+               (1) handle order stop = 0, capture events = 1..n, output =
+               n + 1: WaitForMultipleObjects returns the lowest signalled
+               index, so a pending packet is drained before a long output
+               service; (2) pullAll (start of the output wake-up and
+               between host callbacks) drains an event-driven source whose
+               event is already signalled (WaitForSingleObject(event, 0)
+               consumes the auto-reset signal); (3) the capture
+               periodicity is the smallest multiple of the device's default
+               period that is >= the ASIO buffer (the default itself when
+               the buffer fits in one period), so the double-buffer window
+               is never shorter than one host block. Input latency in
+               Exclusive mode grows with large buffers accordingly (log:
+               "period P (K x device default)"). KNOWN-ISSUES.txt KI-13
+               documents the remaining limit (a host callback longer than
+               the capture period) and how (1)-(3) cover it.
+R2 MED  FIXED  (M2) The one-second start-up clearing cleared only the
+               input counters, by hand. Now the audio thread sets
+               resetReq |= WB_RESET_STATS when outWakes reaches one second
+               (ceil(outDevRate / outPeriod), device frames) and
+               applyResetRequest, called right after on the same thread,
+               clears every WB_RESET_STATS counter (inputs, gap counters,
+               output glitches, timeouts, DSP load max, extra outputs): one
+               point of truth. applyResetRequest only stores atomics and a
+               thread-local double (no logging, no allocation).
+R3 LOW  FIXED  (L3) cntTimeouts counted idle ticks raised by capture
+               events; it counts only real WAIT_TIMEOUTs again.
+R4 LOW  FIXED  (L4) The log said "(device default)" whatever the device
+               returned: now "device default", "K x device default" or
+               "aligned by the device; default D" (InputSource::periodNote,
+               log only).
+R5 LOW  FIXED  (L5) VERSION.txt and KI-11 say that the margin adds one
+               capture period (about 10 ms) to the reported input latency
+               in Shared mode at every buffer size (to be confirmed by block
+               AB); ROADMAP.txt: make the margin adaptive (measured read
+               gap) in a later version.
+R6 LOW  FIXED  (L6) StatusInfo::inEventDriven was unused (the status text
+               uses inFmt): removed.
+R7 LOW  FIXED  (L1, applied by the reviewer) openInput: when GetService
+               (IAudioCaptureClient) fails after an event-driven Exclusive
+               open, the event handle is closed and eventDriven / exclusive
+               are cleared, so the audio thread never waits on a handle of
+               a source without a capture client.
+R8 LOW  FIXED  (L2, applied by the reviewer) kept as applied.

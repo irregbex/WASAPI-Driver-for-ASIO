@@ -113,6 +113,19 @@ struct InputSource {
     // capMaxFill: highest FIFO fill right after a call (ASIO frames).
     std::atomic<uint32_t> capPulls{0}, capEmpty{0}, capMulti{0}, capMaxPkt{0}, capMaxWake{0}, capMaxFill{0};
     uint32_t             capBufAsio = 0;        // 0.9.11: capture buffer in ASIO frames (openStreams; pullSource's overfill limits)
+    // 0.9.12 (KI-13): an Exclusive capture is opened event-driven: `event` is signalled by the device driver once per
+    // capture period (one packet of exactly that period), the audio thread waits on it next to the output event and
+    // drains this source only then (never from the output wake-up). H creates the handle in openInput and closes it
+    // in closeSource; A reads it. Polled sources (Shared, loopback) keep event = nullptr / eventDriven = false.
+    HANDLE               event = nullptr;
+    bool                 eventDriven = false;
+    char                 periodNote[40] = "";   // 0.9.12 (review L4): how the period relates to the device default (log only)
+    // 0.9.12 (KI-11 diagnostics): fillNow = FIFO fill after the last drain (ASIO frames, for "max FIFO fill (now N)");
+    // pullGapMaxUs = longest interval between two drains of this source (QPC, microseconds): tells a late audio
+    // thread (large gap) from a capture engine that glitched by itself (small gap, discontinuities anyway).
+    // lastPullQpc: audio-thread only (not atomic), 0 before the first drain of a run.
+    std::atomic<uint32_t> fillNow{0}, pullGapMaxUs{0};
+    int64_t              lastPullQpc = 0;
     // 0.9.4: the device runs at its mix rate and the driver converts to the ASIO rate (fixedratio.h). conv: device
     // rate -> ASIO rate, before the FIFO. alignedIn: on the output's clock (no drift correction): FIFO frame q is
     // delivered at samplePosition q + inDelay (exact round trip, sched.h); qHead / qMade: absolute index of the
@@ -232,7 +245,7 @@ struct LiveParams {
 struct StatusInfo {
     bool   streamsOpen;
     bool   outExclusive, outLowLatency;
-    char   outFmt[32], inFmt[32];
+    char   outFmt[32], inFmt[64];     // 0.9.12: inFmt also carries ", event-driven, period N"
     double rate;
     long   bufSize, inLat, outLat;
     UINT32 outPeriod;                 // device frames of the output stream
@@ -267,6 +280,10 @@ struct StatusInfo {
     std::wstring hostProfile;         // G3: profile applied for this program ("" = none)
     // 0.9.11
     uint32_t capPulls, capEmpty, capMulti, capMaxPkt, capMaxWake, capMaxFill;   // KI-13: capture delivery of the main input
+    // 0.9.12
+    uint32_t capFillNow;              // FIFO fill of the main input after its last drain (ASIO frames)
+    uint32_t wakeGapMaxUs;            // longest interval between two output wake-ups of the audio thread (microseconds)
+    uint32_t capReadGapMaxUs;         // longest interval between two drains of the main input (microseconds)
     bool   exclusiveWanted;           // KI-12: Mode=Exclusive is configured
     int    exclFail;                  // KI-12: 0 none; 1 the output, 2 the input fell back to Shared (Exclusive refused)
     double exclFailRate, exclFailMix; // KI-12: rate that was refused; the endpoint's mix (shared) rate at that time (0 unknown)
@@ -402,7 +419,9 @@ private:
     bool  serviceSink(OutputSink& s, IAudioClient* c, IAudioRenderClient* rc, IAudioClock* clk, double now100ns);   // A
     void  buildRoute();
     void  openLoopback();
-    bool  initExclusive(IMMDevice* dev, IAudioClient** client, DevFmt& fmt, UINT32& frames, UINT32& period, bool event, int wantCh);
+    // 0.9.12: periodFrames = wanted periodicity in frames at `rate` (0 = the ASIO buffer size, the rule of the output
+    // and the extra outputs); an event-driven capture passes the device's default period (see openInput).
+    bool  initExclusive(IMMDevice* dev, IAudioClient** client, DevFmt& fmt, UINT32& frames, UINT32& period, bool event, int wantCh, UINT32 periodFrames = 0);
     void  freeBuffers();
     ASIOError disposeImpl();                         // 0.9.8: disposeBuffers without the state check (internal callers)
     // 0.9.8: bodies of IASIO methods (the public methods add the exception barrier, the state checks and the trace)
@@ -590,6 +609,8 @@ private:
     uint64_t samplePos = 0;      // audio thread only
     // 0.9.4: the ASIO timestamp anchor moved to blockClock (sched::BlockClock)
     std::atomic<uint32_t> cntOutGlitch{0}, cntTimeouts{0};
+    std::atomic<uint32_t> wakeGapMaxUs{0};          // 0.9.12 (KI-11 diagnostics): longest interval between output wake-ups (A writes, H reads)
+    double   qpcFreq = 0;                           // 0.9.12: QueryPerformanceFrequency (A writes it in run() before its loop; only pullSource reads it, on A)
     std::atomic<uint64_t> cntSwitches{0};            // 0.9.8: atomic (A stores, H reads for the Stats event)
 
     // Meters. Writer: audio thread (CAS maximum, relaxed). Reader: host thread (exchange(0)).

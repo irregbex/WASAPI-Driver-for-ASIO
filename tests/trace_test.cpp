@@ -125,6 +125,20 @@ int main() {
     Check(small.finish() && small.dataSize() == 16 && small.data()[15] == 0, "text truncated to the room left in a small payload buffer");
     small.u64("v", 1);
     Check(!small.finish(), "a value that no longer fits makes the event invalid");
+    // 0.9.12: the "Stats" event of driver.cpp (onStatsTimer) must fit the 512-byte metadata buffer of Write(); its
+    // field names are repeated here (keep in sync when a counter is added: 25 fields, about 440 bytes today).
+    {
+        static const char* statsFields[] = {"Running", "BufferSwitches", "OutputGlitches", "WaitTimeouts", "InputUnderruns", "InputDrops",
+            "InputGlitches", "LoopbackUnderruns", "ExtraInputUnderruns", "ExtraInputDrops", "ExtraOutputUnderflows", "ExtraOutputOverflows",
+            "DspLoadPct", "DspLoadMaxPct", "InputDriftPpm", "MonitorUnderruns", "CapturePulls", "CaptureEmptyPulls", "CaptureMultiPacketPulls",
+            "CaptureMaxPacket", "CaptureMaxPerWake", "CaptureMaxFifoFill", "CaptureFifoFillNow", "WakeGapMaxUs", "CaptureReadGapMaxUs"};
+        tlg::Event<512, 1024> st("Stats");
+        st.boolean(statsFields[0], true); st.u64(statsFields[1], 1);
+        for (size_t i = 2; i < sizeof statsFields / sizeof statsFields[0]; ++i) {
+            if (i == 12 || i == 13 || i == 14) st.f64(statsFields[i], 1.0); else st.u32(statsFields[i], 1);
+        }
+        Check(st.finish() && st.metaSize() <= 512, "the Stats event (25 fields) fits the 512-byte metadata buffer");
+    }
     // The level / keyword constants used by the .wprp and TRACING.txt
     Check(wbtrace::kLvlVerbose == 5 && wbtrace::kLvlInfo == 4 && wbtrace::kKwStats == 0x40 && wbtrace::kKwUpdate == 0x200, "levels and keywords");
     printf("RESULT: %s\n", g_fail ? "FAILED" : "PASSED");

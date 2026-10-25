@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.11 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.12 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -212,6 +212,22 @@ See also QUICK-START.txt and README.txt (section numbers below).
     Windows default format when it is not greyed out, or set the project
     to the device's rate. Shared mode is fine for most work; Exclusive
     only saves a few milliseconds. KNOWN-ISSUES.txt KI-12.
+    0.9.12: the same note can appear when the device accepted Exclusive
+    for the OUTPUT but the event-driven Exclusive capture of the INPUT
+    could not be set up (rare: "Exclusive input not available, input runs
+    Shared"); recording then works in Shared mode.
+
+24. Why did my reported input latency grow in 0.9.12? (0.9.12)
+    The input FIFO now always keeps one capture period of margin (10 ms
+    at 44.1 kHz with the Windows engine) against a late capture packet,
+    at every buffer size. 0.9.11 added it only below one period and lost
+    input at a 512 buffer (KNOWN-ISSUES.txt KI-11). The DAW compensates
+    the reported latency when it places the recording; the monitoring
+    delay through the DAW grows by that period (use the panel's direct
+    monitoring or the interface's own monitoring for zero-latency
+    listening). In Exclusive mode the capture is now event-driven at the
+    device's default period (KI-13): the Input line of the status shows
+    "[... event-driven, period N]".
 
 22. The input level is very low in Shared mode. (0.9.11)
     Shared mode goes through the Windows audio engine, which applies the

@@ -392,7 +392,7 @@ inline void Fill_en(const wchar_t** t) {
     t[S_FRE_SINC] = L"Sinc (low latency)";
     t[S_TIP_FRENG] = L"When the ASIO rate differs from the device rate (e.g. 44.1 kHz project, 48 kHz device). Auto/Sinc: 1.5 ms, SNR 115 dB. soxr: SNR 132 dB, no aliasing, but ~8-10 ms more latency (more at 16-32 kHz). Hermite: lightest.";
     // 0.9.11: capture delivery (KI-13), rate-conversion engine in the DSP line, Exclusive fallback (KI-12)
-    t[S_ST_CAPTURE] = L"Capture: pulls %u (empty %u, multi-packet %u), max packet %u, max per wake %u, max FIFO fill %u frames\r\n";
+    t[S_ST_CAPTURE] = L"Capture: pulls %u (empty %u, multi-packet %u), max packet %u, max per wake %u, max FIFO fill %u (now %u) frames, max gap: wake %.1f ms, read %.1f ms\r\n";   // 0.9.12: fill now, gaps
     t[S_ST_DRIFTRES] = L"   Drift resampler: %ls";
     t[S_CONV_NONE] = L"none";
     t[S_ST_EXCL_FIXED] = L"%ls (Exclusive not available at %.0f Hz; the device is fixed at %.0f Hz by its own driver or the Windows default format)";

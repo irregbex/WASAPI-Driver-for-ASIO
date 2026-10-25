@@ -392,7 +392,7 @@ inline void Fill_es(const wchar_t** t) {
     t[S_FRE_SINC] = L"Sinc (baja latencia)";
     t[S_TIP_FRENG] = L"Si la frecuencia ASIO difiere de la del equipo (p. ej. proyecto 44,1 kHz, equipo 48 kHz). Auto/Sinc: 1,5 ms, SNR 115 dB. soxr: SNR 132 dB, sin aliasing, ~8-10 ms más de latencia (más a 16-32 kHz). Hermite: ligero.";
     // 0.9.11: capture delivery (KI-13), rate-conversion engine in the DSP line, Exclusive fallback (KI-12)
-    t[S_ST_CAPTURE] = L"Captura: lecturas %u (vacías %u, varios paquetes %u), paquete máx. %u, máx. por ciclo %u, llenado máx. del FIFO %u frames\r\n";
+    t[S_ST_CAPTURE] = L"Captura: lecturas %u (vacías %u, varios paquetes %u), paquete máx. %u, máx. por ciclo %u, llenado máx. del FIFO %u (ahora %u) frames, pausa máx.: ciclo %.1f ms, lectura %.1f ms\r\n";
     t[S_ST_DRIFTRES] = L"   Remuestreo de deriva: %ls";
     t[S_CONV_NONE] = L"ninguna";
     t[S_ST_EXCL_FIXED] = L"%ls (Exclusivo no disponible a %.0f Hz; el equipo está fijado a %.0f Hz por su propio driver o por el formato predeterminado de Windows)";

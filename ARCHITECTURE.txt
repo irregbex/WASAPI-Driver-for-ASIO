@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.11 (public beta) - Architecture
+WASAPI Driver for ASIO 0.9.12 (public beta) - Architecture
 ==========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -2381,6 +2381,28 @@ wake-up (section 62): the extra pull between the callbacks usually finds
 no new packet. The capture buffer in ASIO frames is computed once per
 open (InputSource::capBufAsio, openStreams), not on the audio thread.
 
+What the 0.9.11 counters showed (block AB, 2026-10-25, the same interface
+with the manufacturer's driver, 44.1 kHz): in Exclusive mode at a 256
+buffer the polled capture client reported a 512-frame packet (up to 1024)
+at EVERY 256-frame output wake-up ("pulls" at the wake-up rate, "empty 17
+of 8368"), i.e. twice real time; the FIFO grew 256 frames per wake-up and
+the limit above discarded real audio every 16-17 wake-ups (504 drops in
+50 s). At 512 the packets were 512 per 512-frame wake-up and balanced. The
+limit therefore only moved the drop point; the remedy is not to poll an
+Exclusive capture at all (section 64). The limits and counters stay as
+described for the polled (Shared, loopback) sources.
+
+0.9.12 additions to the diagnostics: fillNow (fill after the last drain;
+"max FIFO fill N (now M)": a large steady "now" means the plain copy path
+keeps a backlog it once received, i.e. the real input latency exceeds the
+reported one until the stream restarts), pullGapMaxUs per source and
+wakeGapMaxUs for the thread ("max gap: wake X ms, read Y ms", section 64),
+and a one-time clearing of every statistics counter one second after the
+start (outWakes >= ceil(outDevRate / outPeriod), through resetReq /
+applyResetRequest, section 64): the start-up transient (priming, the
+host's first callbacks, the capture engine settling) counted 1 underrun /
+2 discontinuities in the first 85 wake-ups of an otherwise clean run.
+
 62. CAPTURE DRAINED BETWEEN HOST CALLBACKS; LATE-PACKET MARGIN (0.9.11, KI-11)
 ------------------------------------------------------------------------------
 The audio thread wakes on the output event (section 54: engine period, 480
@@ -2412,14 +2434,19 @@ Windows engine delivers capture packets with up to one period of jitter.
 With one callback per wake-up a late packet is covered by the target; with
 two callbacks per wake-up the second one could find less than bufSize
 frames (1142 - 512 - 512 < 256 after a late packet) and underrun, which
-also re-primes the source (silence until the fill recovers). openInput
-now adds one capture period to the target when bufSize < capture period
-(ASIO frames); the log says "ASIO buffer 256 < capture period 441: FIFO
-target +441 frames (late-packet margin)" and the reported input latency
-grows by that period (10 ms at 256 with a 441-frame period). Exclusive
-captures (period = ASIO buffer) and buffers of one period or more are
-unchanged. The aligned converted path (section 54) keeps its own exact
-schedule (sched::InLatency) and is not affected by the margin.
+also re-primes the source (silence until the fill recovers). 0.9.11 added
+one capture period to the target when bufSize < capture period (ASIO
+frames). Block AB on 0.9.11 then showed the same loss at 512 (22
+underruns / 46 discontinuities in 85 s, "max per wake 970" = the whole
+974-frame capture buffer): a 512 block consumed the FIFO down to about 390
+frames before a late packet. 0.9.12: the margin is added at EVERY buffer
+size, for Shared sources, the loopback source and the event-driven
+Exclusive capture (section 64; its packets arrive on their own event, out
+of phase with the output). The log says "FIFO target +441 frames
+(late-packet margin of one capture period)" and the reported input
+latency includes it (10 ms at 44.1 kHz with the Windows engine, at every
+buffer size now). The aligned converted path (section 54) keeps its own
+exact schedule (sched::InLatency) and is not affected by the margin.
 
 63. EXCLUSIVE FALLBACK REASON (0.9.11, KI-12)
 ---------------------------------------------
@@ -2465,3 +2492,96 @@ font nor an ellipsis (LayoutAudit); the bottom-bar summary rectangle ends
 the main output (outConv / convSinc / convSoxr) and, only while drift
 correction runs, the drift resampler's kind (StatusInfo::sinc).
 
+64. EVENT-DRIVEN EXCLUSIVE CAPTURE (0.9.12, KI-13)
+--------------------------------------------------
+Up to 0.9.11 an Exclusive capture (Mode=Exclusive, the main input) was a
+POLLED stream: initExclusive(event=false) asked for a periodicity of the
+ASIO buffer size and a buffer of four periods, and the audio thread
+drained it from the output wake-up (pullSource: GetNextPacketSize /
+GetBuffer / ReleaseBuffer until no packet is left). How a device driver
+answers GetNextPacketSize in that mode is its own business: the Yamaha
+Steinberg USB Driver (UR22mkII) reported 512-frame packets at every
+256-frame wake-up (section 61), and no limit or margin on the driver's
+side can repair audio that is reported twice.
+
+0.9.12 opens the Exclusive capture EVENT-DRIVEN, the mode the output has
+always used:
+- openInput activates a probe IAudioClient, reads GetDevicePeriod and
+  takes the DEFAULT period D (the minimum period if the default is below
+  it), in frames at the ASIO rate. The periodicity asked for is the
+  smallest multiple of D that is >= the ASIO buffer (D itself when the
+  buffer fits in one period; independent review R1 (3): an event-driven
+  stream double-buffers one period, and the host callback for one block
+  must never last longer than that window, see "Known limit" below).
+  initExclusive(..., event=true, periodFrames) asks for periodicity =
+  buffer = that value (AUDCLNT_STREAMFLAGS_EVENTCALLBACK requires equal
+  values; the AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED retry keeps period =
+  aligned buffer). A multiple of the device's default period is what its
+  driver processes natively, so every event carries exactly one real
+  packet; a periodicity of the driver's own choice (the ASIO buffer) is
+  what the polled mode asked for and what the tested driver answered
+  wrongly. The log says "period P (device default)", "(K x device
+  default)" or "(aligned by the device; default D)".
+- InputSource::event (auto-reset, created by H in openInput, closed by H
+  in closeSource; leaked, like the COM references, when the audio thread
+  is stuck) is set with SetEventHandle; eventDriven = true. start()
+  resets it (a stale signal from the previous run).
+- The audio thread waits on {stopEvent, capture events, outEvent}
+  (WaitForMultipleObjects with the real count; one handle per
+  event-driven source, the main input and, should an extra input ever
+  open Exclusive, srcEx[k]). Index 0 stops, indices 1..n drain THAT
+  source (pullSource once; its packet is the period) and go back to
+  waiting (no output work, no host callback), index n + 1 is the output
+  wake-up (unchanged flow). The order matters (review R1 (1)):
+  WaitForMultipleObjects returns the LOWEST signalled index, so a packet
+  pending together with the output event is drained before the long
+  output service. pullAll (the start of the output wake-up and the pulls
+  between host callbacks, section 62) drains the polled sources (Shared
+  inputs, loopback) and, in addition, any event-driven source whose event
+  is already signalled (WaitForSingleObject(event, 0) consumes the
+  auto-reset signal; review R1 (2)), so a packet that arrived during a
+  host callback is taken before the next one can overwrite it.
+- FIFO target of the event-driven source: capture period + output period
+  + one capture period of margin (section 62), all in ASIO frames; the
+  overfill limits of section 61 apply unchanged (capBufAsio = one period).
+- Idle detection: before 0.9.12 a dead output stream showed as five
+  WAIT_TIMEOUTs of 2 s. With capture events waking the thread every
+  period that timeout would never fire, so the check is time-based: an
+  "idle tick" (probePosition of the output, cntTimeouts, the five-ticks
+  rule with the "still moving" exception of review R5) runs when the Wait
+  times out AND when a capture event arrives 2 s or more after the last
+  OUTPUT event, at most once per 2 s (lastOutEventQpc, lastIdleTickQpc).
+  The outcome is the same as before: ten seconds without an output event
+  and a frozen device position end the stream with ERROR_TIMEOUT.
+- Fallback: when GetDevicePeriod fails, CreateEvent fails or
+  SetEventHandle fails, the input opens Shared and the status / panel
+  report it as an Exclusive fallback (section 63, exclFail = 2).
+- Known limit: the device double-buffers one capture period. A packet is
+  lost (the device flags a discontinuity) only when the thread does not
+  drain it within one period, i.e. when one host callback (one ASIO
+  block, the longest uninterruptible stretch of the output service)
+  lasts longer than the capture period. (3) makes the period at least one
+  ASIO block, (1) and (2) drain before and between callbacks, so that
+  needs a host callback that takes longer than its own block time: that
+  is an output dropout too (the DSP load is above 100 %).
+- Start-up clearing (review R2): one second after the start (outWakes
+  >= ceil(outDevRate / outPeriod)) the thread sets resetReq |=
+  WB_RESET_STATS and applyResetRequest, called right after, clears every
+  statistics counter (the same set as the panel's "Reset counters").
+  cntTimeouts counts real Wait timeouts only (review R3).
+- Log: "Input open (Exclusive, event-driven): 2ch int24, period 441
+  (device default), buffer 441, FIFO target 1323, ...". Status: "Input:
+  <name>  [2ch int24, event-driven, period 441]". Trace InputOpen:
+  EventDriven = true.
+Timing counters (section 61, 0.9.12): wakeGapMaxUs (longest interval
+between two output wake-ups, written on the output path) and
+pullGapMaxUs per source (longest interval between two drains, written in
+pullSource) are QueryPerformanceCounter differences (qpcFreq is set by
+the thread before its loop); both are capped at 4e9 us, cleared with the
+counters and by the one-second start-up clearing. Reading them: a large
+"wake" gap together with discontinuities = the audio thread was held (a
+long host callback, the system); a small gap with discontinuities = the
+capture engine glitched by itself.
+Not changed: Shared capture (polled from the output wake-up and between
+callbacks: the Windows engine answers GetNextPacketSize correctly), the
+loopback source, the extra inputs (always Shared), the output path.
