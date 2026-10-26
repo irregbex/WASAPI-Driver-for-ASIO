@@ -35,6 +35,13 @@ ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 Changelog
 =========
 
+NOTE (2026-10-26, after the release): KI-13 is NOT fixed. 0.9.13, 0.9.14
+and 0.9.15 fail the automatic test the same way with an input in Exclusive
+mode at buffer 256 on the tested interface (output served about 100 times
+per second); the start-order explanation below was wrong. See
+KNOWN-ISSUES.txt KI-13 "STATUS (final)". Use buffer 512 or larger, or
+Shared mode, when recording with an input.
+
 0.9.15 (changes from 0.9.14) - "Start order"
 ------------------------------------------
 - Fix of a regression of 0.9.14 found by the automatic host test on a real

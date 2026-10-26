@@ -119,7 +119,7 @@ No reboot needed. A portable `bin.zip` with `install.bat` is also available. Ful
 | Host | Status |
 |---|---|
 | Cubase 15 (x64) - built-in, USB, HDMI and Bluetooth outputs | Tested: hours of use, Bluetooth on/off, sleep/resume |
-| Cubase 15 (x64) - Steinberg UR22mkII (USB interface, inputs) | Tested: recording, Shared and Exclusive, 256 and 512. Shared 256 clean since 0.9.12 (KI-11 fixed; at 512 Windows' capture engine flags intermittent discontinuities with the Yamaha driver, not the ASIO driver). Exclusive 256: 0.9.13's gate on the capture clock did not help (that driver's clock is as wrong as its packets); 0.9.14 gates on the output clock (KI-13), to be confirmed by TEST-GUIDE block AB |
+| Cubase 15 (x64) - Steinberg UR22mkII (USB interface, inputs) | Shared mode: recording clean at 256 and 512 since 0.9.12. Exclusive mode with an input: works at buffer 512 or larger; at 256 it fails (KI-13, open, not fixed in any version) |
 | DaVinci Resolve Studio | Tested (0.9.4). Current Resolve versions also offer I/O Engine = System Audio (no ASIO needed); this driver is optional there |
 | Ableton Live, REAPER, FL Studio, Studio One, Bitwig | Not tested yet - reports welcome |
 | Cubase for Arm on a Snapdragon X Plus laptop (Arm64X, native ARM64 half) | Tested by a user: Shared mode, output, 12-18 ms with buffers 32-256 |

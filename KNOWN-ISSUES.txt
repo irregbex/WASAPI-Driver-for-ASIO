@@ -431,6 +431,25 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
+STATUS (2026-10-26, final): OPEN, NOT FIXED in any version.
+Exclusive mode with an input selected and an ASIO buffer smaller than the
+capture period (here 256 at 44.1 kHz, capture period 441) fails on the tested
+interface (Steinberg UR22mkII with the Yamaha Steinberg USB Driver): the
+automatic host test (WasapiDriverTest) runs the OUTPUT at the capture period
+(T2: 1000 callbacks of 1722 in 10 s, about 100 per second instead of 172,
+overloads), T4 fails at 64/128/256 and T5 at 44100, and recording drops input.
+The same result was measured with 0.9.13, 0.9.14, 0.9.15 and a 0.9.16 test
+build, so the gate changes of 0.9.14 / 0.9.15 neither caused nor fixed it; it
+exists at least since 0.9.13 (probably since the event-driven Exclusive capture
+of 0.9.12; that test was never run on 0.9.11 / 0.9.12 with this setup).
+Workaround: buffer 512 or larger when recording in Exclusive mode (passes), or
+Shared mode (clean at 256 and 512 since 0.9.12). Output-only use (no input
+selected) is not affected in any mode.
+Next step if this is picked up again: run the automatic test on 0.9.11
+(polled Exclusive capture) with the same setup; if it passes, the cause is the
+event-driven Exclusive capture of 0.9.12.
+The notes below are the history of the attempts.
+
 Note (0.9.15): 0.9.14 started the output before the capture when gated; with
 the tested driver that paced the render events at the capture period (auto test
 T2: 100 callbacks/s instead of 172 at 256). 0.9.15 restores the 0.9.13 start
