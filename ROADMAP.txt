@@ -252,17 +252,33 @@ Block AB on 0.9.12 (2026-10-25): Shared 256 and 512 clean (KI-11 CONFIRMED
 FIXED); Exclusive 256 still dropped (the driver hands over a full period at
 every drain, 172 per second at the output's rhythm; the event follows the
 output period too); Exclusive 512 clean with a 63 ms input latency.
-0.9.13 - "Capture gate" (DONE, to be confirmed by block AB):
+0.9.13 - "Capture gate" (DONE; did not fix KI-13 on the tested interface, see 0.9.14):
 - KI-13: every Exclusive capture drain is gated by the stream's IAudioClock
   (one period per period, whatever the driver reports; timer fallback when
   the clock is unusable); ARCHITECTURE.txt section 65. "gated N" in the
   Capture line. DONE.
 - Exclusive capture period = smallest multiple of the device default >= half
   the ASIO buffer (512 -> 441, about 41 ms instead of 63 ms). DONE.
-Next: block AB on 0.9.13 with the same interface (AB1-AB4 all 0 / 0 / 0,
-AB7 with "gated" > 0 at Exclusive 256); the same with a USB microphone and a
-laptop's built-in microphone (the same capture path).
-0.9.14 (from the 0.9.12 observations, KNOWN-ISSUES.txt "Observations"):
+Block AB on 0.9.13 (2026-10-25): Shared 256 clean; Shared 512 with
+discontinuities flagged by Windows' capture engine (device side, read gap
+11.5 ms: not the driver, KI-11 note); Exclusive 256 still dropped with
+"gated 0": the capture stream's clock of that driver is as wrong as its
+packets.
+0.9.14 - "Capture gate on the output clock" (DONE, to be confirmed by block AB):
+- KI-13: the gate's reference is the OUTPUT stream's IAudioClock when the
+  Exclusive input is on the same device as an Exclusive output with a clock
+  (one device, one hardware clock); the system timer otherwise. The capture
+  stream's own clock is no longer used. ARCHITECTURE.txt section 65. DONE.
+Next: block AB on 0.9.14 with the same interface (AB3 Exclusive 256: drops 0,
+gated > 0, "clock=output" in the stop line of the log; AB4); the same with a
+USB microphone and a laptop's built-in microphone (the same capture path).
+0.9.15 (from the 0.9.12 / 0.9.13 observations, KNOWN-ISSUES.txt "Observations"):
+- Control panel z-order: when the user switches to another application and
+  back, the panel (a modeless window owned by the DAW's window) sometimes
+  ends up behind the DAW or disappears, and the DAW is activated first
+  (reported with a screen recording, 2026-10-25). Check the activation /
+  owner handling (WM_ACTIVATEAPP, SetWindowPos after the owner is restored,
+  or a panel without an owner). Interface only, no audio.
 - Output glitch counter in Shared mode: skip the first wake-ups after a
   start (2 glitches were counted at an engine restart with the thread never
   late).

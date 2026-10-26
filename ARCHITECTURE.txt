@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.13 (public beta) - Architecture
+WASAPI Driver for ASIO 0.9.14 (public beta) - Architecture
 ==========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -2591,8 +2591,8 @@ Not changed: Shared capture (polled from the output wake-up and between
 callbacks: the Windows engine answers GetNextPacketSize correctly), the
 loopback source, the extra inputs (always Shared), the output path.
 
-65. THE CAPTURE GATE: ONE PERIOD PER PERIOD, BY THE STREAM CLOCK (0.9.13, KI-13)
---------------------------------------------------------------------------------
+65. THE CAPTURE GATE: ONE PERIOD PER PERIOD, BY A TRUSTED CLOCK (0.9.13 / 0.9.14, KI-13)
+-----------------------------------------------------------------------------------------
 What block AB on 0.9.12 showed (Steinberg UR22mkII, Yamaha Steinberg USB
 Driver, 44.1 kHz, Exclusive, event-driven capture): at a 256-frame ASIO
 buffer with a 441-frame capture period the drain ran 172 times per second
@@ -2604,48 +2604,64 @@ times real time, the FIFO grew, the overfill limit discarded real audio
 packets and everything was balanced. So, with this driver, neither the
 capture event nor GetNextPacketSize marks real periods: whenever the
 thread asks, the driver answers "one full period is ready", and the event
-fires at a rhythm of its own (the output period here). The only thing
-that told the truth was the position of the stream's IAudioClock.
-0.9.12 therefore did not fix KI-13; the counters made the mechanism
-visible, which is what they were for.
+fires at a rhythm of its own (the output period here).
 
-0.9.13 gates every drain of an Exclusive source by that clock
-(InputSource::gate; pullSource, audio thread):
-- H obtains IAudioClock from the capture client at open (GetService) and
-  its frequency (GetFrequency: frames or bytes per second, device
-  dependent, converted exactly like the output's clock: frames =
-  position x devRate / frequency). Shared and loopback sources have no
-  gate (the Windows engine answers GetNextPacketSize correctly).
-- The audio thread records the clock position right after Start (review
-  M1: a non-blocking GetPosition; the first drain therefore already sees
-  one period of new audio). Every drain computes avail = frames captured
-  since that base - frames accepted so far. A position that went
-  backwards (device reset, counter wrap) re-synchronizes the base (M2);
-  a backlog above four periods is not replayed (M3: the accepted count
-  jumps, the capture buffer could not hold more anyway). Below 7/8 of a
-  capture period NOTHING is read (the drain returns at once, counted in
-  capGated: the "gated" number of the Capture line; it still counts as a
-  pull and as a read for the "read gap" counter, L1). Otherwise the first
-  packet is always taken and the next one only while the frames of this
-  drain plus its size stay within avail + period/8 (decided before
-  reading, H1): avail in [0.875 p, 1.875 p) gives exactly one packet, a
-  real backlog (the thread was late, avail grew meanwhile) two or more.
-  Over time exactly one period is accepted per period, whatever the
-  driver offers and however often the thread asks.
-- Fallback: when the capture client has no IAudioClock, GetPosition
-  fails, or the position does not move for 20 refused drains in a row
-  that had a packet waiting (a present but frozen clock), the gate
-  switches to the system timer for the rest of the run (one way, no
-  flapping): a credit of elapsed time x device rate
-  (QueryPerformanceCounter) bounded to four periods above zero (a long
-  stall is not replayed) and two periods below (a packet taken a little
-  early is paid back by the next elapsed time, H2), the same 7/8 and +1/8
-  rule on the credit. capClockFallback = 1 then ("gated" keeps counting;
-  the stop line of the log says "clock=qpc"; closeSource clears it). The
-  system timer and the device clock differ by parts per million; the
-  plain copy path absorbs that as a slow fill drift that the overfill /
-  underrun logic bounds (an underrun or a drop every many minutes at
-  most).
+0.9.13 gated every drain of an Exclusive source by the capture stream's
+own IAudioClock. Block AB on 0.9.13 showed that this clock is part of the
+same broken accounting: at Exclusive 256 it advanced by one period at
+every drain (gated 0, 384 drops, 6527 drains in ~38 s at 172 per second,
+one packet each). A clock that moves with the packets cannot gate them.
+
+0.9.14: the reference is a clock the driver already trusts.
+(InputSource::gate / gateQpc; pullSource, audio thread)
+- Reference, decided by H at open (gateQpc): when the output is Exclusive
+  with a usable IAudioClock (outClock, the one the output's glitch
+  detection uses, sections 5, 8 and 16) and the source is on the same hardware as
+  the output (same container id, the sameBox test of the drift policy),
+  the gate runs on the OUTPUT stream's clock: one device, one hardware
+  clock, and the output's position is real time (it plays with 0
+  glitches). The position is converted to device frames exactly like the
+  glitch detection (frames = position x rate / frequency); in Exclusive
+  mode the input runs at the output's rate (section 6). Otherwise (the
+  input is on another device, the output is Shared, no clock) the gate
+  runs on the system timer. The capture stream's own clock is not used.
+  Shared and loopback sources have no gate (the Windows engine answers
+  GetNextPacketSize correctly).
+- A sets aOutClk / aOutClkToFrames for the run before starting the
+  streams. When the main input is gated by the output clock the OUTPUT
+  stream is started first (independent review of 0.9.14: the base must be
+  a position of a running clock; a stopped clock would make the base
+  stale by the start-up delay) and the capture Start is followed by
+  gateArm, which records the output position (review M1 of 0.9.13: a
+  non-blocking GetPosition; the first drain therefore already sees one
+  period of new audio). The decision of open (gateOutRef) is kept and
+  every start() derives gateQpc from it again, so a run that fell back to
+  the timer does not pin the next one. Every drain computes
+  avail = output frames played since that base - frames accepted so far.
+  A position that went backwards (device reset, counter wrap)
+  re-synchronizes the base (M2); a backlog above four periods is not
+  replayed (M3: the accepted count jumps, the capture buffer could not
+  hold more anyway). Below 7/8 of a capture period NOTHING is read (the
+  drain returns at once, counted in capGated: the "gated" number of the
+  Capture line; it still counts as a pull and as a read for the "read
+  gap" counter, L1). Otherwise the first packet is always taken and the
+  next one only while the frames of this drain plus its size stay within
+  avail + period/8 (decided before reading, H1): avail in [0.875 p,
+  1.875 p) gives exactly one packet, a real backlog (the thread was late,
+  avail grew meanwhile) two or more. Over time exactly one period is
+  accepted per period, whatever the driver offers and however often the
+  thread asks.
+- System timer reference (gateQpc, chosen at open or after a failed
+  GetPosition of the output clock, one way, no flapping): a credit of
+  elapsed time x device rate (QueryPerformanceCounter) bounded to four
+  periods above zero (a long stall is not replayed) and two periods below
+  (a packet taken a little early is paid back by the next elapsed time,
+  H2), the same 7/8 and +1/8 rule on the credit. The system timer and the
+  device clock differ by parts per million; the plain copy path absorbs
+  that as a slow fill drift that the overfill / underrun logic bounds (an
+  underrun or a drop every many minutes at most). capGateRef tells which
+  reference is in use (0 none, 1 output clock, 2 timer: the Stats event
+  and the stop line of the log, "clock=output|qpc").
 - The event and pullAll (section 64) are unchanged: they decide WHEN the
   thread asks; the gate decides whether a packet is taken. An event that
   fires too often costs a refused drain (a non-blocking GetPosition and a
@@ -2653,12 +2669,12 @@ visible, which is what they were for.
   and the late-packet margin, as before.
 - Everything on this path is a non-blocking COM query or arithmetic: no
   allocation, no lock, no log, no trace (project rule). The log reports
-  the gate at open ("capture gate on the stream clock (frequency F)" or
-  "no usable IAudioClock ...") and at stop ("input capture gate: pulls=N
-  gated=M clock=device|qpc").
-What to expect in block AB on 0.9.13 (Exclusive 256, 441-frame period):
+  the gate at open ("capture gate on the output stream's clock (same
+  device)" or "... on the system timer (...)") and at stop ("input
+  capture gate: pulls=N gated=M clock=output|qpc|none").
+What to expect in block AB on 0.9.14 (Exclusive 256, 441-frame period):
 "pulls" about 172 per second as before (taken and refused drains both
 count), "gated" about 72 of them per second (the drains that found no new
 period), "max packet" = "max per wake" = 441 (one packet per taken
 drain; 882 only after a late wake-up), drops 0, discontinuities 0, "read
-gap" about one output period.
+gap" about one output period, and "clock=output" in the stop line.

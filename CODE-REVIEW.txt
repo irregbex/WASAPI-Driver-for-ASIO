@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.13 - Code review
+WASAPI Driver for ASIO 0.9.14 - Code review
 ===========================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -1669,3 +1669,69 @@ R8 LOW  FIXED  (L3) ARCHITECTURE 65 / TEST-GUIDE AB7 predictions restated
 R9 LOW  FIXED  (L4) closeSource did not clear capClockFallback, so a Shared
                reopen after a fallback kept "clock=qpc" in the status:
                cleared.
+
+0.9.14 capture gate on the output clock (self-review)
+-----------------------------------------------------
+Scope: KNOWN-ISSUES.txt KI-13 (0.9.13 results: the gate on the capture
+stream's own IAudioClock refused nothing on the tested interface, whose
+capture clock advances with its packets), ARCHITECTURE.txt section 65
+(rewritten). Files: src/driver.h (InputSource: clock / clockFreq /
+gateClkOk / gateClkBase / gateLastPos / gateStall removed; gateOutOk /
+gateOutBase / gateOutLast added; capClockFallback -> capGateRef; WasapiBridge:
+aOutClk / aOutClkToFrames, audio-thread members like qpcFreq), src/driver.cpp
+(openInput: the reference is decided after sameBox: output Exclusive with a
+clock and the same container id -> output clock, otherwise timer; no
+GetService(IAudioClock) on the capture client any more; pullSource: avail
+from the output clock position converted with aOutClkToFrames; run():
+aOutClk set before the streams start and cleared before the output clock
+is released; gateArm: base from the output clock; status: capGateRef;
+onStatsTimer: CaptureGateRef U32; the stop line of the log), tests/trace_test.cpp
+(27 fields, the last one U32). src/panel.cpp is unchanged (the Capture line
+still ends with "gated N").
+S1  The output clock is read on the audio thread with GetPosition, the same
+    non-blocking call the glitch detection makes once per wake-up; the gate
+    adds one call per drain (about 172 per second at Exclusive 256). No
+    allocation, lock, log or trace on the path.
+S2  aOutClk is a member written and read only by the audio thread (set after
+    the clock reference is taken with AddRef in run(), cleared before that
+    reference is released at the end of run()); H never touches it. A stuck
+    thread leaves it stale, but H does not read it.
+S3  Frames: the output position is converted with aOutClkToFrames = rate /
+    outClockFreq, the input is at the same rate in Exclusive mode (section
+    6), capture period and packets are device frames: one unit throughout.
+    Conversion to uint64 frames before the base / resync comparisons.
+S4  The timer fallback keeps the 0.9.13 behaviour (credit in [-2 p, +4 p]).
+    It is now the normal reference whenever the input and output are not
+    one Exclusive device (another interface for the input, Shared output),
+    not only an error path: those cases drift by the ppm difference between
+    the system timer and the device clock, bounded by the FIFO logic as
+    before.
+S5  The stall detector of 0.9.13 (20 refused drains with a packet waiting
+    and a frozen clock) is removed with the capture clock: the output clock
+    freezing is already handled by the output watchdog (the thread ends
+    after 10 s without movement).
+S6  Not verifiable here: that the UR22mkII output clock position converts to
+    exact device frames (outClockFreq in frames or bytes per second: the
+    same conversion the glitch detection has used since 0.3.0 on this
+    interface with 0 false glitches).
+
+Independent review of 0.9.14 (0 HIGH, 2 MED, 2 LOW; all FIXED in 0.9.14)
+-------------------------------------------------------------------------
+T1 MED  FIXED  (MED-1) The gate base was read right after the capture Start
+               while the OUTPUT stream (the reference clock) had not been
+               started yet, so the base was a position of a stopped clock
+               and the first drains saw a backlog equal to the start-up
+               delay: when the main input is gated by the output clock, the
+               output is started first (run(): oc->Start before ic->Start +
+               gateArm); the Shared / aligned paths keep the old order.
+T2 MED  FIXED  (MED-2) start() derived capGateRef from gateQpc, which a
+               previous run may have switched to the timer after a failed
+               GetPosition, so the next run stayed on the timer although
+               the output clock was usable again: the decision of open is
+               kept in InputSource::gateOutRef and start() recomputes
+               gateQpc = gate && !gateOutRef before capGateRef.
+T3 LOW  FIXED  (LOW-1) The self-review header named src/panel.cpp among the
+               changed files; it is unchanged. Corrected.
+T4 LOW  FIXED  (LOW-2) openInput set gateQpc = !(...) for every source,
+               including non-gated ones: now gate && !(...).
+

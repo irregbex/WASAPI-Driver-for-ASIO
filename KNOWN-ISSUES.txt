@@ -319,7 +319,19 @@ KI-11 Input underruns and discontinuities in Shared mode at a 256 buffer (0.9.10
 Status: FIXED (0.9.12), CONFIRMED on 2026-10-25 by TEST-GUIDE.txt block AB
 on the same system: Shared 256 and Shared 512 both 0 underruns / 0 drops /
 0 discontinuities after 50-85 s, longest interval between wake-ups
-11.5 ms (the audio thread was never late). History: 0.9.11 fixed buffer 256 (0 / 0 / 0 after 70 s where
+11.5 ms (the audio thread was never late).
+Note (0.9.14, block AB of 0.9.13 on the same interface): Shared 512 then
+counted 6 underruns / 19 discontinuities again (Shared 256: 0/0/0) with a
+maximum read gap of 11.5 ms at a 10 ms period and "max per wake 970" =
+the whole capture buffer: the ASIO driver read on time; the discontinuity
+flag is set by Windows' own capture engine when IT lost data from the
+device driver (Yamaha Steinberg USB Driver), and the lost packet is what
+the underrun counts. It is intermittent (the 0.9.12 run was clean) and
+comes from the device side; nothing in this driver can recover audio the
+engine never delivered. Recording with an interface that has its own
+driver: use Exclusive mode (no Windows engine in the path). With the
+Microsoft class driver for the same interface the 512 test was 0/0/0
+(0.9.11). History: 0.9.11 fixed buffer 256 (0 / 0 / 0 after 70 s where
 0.9.10 counted 8 underruns / 27 discontinuities) but buffer 512 on the
 same system (Yamaha Steinberg USB Driver, 44.1 kHz, no conversion) then
 counted 22 underruns / 46 discontinuities in ~85 s: "max per wake 970" =
@@ -419,11 +431,39 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
-Status: FIXED (0.9.13), to be confirmed by TEST-GUIDE.txt block AB on real
-hardware. NOT fixed by 0.9.11 (the limit change only moved the drop
-point) and NOT fixed by 0.9.12 on the tested interface (the event-driven
+Status: FIXED (0.9.14), to be confirmed by TEST-GUIDE.txt block AB on real
+hardware. History: NOT fixed by 0.9.11 (the limit change only moved the
+drop point); NOT fixed by 0.9.12 on the tested interface (the event-driven
 capture made the mechanism visible but did not change it, see "What
-0.9.12 showed" below); cause identified on 2026-10-25 with the counters.
+0.9.12 showed" below); NOT fixed by 0.9.13 (the gate on the capture
+stream's own clock refused nothing, see "What 0.9.13 showed"); 0.9.14
+gates on the OUTPUT stream's clock.
+What 0.9.13 showed (block AB, Exclusive 256, event-driven period 441,
+gate on the capture stream's IAudioClock): drops 384, underruns 0,
+discontinuities 0, "Capture: pulls 6527 (empty 0, multi-packet 0), max
+packet 441, max per wake 441, max FIFO fill 4724 (now 3059), max gap: wake
+11.6 ms, read 12.1 ms, gated 0". 6527 drains in ~38 s = 172 per second,
+one 441-frame packet taken at every one of them, and the gate refused
+NOTHING: the capture stream's IAudioClock of this driver advances by one
+period at every drain, i.e. at the same false rate as its packets (1.73x
+real time). A clock that lives in the same broken accounting cannot gate
+it. Shared 256 in the same run: 0/0/0 (gated 0, as designed: no gate in
+Shared mode).
+Fix (0.9.14, ARCHITECTURE.txt section 65): the gate's reference is the
+OUTPUT stream's IAudioClock when the Exclusive input runs on the same
+device (same container id) as an Exclusive output with a usable clock:
+one device, one hardware clock, and the output's position is real time
+(the output plays with 0 glitches and its glitch detection already uses
+that clock). Base taken right after Start on the audio thread; converted
+to device frames like the output's glitch detection. When the input is on
+another device, the output is Shared, or there is no clock, the gate runs
+on the system timer (QueryPerformanceCounter credit, 0.9.13's fallback).
+The capture stream's own clock is not used any more. The log says
+"capture gate on the output stream's clock (same device)" at open and
+"stop: input capture gate: pulls=N gated=M clock=output|qpc" at stop;
+the Stats event carries CaptureGateRef (0 none, 1 output clock, 2 timer).
+Expected on this interface at Exclusive 256: pulls about 172 per second,
+gated about 72 per second, max per wake 441, drops 0, clock=output.
 What 0.9.12 showed (block AB, Exclusive, event-driven capture, Yamaha
 Steinberg USB Driver, 44.1 kHz, no conversion, nothing plugged in):
   - buffer 256, capture period 441 (device default): drops 427,
@@ -440,18 +480,16 @@ Steinberg USB Driver, 44.1 kHz, no conversion, nothing plugged in):
   GetNextPacketSize marks a real period; whenever the thread asks, the
   driver hands over "one full period", and the event fires at the output
   period. Only the stream's IAudioClock position advanced at real time.
-Fix (0.9.13, "capture gate", ARCHITECTURE.txt section 65): an Exclusive
-capture is drained only when the stream's own clock (IAudioClock of the
-capture client) says a whole new period exists since the frames already
+Fix attempt (0.9.13, "capture gate"): an Exclusive capture is drained
+only when a clock says a whole new period exists since the frames already
 accepted, and never more than that: exactly one period per period,
-whatever the driver offers and however often the thread asks. Without a
-usable clock (missing, failing, or frozen for 20 drains) the gate runs on
-the system timer (QueryPerformanceCounter credit; "clock=qpc" in the stop
-line of the log, capClockFallback in the Stats event). The Capture line
-ends with ", gated N" = the drains refused by the gate (expected: about
-72 per second at Exclusive 256 on this interface). The capture period is
-now the smallest multiple of the device default that is >= HALF the ASIO
-buffer (441 at 512, reported input latency about 41 ms).
+whatever the driver offers and however often the thread asks. 0.9.13 used
+the capture stream's own IAudioClock (system timer as fallback); on this
+interface that clock is wrong (see "What 0.9.13 showed"), hence 0.9.14.
+The Capture line ends with ", gated N" = the drains refused by the gate.
+The capture period is, since 0.9.13, the smallest multiple of the device
+default that is >= HALF the ASIO buffer (441 at 512, reported input
+latency about 41 ms).
 What 0.9.11 showed (new "Capture:" counters, Exclusive 256, Yamaha
 Steinberg USB Driver, 44.1 kHz): the capture client delivers a packet of
 512 frames (up to 1024) in EVERY wake of the 256-frame output period
@@ -479,7 +517,7 @@ between callbacks, so that needs a callback longer than its own block
 time, which is an output dropout as well (DSP load above 100 %). Input
 latency in Exclusive mode with buffers larger than the device's default
 period grows to that multiple (e.g. 512 at 44.1 kHz with a 441-frame
-default: period 882). Workaround on 0.9.10 / 0.9.11: buffer 512 or larger
+default: period 882). Workaround on 0.9.10 to 0.9.13: buffer 512 or larger
 when recording in Exclusive mode.
 
 Symptom

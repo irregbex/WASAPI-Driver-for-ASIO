@@ -126,25 +126,25 @@ struct InputSource {
     // lastPullQpc: audio-thread only (not atomic), 0 before the first drain of a run.
     std::atomic<uint32_t> fillNow{0}, pullGapMaxUs{0};
     int64_t              lastPullQpc = 0;
-    // 0.9.13 (KI-13, "capture gate"): an Exclusive capture is drained only when the stream's own clock says a whole
+    // 0.9.13 / 0.9.14 (KI-13, "capture gate"): an Exclusive capture is drained only when a trusted clock says a whole
     // period of NEW audio exists. The tested USB driver (Yamaha Steinberg USB Driver) answered every
     // GetNextPacketSize / GetBuffer with one full period whatever the elapsed time (at a 256-frame output wake-up
-    // and a 441-frame capture period: 172 packets of 441 frames per second, 1.73x real time, FIFO overfill, drops)
-    // and its capture event did not mark real periods either; the position of IAudioClock did. H sets clock /
-    // clockFreq at open (GetService on the capture client, frequency in device-dependent units like the output's
-    // clock), A owns the rest: gateClkBase = clock position at the first drain of a run, gateAccepted = frames
-    // accepted since then, gateCredit = frames the QPC fallback allows, gateStall = consecutive drains in which the
-    // clock did not advance although packets were there (20 -> fallback to QPC for the rest of the run), gateQpc =
-    // fallback active, lastGateQpc = QPC of the previous drain (fallback credit). capGated: drains refused by the
-    // gate; capClockFallback: 1 once the fallback is active (status). Polled Shared / loopback sources: gate = false.
-    IAudioClock*         clock = nullptr;
-    UINT64               clockFreq = 0;
-    bool                 gate = false, gateQpc = false, gateClkOk = false;
-    uint64_t             gateClkBase = 0, gateAccepted = 0, gateLastPos = 0;
+    // and a 441-frame capture period: 172 packets of 441 frames per second, 1.73x real time, FIFO overfill, drops),
+    // its capture event did not mark real periods, and (0.9.13 test) the IAudioClock of its CAPTURE stream advanced
+    // at the same false rate as its packets, so it could not gate anything. 0.9.14: the reference is the OUTPUT
+    // stream's IAudioClock (same hardware, exact: the output plays with 0 glitches) when the source runs on the same
+    // device as an Exclusive output with a usable clock (gateRef = 1); otherwise the system timer (QPC credit,
+    // gateRef = 2). H decides gateRef at open; A owns the rest: gateOutBase = output position (frames) taken right
+    // after Start, gateOutLast = last position seen (a position that goes backwards re-synchronizes), gateAccepted =
+    // frames accepted since Start, gateCredit = frames the QPC reference allows, lastGateQpc = QPC of the previous
+    // drain. capGated: drains refused by the gate; capGateRef: 0 none (polled Shared / loopback: gate = false),
+    // 1 output clock, 2 timer (status / log).
+    bool                 gate = false, gateQpc = false, gateOutOk = false;
+    bool                 gateOutRef = false;   // 0.9.14 (review M2): H's decision at open (output clock usable as reference); start() derives gateQpc from it
+    uint64_t             gateOutBase = 0, gateAccepted = 0, gateOutLast = 0;
     double               gateCredit = 0.0;
-    int                  gateStall = 0;
     int64_t              lastGateQpc = 0;
-    std::atomic<uint32_t> capGated{0}, capClockFallback{0};
+    std::atomic<uint32_t> capGated{0}, capGateRef{0};
     // 0.9.4: the device runs at its mix rate and the driver converts to the ASIO rate (fixedratio.h). conv: device
     // rate -> ASIO rate, before the FIFO. alignedIn: on the output's clock (no drift correction): FIFO frame q is
     // delivered at samplePosition q + inDelay (exact round trip, sched.h); qHead / qMade: absolute index of the
@@ -304,7 +304,7 @@ struct StatusInfo {
     uint32_t wakeGapMaxUs;            // longest interval between two output wake-ups of the audio thread (microseconds)
     uint32_t capReadGapMaxUs;         // longest interval between two drains of the main input (microseconds)
     uint32_t capGated;                // 0.9.13: drains of the main input refused by the capture gate (no new period yet)
-    bool     capClockFallback;        // 0.9.13: the gate runs on QueryPerformanceCounter (the stream clock was unusable)
+    uint32_t capGateRef;              // 0.9.14: capture gate reference: 0 none, 1 output clock, 2 system timer
     bool   exclusiveWanted;           // KI-12: Mode=Exclusive is configured
     int    exclFail;                  // KI-12: 0 none; 1 the output, 2 the input fell back to Shared (Exclusive refused)
     double exclFailRate, exclFailMix; // KI-12: rate that was refused; the endpoint's mix (shared) rate at that time (0 unknown)
@@ -632,6 +632,8 @@ private:
     std::atomic<uint32_t> cntOutGlitch{0}, cntTimeouts{0};
     std::atomic<uint32_t> wakeGapMaxUs{0};          // 0.9.12 (KI-11 diagnostics): longest interval between output wake-ups (A writes, H reads)
     double   qpcFreq = 0;                           // 0.9.12: QueryPerformanceFrequency (A writes it in run() before its loop; only pullSource reads it, on A)
+    IAudioClock* aOutClk = nullptr;                 // 0.9.14: output clock for the capture gate (A sets it in run() after Start, clears it before ending; pullSource only)
+    double   aOutClkToFrames = 0.0;                 // 0.9.14: output clock units -> device frames
     std::atomic<uint64_t> cntSwitches{0};            // 0.9.8: atomic (A stores, H reads for the Stats event)
 
     // Meters. Writer: audio thread (CAS maximum, relaxed). Reader: host thread (exchange(0)).

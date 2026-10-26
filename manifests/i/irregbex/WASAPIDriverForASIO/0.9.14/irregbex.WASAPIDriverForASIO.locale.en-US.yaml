@@ -3,7 +3,7 @@
 # Publisher is the name the Setup writes to Settings > Apps (uninstall key "Publisher"), so winget can match it.
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: irregbex.WASAPIDriverForASIO
-PackageVersion: 0.9.13
+PackageVersion: 0.9.14
 PackageLocale: en-US
 Publisher: WASAPI Driver for ASIO contributors
 PublisherUrl: https://github.com/irregbex
@@ -26,6 +26,6 @@ Tags:
   - driver
   - wasapi
   - daw
-ReleaseNotesUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/tag/v0.9.13
+ReleaseNotesUrl: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases/tag/v0.9.14
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

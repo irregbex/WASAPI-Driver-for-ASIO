@@ -3,7 +3,7 @@ WASAPI Driver for ASIO(R) - Security policy
 
 Supported versions
 ------------------
-Only the latest release receives fixes (currently 0.9.13). Older versions,
+Only the latest release receives fixes (currently 0.9.14). Older versions,
 including those named WasapiBridge (0.5.x and earlier), are not supported:
 please upgrade.
 

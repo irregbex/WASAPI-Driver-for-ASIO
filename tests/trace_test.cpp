@@ -132,12 +132,11 @@ int main() {
             "InputGlitches", "LoopbackUnderruns", "ExtraInputUnderruns", "ExtraInputDrops", "ExtraOutputUnderflows", "ExtraOutputOverflows",
             "DspLoadPct", "DspLoadMaxPct", "InputDriftPpm", "MonitorUnderruns", "CapturePulls", "CaptureEmptyPulls", "CaptureMultiPacketPulls",
             "CaptureMaxPacket", "CaptureMaxPerWake", "CaptureMaxFifoFill", "CaptureFifoFillNow", "WakeGapMaxUs", "CaptureReadGapMaxUs",
-            "CaptureGated", "CaptureClockFallback"};   // 0.9.13
+            "CaptureGated", "CaptureGateRef"};   // 0.9.13 / 0.9.14
         tlg::Event<512, 1024> st("Stats");
         st.boolean(statsFields[0], true); st.u64(statsFields[1], 1);
         for (size_t i = 2; i < sizeof statsFields / sizeof statsFields[0]; ++i) {
             if (i == 12 || i == 13 || i == 14) st.f64(statsFields[i], 1.0);
-            else if (i == 26) st.boolean(statsFields[i], true);
             else st.u32(statsFields[i], 1);
         }
         Check(st.finish() && st.metaSize() <= 512, "the Stats event (27 fields) fits the 512-byte metadata buffer");

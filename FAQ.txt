@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.13 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.14 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -231,9 +231,13 @@ See also QUICK-START.txt and README.txt (section numbers below).
     the device's default period that holds HALF the ASIO buffer (0.9.12
     took the whole buffer: 882 frames and 63 ms at a 512 buffer; 0.9.13:
     441 frames, about 41 ms), and the capture is taken one period per
-    period by the stream's clock ("gated N" at the end of the Capture
-    line counts the drains that found no new period: normal, not a
-    problem).
+    period by a trusted clock ("gated N" at the end of the Capture line
+    counts the drains that found no new period: normal, not a problem).
+    0.9.14: that clock is the OUTPUT stream's clock when the input is on
+    the same device as an Exclusive output (the capture stream's own clock
+    of the tested interface driver ran as wrong as its packets); on
+    another device the system timer. The log line "stop: input capture
+    gate: ... clock=output|qpc" says which one was used.
 
 22. The input level is very low in Shared mode. (0.9.11)
     Shared mode goes through the Windows audio engine, which applies the

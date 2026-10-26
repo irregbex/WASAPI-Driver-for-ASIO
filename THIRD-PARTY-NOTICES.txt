@@ -1,9 +1,9 @@
-WASAPI Driver for ASIO(R) 0.9.13 - Third-party notices
+WASAPI Driver for ASIO(R) 0.9.14 - Third-party notices
 ======================================================
 
 This file lists every third-party component that is part of, linked into, or
 used to build the released binaries, and the license each one is used
-under. The linking information below was checked on the 0.9.13 binaries with
+under. The linking information below was checked on the 0.9.14 binaries with
 pefile (import tables) and by inspecting the embedded runtime strings; the
 Arm64X DLL (since 0.9.9, built with MSVC in CI) with dumpbin /dependents in
 CI.
@@ -139,7 +139,7 @@ only by its public name and GUID.
 5. NSIS (installer only; 0.9.0: Modern UI 2 and its English and Spanish
 language files, part of NSIS, same license)
 ------------------------
-WASAPI-Driver-for-ASIO-0.9.13-Setup.exe is built with NSIS 3.09 (Nullsoft
+WASAPI-Driver-for-ASIO-0.9.14-Setup.exe is built with NSIS 3.09 (Nullsoft
 Scriptable Install System); the installer contains the NSIS stub and the
 LZMA decompressor. Copyright Nullsoft and the NSIS contributors. License:
 zlib/libpng license. The LZMA code (from the 7-Zip LZMA SDK, Igor Pavlov)

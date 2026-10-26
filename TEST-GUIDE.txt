@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.13 (public beta) - Test guide
+WASAPI Driver for ASIO 0.9.14 (public beta) - Test guide
 ========================================================
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
@@ -901,7 +901,7 @@ saved in the Public folder. Regression on 0.9.10 (blocks C and W):
 Bluetooth case on/off without a dialog, buffer 256 -> 512 -> 256 with 0
 glitches, sleep / resume with the engine reopened by itself.
 
-Block AB - 0.9.11 / 0.9.12 / 0.9.13 recording with an audio interface that has inputs
+Block AB - 0.9.11 to 0.9.14 recording with an audio interface that has inputs
 ---------------------------------------------------------------------------
 Why: playback-only tests cannot show the input path. 0.9.10 passed every
 playback test and failed this block at a 256 buffer in both modes
@@ -991,7 +991,22 @@ in, playback only, 30 s plus):
   Exclusive 512: period 882: 0 / 0 / 0 in ~44 s; pulls 2180 = 50 per
                  second = one per period; reported input latency 63.22 ms
                  (0.9.13 period rule: 441, about 41 ms).         -> OK
-AB7 (0.9.13) In every "Copy status" of AB1-AB4 the Capture line ends with
+Results of 0.9.13 on the same system (2026-10-25, same conditions):
+  Shared 256:    0 / 0 / 0; max gap wake 11.4 ms, read 11.3 ms; gated 0
+                 (no gate in Shared mode); Output glitches 0.    -> OK
+  Shared 512:    underruns 6, discontinuities 19 in ~55 s; max gap wake
+                 11.5 ms, read 11.5 ms; "max per wake 970" = the whole
+                 capture buffer: the thread read on time, Windows' capture
+                 engine flagged the loss itself (device side,
+                 intermittent: the 0.9.12 run was 0 / 0 / 0; KI-11 note).
+                                                                 -> device
+  Exclusive 256: period 441, gate on the capture stream's clock: drops
+                 384, underruns 0, discontinuities 0; pulls 6527 in ~38 s
+                 = 172 per second, max packet = max per wake = 441,
+                 "gated 0": the capture clock of this driver advances
+                 with its packets, the gate refused nothing.     -> FAIL
+                 (0.9.14 gates on the OUTPUT stream's clock)
+AB7 (0.9.13 / 0.9.14) In every "Copy status" of AB1-AB4 the Capture line ends with
     "max FIFO fill F (now N) frames, max gap: wake X ms, read Y ms, gated
     G" and, in Exclusive mode, the Input line reads "[... event-driven,
     period P]" with P the device's default period (441 or 480 at 44.1 /
@@ -999,15 +1014,18 @@ AB7 (0.9.13) In every "Copy status" of AB1-AB4 the Capture line ends with
     ASIO buffer (441 at buffer 512 and 882 at 1024 with a 441-frame
     default; the log: "Input open (Exclusive, event-driven): ..., period P
     (device default | K x device default | aligned by the device)" and
-    "capture gate on the stream clock (frequency F)").  OK in Exclusive
+    "capture gate on the output stream's clock (same device)" or "... on
+    the system timer (...)").  OK in Exclusive
     mode = drops 0 and discontinuities 0 at 256 AND 512; G > 0 at 256 on
     an interface that offers a packet at every drain (UR22mkII prediction
     at 256: pulls about 172 per second, gated about 72 per second, "max
     per wake" 441: the gate worked); G may be 0 on a driver that reports
     its packets correctly. "pulls" counts taken and refused drains. The
     stop line of log.txt says "input capture
-    gate: pulls=N gated=G clock=device" ("clock=qpc" = the stream clock
-    was unusable and the timer took over: report it with the log).
+    gate: pulls=N gated=G clock=output" (0.9.14: the output stream's clock,
+    the expected reference when input and output are the same Exclusive
+    device; "clock=qpc" = the system timer: another device for the input,
+    a Shared output, or no clock; report it with the log).
     OK (both modes) = N stays near bufSize + target
     (the reported input latency, "Input open ... FIFO target T" in the
     log) from one copy to the next (a steady N far above that = the FIFO
