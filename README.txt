@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.14 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+WASAPI Driver for ASIO(R) 0.9.15 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
 ======================================================================================================================
 
 A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
@@ -6,10 +6,10 @@ devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cuba
 DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
 earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
 
-WHERE TO GET IT (0.9.14, public beta)
+WHERE TO GET IT (0.9.15, public beta)
 -------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.14. Open its release (or a newer
+  The current public beta is version 0.9.15. Open its release (or a newer
   release) and download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
@@ -83,7 +83,7 @@ in the installation folder.
 
 RELEASE FOLDER LAYOUT
 ---------------------
-  WASAPI-Driver-for-ASIO-0.9.14-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
+  WASAPI-Driver-for-ASIO-0.9.15-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
   README.txt          This file (complete manual).
   Docs\               QUICK-START.txt (one page), FAQ.txt, COMPATIBILITY.txt (tested hosts and devices),
                       VERSION.txt (changelog), TEST-GUIDE.txt (test plan), ROADMAP.txt, TRACING.txt
@@ -213,12 +213,12 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.14-Setup.exe from the 0.9.14 release
+  0. Download WASAPI-Driver-for-ASIO-0.9.15-Setup.exe from the 0.9.14 release
      (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
      optionally compare its SHA-256 with SHA256SUMS.txt. For a newer version,
      use that version's release assets.
   1. Close the DAW.
-  2. Double-click WASAPI-Driver-for-ASIO-0.9.14-Setup.exe.
+  2. Double-click WASAPI-Driver-for-ASIO-0.9.15-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
      not digitally signed).
   4. UAC: Yes. Welcome > Next. Notices > Next. License: I Agree. Folder: keep

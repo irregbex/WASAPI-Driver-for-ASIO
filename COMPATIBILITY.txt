@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.14 - Compatibility table
+WASAPI Driver for ASIO(R) 0.9.15 - Compatibility table
 ======================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 

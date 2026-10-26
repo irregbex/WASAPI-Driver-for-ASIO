@@ -3670,14 +3670,14 @@ void WasapiBridge::run() {
     // GetPosition of the OUTPUT clock, in device frames), so that the first drain already sees one period of new
     // audio instead of defining the base itself. aOutClk / aOutClkToFrames (members read only by pullSource, on this
     // thread) are set here for the whole run and cleared before the thread ends.
-    // Independent review of 0.9.14 (MED-1): when the main input is gated by the output clock, the OUTPUT is started
-    // first, so that the base read by gateArm is a position of a running clock (a stopped clock would make the base
-    // stale by the start-up delay and the first drains would see a backlog that never existed). The Shared / aligned
-    // paths keep the previous order (capture first, then output).
+    // 0.9.15: the start order is the one of 0.9.13 for every path (capture first, then output). 0.9.14 started the
+    // output first when the main input was gated (review MED-1); on a real interface (Yamaha Steinberg USB driver,
+    // Exclusive, 44.1 kHz, buffer 256) that made the driver pace the RENDER events at the capture period (100 per
+    // second instead of 172: callbacks 1000 of 1723 in 10 s, overloads). The gate base is now armed AFTER both
+    // streams started (gateArm below, after oc->Start()), which gives the same running-clock base without changing
+    // the order.
     aOutClk = clk; aOutClkToFrames = clkToFrames;
     HRESULT hr = S_OK;
-    bool outStarted = false;
-    if (srcIn.gate && !srcIn.gateQpc && ic) { hr = oc->Start(); outStarted = true; }
     auto gateArm = [&](InputSource& g) {
         if (!g.gate) return;
         LARGE_INTEGER t; QueryPerformanceCounter(&t);
@@ -3686,10 +3686,10 @@ void WasapiBridge::run() {
         if (!g.gateQpc && aOutClk && SUCCEEDED(aOutClk->GetPosition(&p0, nullptr))) { g.gateOutBase = g.gateOutLast = (uint64_t)((double)p0 * aOutClkToFrames); g.gateOutOk = true; }
         if (!g.gateQpc && !aOutClk) { g.gateQpc = true; g.capGateRef.store(2, std::memory_order_relaxed); }
     };
-    if (ic) { ic->Start(); gateArm(srcIn); }
+    if (ic) ic->Start();
     if (lc) lc->Start();
     for (int k = 0; k < kMaxExtra; ++k) {
-        if (xc[k]) { xc[k]->Start(); gateArm(srcEx[k]); }
+        if (xc[k]) xc[k]->Start();
         if (sc[k]) {                       // pre-fill with silence up to the target and start
             OutputSink& o = sinks[k];
             if (o.targetPad && SUCCEEDED(sr[k]->GetBuffer(o.targetPad, &p)) && SUCCEEDED(sr[k]->ReleaseBuffer(o.targetPad, AUDCLNT_BUFFERFLAGS_SILENT)))
@@ -3697,7 +3697,9 @@ void WasapiBridge::run() {
             if (FAILED(sc[k]->Start())) sinkFail[k] = true;
         }
     }
-    if (!outStarted) hr = oc->Start();
+    hr = oc->Start();
+    if (ic) gateArm(srcIn);                 // 0.9.15: base of the output clock, armed after every stream started
+    for (int k = 0; k < kMaxExtra; ++k) if (xc[k]) gateArm(srcEx[k]);
 
     // 0.9.8 (review H-list, no unbounded wait on device IO): the render event is awaited 2 s at a time; after 5
     // consecutive timeouts (10 s without a single event: device stalled or gone without a notification) the thread

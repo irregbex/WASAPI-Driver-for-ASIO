@@ -33,14 +33,14 @@
 #define WB_NAME_W      L"WASAPI Driver for ASIO"
 #define WB_OLDNAME_W   L"WasapiBridge"               // name used before 0.6.0 (migration and cleanup only)
 #define WB_FILEBASE_W  L"WasapiDriver"               // file name prefix (WasapiDriver64.dll, WasapiDriverDiag.exe, ...)
-#define WB_VERSION_STR "0.9.14"
-#define WB_VERSION_W   L"0.9.14"
+#define WB_VERSION_STR "0.9.15"
+#define WB_VERSION_W   L"0.9.15"
 // getDriverVersion(). Up to 0.9.9 the value was major * 1000 + minor * 100 + patch * 10 (0.9.9 -> 990), which
 // cannot hold a two-digit patch (0.9.10 would give 1000, the value 1.0.0 would get). 0.9.10: major * 100000 +
 // minor * 1000 + patch * 10, so 0.9.10 -> 9100: larger than every earlier value (hosts that compare versions see an
 // upgrade), room for minor and patch up to 99, and the last digit stays free as before. tests/update_test.cpp
 // checks that WB_VERSION_NUM follows this formula for WB_VERSION_STR and is larger than 990.
-#define WB_VERSION_NUM 9140
+#define WB_VERSION_NUM 9150
 // 0.9.4: private ASIOFuture selector of the test tool: receives the engine line of the running stream ("Low-latency
 // engine period ... ; internal rate conversion ..."). Not part of the ASIO SDK. 0.9.8: opt = asiochk::EngineInfo
 // (asiocheck.h: magic, size, char text[256]); any other argument gets ASE_InvalidParameter.

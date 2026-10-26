@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO 0.9.14 (public beta)
+WASAPI Driver for ASIO 0.9.15 (public beta)
 ===========================================
 Build: 2026-10-25 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
@@ -27,13 +27,30 @@ Build: 2026-10-25 UTC
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 9120 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
+getDriverVersion() = 9150 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
                      up to 0.9.9 it was major * 1000 + minor * 100 + patch * 10)
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.15 (changes from 0.9.14) - "Start order"
+------------------------------------------
+- Fix of a regression of 0.9.14 found by the automatic host test on a real
+  interface (Steinberg UR22mkII, Yamaha Steinberg USB Driver, Exclusive,
+  44.1 kHz, input selected, buffer 256): T2 counted 1000 callbacks of 1723
+  in 10 s (one every 10.00 ms instead of 5.80 ms, 43 overloads); T4 failed
+  at 64/128/256 and T5 at 44100, while 512, 1024, 48000 and 96000 (where
+  the input falls back to Shared, no gate) passed. Cause: 0.9.14 started
+  the OUTPUT stream before the capture stream when the main input was
+  gated (independent review MED-1); with that driver the render events
+  then follow the capture period (10 ms). 0.9.15 starts the streams in the
+  order of 0.9.13 (capture first, then output) on every path and arms the
+  gate's base on the output clock AFTER both streams started, which keeps
+  the running-clock base that MED-1 wanted.
+- Version number: getDriverVersion() returns 9150.
+Not changed: everything else of 0.9.14.
 
 0.9.14 (changes from 0.9.13) - "Capture gate on the output clock"
 ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.14 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.15 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).

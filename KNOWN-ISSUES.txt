@@ -431,7 +431,11 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
-Status: FIXED (0.9.14), to be confirmed by TEST-GUIDE.txt block AB on real
+Note (0.9.15): 0.9.14 started the output before the capture when gated; with
+the tested driver that paced the render events at the capture period (auto test
+T2: 100 callbacks/s instead of 172 at 256). 0.9.15 restores the 0.9.13 start
+order and arms the gate after both streams started.
+Status: FIXED (0.9.15), to be confirmed by TEST-GUIDE.txt block AB on real
 hardware. History: NOT fixed by 0.9.11 (the limit change only moved the
 drop point); NOT fixed by 0.9.12 on the tested interface (the event-driven
 capture made the mechanism visible but did not change it, see "What
