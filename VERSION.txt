@@ -1,6 +1,6 @@
-WASAPI Driver for ASIO 0.9.15 (public beta)
+WASAPI Driver for ASIO 0.9.16 (public beta)
 ===========================================
-Build: 2026-10-25 UTC
+Build: 2026-11-04 UTC
   x64:   mingw-w64 GCC 13.2, -O2, static linking (msvcrt)
   x86:   mingw-w64 GCC 13.2 i686, -O2, static linking
   ARM64: Zig 0.16.0 (clang), aarch64-windows-gnu, -O2 (UCRT)
@@ -27,13 +27,38 @@ Build: 2026-10-25 UTC
                  scheduling, sample-rate precedence; 0.9.8: fuzz (parsers of
                  untrusted data), ASIO argument validation, trace encoder
                  (these three under AddressSanitizer + UndefinedBehaviorSanitizer)
-getDriverVersion() = 9150 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
+getDriverVersion() = 9160 (0.9.10: major * 100000 + minor * 1000 + patch * 10;
                      up to 0.9.9 it was major * 1000 + minor * 100 + patch * 10)
 
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 
 Changelog
 =========
+
+0.9.16 (changes from 0.9.15) - "Cubase 16"
+------------------------------------------
+- Released for Cubase 16.0.0 (4 November 2026). No change to the driver
+  code: audio engine, control panel, installer logic, tools and trace
+  provider are those of the previous version. Only the version number
+  (getDriverVersion() returns 9160; file and product versions 0.9.16.0)
+  and the documents change.
+- Cubase 16.0.0 (x64, Windows 11) was tested on its release day with the
+  previous version's binaries (TEST-GUIDE.txt block AC): driver selection
+  in the new Edit > Settings > Audio window, control panel from the button
+  next to "Audio Driver", buffer 256 -> 512 -> 256 while playing (0
+  glitches), ASIO-Guard Level 5 (new levels up to about 280 ms; 0
+  glitches, DSP max 37%), Bluetooth earbuds into the case and back
+  (output moved to the speakers and back, 0 glitches), recording from a
+  Steinberg UR22mkII in Shared mode at 256 (inputs 0/0/0). Cubase stops its
+  transport when it opens the control panel (host behaviour, FAQ 26).
+- New known issue KI-14: in Shared mode with the Yamaha Steinberg USB
+  Driver the output glitch counter grows by about 0.5-1 per second without
+  audible effect, also in the automatic test without a DAW (device side).
+- Documents: QUICK-START (Cubase 16 path), README sections 4, 5 and 23,
+  README.md, FAQ 25-26, COMPATIBILITY (Cubase 16 rows), KNOWN-ISSUES
+  (KI-14; KI-13 wording), TEST-GUIDE block AC, ROADMAP, winget manifests.
+Not changed: KI-13 (Exclusive with an input at a buffer below the capture
+period) remains OPEN; record at 512 or in Shared mode.
 
 NOTE (2026-10-26, after the release): KI-13 is NOT fixed. 0.9.13, 0.9.14
 and 0.9.15 fail the automatic test the same way with an input in Exclusive

@@ -2,7 +2,7 @@ WASAPI Driver for ASIO - Known issues and field observations
 =============================================================
 
 This file records problems seen during real-world testing (Windows 11
-(Insider build), Cubase 15, DaVinci Resolve Studio 21, Bluetooth earbuds
+(Insider build), Cubase 15, Cubase 16, DaVinci Resolve Studio 21, Bluetooth earbuds
 (A2DP, 10 ms minimum period), a USB audio adapter, HDMI monitor audio and a
 USB audio interface). Each entry lists the symptom, what the logs showed,
 the cause (confirmed or suspected), the workaround and the status.
@@ -438,8 +438,8 @@ interface (Steinberg UR22mkII with the Yamaha Steinberg USB Driver): the
 automatic host test (WasapiDriverTest) runs the OUTPUT at the capture period
 (T2: 1000 callbacks of 1722 in 10 s, about 100 per second instead of 172,
 overloads), T4 fails at 64/128/256 and T5 at 44100, and recording drops input.
-The same result was measured with 0.9.13, 0.9.14, 0.9.15 and a 0.9.16 test
-build, so the gate changes of 0.9.14 / 0.9.15 neither caused nor fixed it; it
+The same result was measured with 0.9.13, 0.9.14, 0.9.15 and an unreleased test
+build (not the 0.9.16 release, which has the 0.9.15 code), so the gate changes of 0.9.14 / 0.9.15 neither caused nor fixed it; it
 exists at least since 0.9.13 (probably since the event-driven Exclusive capture
 of 0.9.12; that test was never run on 0.9.11 / 0.9.12 with this setup).
 Workaround: buffer 512 or larger when recording in Exclusive mode (passes), or
@@ -580,6 +580,40 @@ Fix (0.9.11)
 Workaround on 0.9.10: buffer 512 or larger when recording in Exclusive
 mode.
 
+KI-14 Output glitch counter grows in Shared mode with some interface drivers (0.9.16)
+-------------------------------------------------------------------------------------
+Status: CONFIRMED - counter and overload message only, no audible effect
+measured; depends on the device driver, not on the host.
+Symptom
+  - Shared mode, Steinberg UR22mkII with the Yamaha Steinberg USB Driver
+    (44.1 kHz on both sides, IAudioClient3 period 441 frames, no
+    conversion, ASIO buffer 256, input and output on the interface):
+    "Output glitches" grows by about 0.5-1 per second while playing and
+    recording; no click or gap is heard; inputs 0/0/0, timeouts 0. Every
+    counted glitch also sends kAsioOverload to the host (a DAW may show an
+    overload mark in its performance meter).
+Data (2026-11-04, 0.9.15 code, Windows 11 x64)
+  - Cubase 16.0.0, "Reset counters", about 50 s of stream: 44 output
+    glitches, max wake gap 13.3 ms. Recording about 60 s with playback
+    (about 180 s of stream): 96, inputs 0/0/0, DSP max 34%.
+  - Automatic test with no DAW running (WasapiDriverTest, same devices):
+    RESULT PASSED; T2 1721/1722 callbacks with overload 23 in 10 s
+    (interval mean 5.81 ms, dev 5.21 ms, max 20.46 ms); T7 overload 79.
+  - Same system and Cubase 16 with Bluetooth earbuds as the output: 0 in
+    every run.
+Cause (suspected)
+  - In Shared mode the render loop counts a glitch when
+    IAudioClient::GetCurrentPadding() returns 0 at a wake-up (the shared
+    engine buffer is empty). The tested device driver moves audio in fixed
+    blocks of 512 frames (see KI-13), so the engine buffer can be empty for
+    an instant at a wake-up while the device still has audio queued.
+Workaround
+  - None needed for playback or recording with that device: ignore the
+    counter. Report it if clicks are heard.
+Planned
+  - Confirm a Shared glitch with the stream's position (IAudioClock)
+    before counting it (ROADMAP.txt).
+
 Observations recorded with 0.9.12 (not issues yet; see ROADMAP.txt)
 --------------------------------------------------------------------
 - Shared, buffer 256, UR22mkII: "Output glitches: 2" after ~50 s although
@@ -596,3 +630,6 @@ Observations recorded with 0.9.12 (not issues yet; see ROADMAP.txt)
   by about 17 ms until the next restart. 0.9.14: re-centre the plain FIFO
   without discarding audio (a slow trim of one frame per block while the
   fill stays above the set point).
+- Note (0.9.16): the Shared output glitch counter seen above with the
+  UR22mkII keeps growing during the whole run (not only at a restart) and
+  also without a DAW: KI-14.

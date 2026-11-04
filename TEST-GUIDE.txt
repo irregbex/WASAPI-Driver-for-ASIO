@@ -1041,6 +1041,36 @@ If AB1-AB4 fails: send log.txt (with the "Input open" line), the four
 > Device Manager > the interface > Driver), and whether the manufacturer's
 driver was installed.
 
+Block AC - Cubase 16 (0.9.16)
+-----------------------------
+Cubase 16 replaced Studio Setup with Edit > Settings (non-modal). Use one
+small test project (one instrument track and one audio track with a song).
+AC1 Edit > Settings > Audio > "Audio Driver": WASAPI Driver for ASIO.
+    OK = no warning; Connections > Outputs: Stereo Out on the driver.
+AC2 The button to the right of "Audio Driver".  OK = this driver's panel
+    opens. Note: Cubase stops the transport when it opens the panel and
+    does not restart it (host behaviour, FAQ 26).
+AC3 Play, keep Settings open, set buffer 512 > "Apply and Close", play 20 s;
+    then 256 the same way.  OK = the buffer and latencies change in "Copy
+    status", 0 glitches, 0 timeouts.
+AC4 Settings > Audio > Advanced: ASIO-Guard Level 5 (Off, Level 0-5,
+    default 2); play 60 s.  OK = 0 glitches, 0 timeouts. Set it back to
+    Level 2.
+AC5 Bluetooth output: play, put the earbuds into the case for 10 s, take
+    them out.  OK = output moves to another device and back without a
+    dialog; 0 glitches.
+AC6 [IFACE] Shared, input and output on the interface, buffer 256: mono
+    input bus (Device Port In L), mono audio track, "Reset counters",
+    record about 60 s while playing, play it back.  OK = inputs 0/0/0, the
+    recording is clean.
+Results (2026-11-04, Cubase 16.0.0, Windows 11 x64, binaries of 0.9.15):
+AC1-AC5 OK with Bluetooth earbuds (Shared, IAudioClient3 period 480 at
+48 kHz, 44.1 -> 48 kHz sinc; 256: 5.80 / 27.26 ms, 512: 11.61 / 34.69 ms;
+DSP max 16-43%). AC6 OK with a Steinberg UR22mkII (Yamaha Steinberg USB
+Driver, 44.1 kHz, period 441, no conversion; reported 35.80 / 25.80 ms):
+inputs 0/0/0 in about 180 s of stream; output glitch counter 96, inaudible,
+also 23 overloads in 10 s in the automatic test without a DAW (KI-14).
+
 Useful data for the report
 --------------------------
 - Brand/model of the sound card or interface and of the microphone.

@@ -109,7 +109,7 @@ WASAPI Driver for ASIO is an independent open-source project, not affiliated wit
 1. Close your DAW.
 2. Download **`WASAPI-Driver-for-ASIO-<version>-Setup.exe`** from [Releases](https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases) and run it.
 3. In your DAW, choose **WASAPI Driver for ASIO** as the ASIO driver
-   (Cubase: *Studio > Studio Setup > Audio System*).
+   (Cubase 16: *Edit > Settings > Audio > Audio Driver*; Cubase 15 and earlier: *Studio > Studio Setup > Audio System*).
 4. Open the driver's **Control Panel** to pick the output device, mode and buffer.
 
 No reboot needed. A portable `bin.zip` with `install.bat` is also available. Full steps: [QUICK-START.txt](QUICK-START.txt).
@@ -118,6 +118,7 @@ No reboot needed. A portable `bin.zip` with `install.bat` is also available. Ful
 
 | Host | Status |
 |---|---|
+| Cubase 16 (x64) - Bluetooth output and Steinberg UR22mkII (USB, inputs) | Tested on release day (16.0.0): driver selection, panel, buffer change while playing, ASIO-Guard Level 5, Bluetooth on/off, recording in Shared mode at 256 clean. The UR22mkII shows a growing output glitch counter in Shared mode without audible effect (KI-14) |
 | Cubase 15 (x64) - built-in, USB, HDMI and Bluetooth outputs | Tested: hours of use, Bluetooth on/off, sleep/resume |
 | Cubase 15 (x64) - Steinberg UR22mkII (USB interface, inputs) | Shared mode: recording clean at 256 and 512 since 0.9.12. Exclusive mode with an input: works at buffer 512 or larger; at 256 it fails (KI-13, open, not fixed in any version) |
 | DaVinci Resolve Studio | Tested (0.9.4). Current Resolve versions also offer I/O Engine = System Audio (no ASIO needed); this driver is optional there |

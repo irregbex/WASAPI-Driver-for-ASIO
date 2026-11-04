@@ -1,12 +1,12 @@
-WASAPI Driver for ASIO(R) 0.9.15 - Quick start (one page)
+WASAPI Driver for ASIO(R) 0.9.16 - Quick start (one page)
 =========================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 Full manual: README.txt. Questions: FAQ.txt.
 
 1. INSTALL
-   Download WASAPI-Driver-for-ASIO-0.9.15-Setup.exe from the 0.9.15 release:
+   Download WASAPI-Driver-for-ASIO-0.9.16-Setup.exe from the 0.9.16 release:
    https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-   Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.15-Setup.exe (SmartScreen:
+   Close your DAW. Run WASAPI-Driver-for-ASIO-0.9.16-Setup.exe (SmartScreen:
    "More info" > "Run anyway" if the Setup is not signed). Accept the UAC
    prompt, then Next / I Agree / Install. Windows on ARM: one Arm64X driver
    serves native ARM64 and x64 DAWs, no question (beta, FAQ.txt question
@@ -17,8 +17,12 @@ Full manual: README.txt. Questions: FAQ.txt.
    points to it.
 
 2. SELECT THE DRIVER IN YOUR DAW
-   Cubase / Nuendo  Studio > Studio Setup > Audio System > ASIO Driver:
-                    "WASAPI Driver for ASIO". Then Studio > Audio
+   Cubase 16        Edit > Settings > Audio > "Audio Driver" (top right):
+                    "WASAPI Driver for ASIO". The button to its right opens
+                    the panel. Connections tab: check the output and input
+                    buses (FAQ.txt question 25).
+   Cubase 15 and    Studio > Studio Setup > Audio System > ASIO Driver:
+   earlier, Nuendo  "WASAPI Driver for ASIO". Then Studio > Audio
                     Connections (F4): check the output and input buses.
    Ableton Live     Preferences > Audio > Driver Type: ASIO > Audio Device:
                     "WASAPI Driver for ASIO". "Hardware Setup" opens the
@@ -32,8 +36,10 @@ Full manual: README.txt. Questions: FAQ.txt.
 
 3. OPEN THE CONTROL PANEL
    From the DAW (see 2). Main tab: Output device, Input device, Mode,
-   Buffer, then "Apply". The DAW restarts the driver for these settings
-   (1-2 s of silence). Status tab: what is really running.
+   Buffer, then "Apply and Close". The DAW restarts the driver for these
+   settings (1-2 s of silence). Status tab: what is really running.
+   Cubase stops playback when it opens the panel; press Play again after
+   closing it (FAQ.txt question 26).
    Not sure what a control does? Rest the mouse on it (or press F1) for a
    help tip.
 

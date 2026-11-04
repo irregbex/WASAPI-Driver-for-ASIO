@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.15 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
+WASAPI Driver for ASIO(R) 0.9.16 (public beta) - Generic ASIO driver on top of WASAPI, Windows 10/11 (x64, ARM64, x86)
 ======================================================================================================================
 
 A free, open-source (GPL-3.0-or-later) ASIO driver for Windows 10/11 that runs on top of the audio
@@ -6,10 +6,10 @@ devices Windows already has (WASAPI, low-latency IAudioClient3 engine). Use Cuba
 DaVinci Resolve and other ASIO hosts with built-in sound, USB headsets, HDMI monitors or Bluetooth
 earbuds, without an audio interface. Status: public beta (pre-release builds are not code-signed yet).
 
-WHERE TO GET IT (0.9.15, public beta)
+WHERE TO GET IT (0.9.16, public beta)
 -------------------------------------
 Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
-  The current public beta is version 0.9.15. Open its release (or a newer
+  The current public beta is version 0.9.16. Open its release (or a newer
   release) and download, under "Assets":
     WASAPI-Driver-for-ASIO-<version>-Setup.exe   the installer (recommended)
     WASAPI-Driver-for-ASIO-<version>-bin.zip     the portable files (DLLs, tools, install.bat, documents)
@@ -83,7 +83,7 @@ in the installation folder.
 
 RELEASE FOLDER LAYOUT
 ---------------------
-  WASAPI-Driver-for-ASIO-0.9.15-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
+  WASAPI-Driver-for-ASIO-0.9.16-Setup.exe Installer (recommended). Run it, then follow Docs\QUICK-START.txt.
   README.txt          This file (complete manual).
   Docs\               QUICK-START.txt (one page), FAQ.txt, COMPATIBILITY.txt (tested hosts and devices),
                       VERSION.txt (changelog), TEST-GUIDE.txt (test plan), ROADMAP.txt, TRACING.txt
@@ -213,12 +213,12 @@ Features:
 3. INSTALLING AND UNINSTALLING
 ----------------------------------------------------------------------
 Option A - Installer (recommended)
-  0. Download WASAPI-Driver-for-ASIO-0.9.15-Setup.exe from the 0.9.14 release
+  0. Download WASAPI-Driver-for-ASIO-0.9.16-Setup.exe from the 0.9.16 release
      (https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases, "Assets");
      optionally compare its SHA-256 with SHA256SUMS.txt. For a newer version,
      use that version's release assets.
   1. Close the DAW.
-  2. Double-click WASAPI-Driver-for-ASIO-0.9.15-Setup.exe.
+  2. Double-click WASAPI-Driver-for-ASIO-0.9.16-Setup.exe.
   3. If SmartScreen appears: "More info" > "Run anyway" (the installer is
      not digitally signed).
   4. UAC: Yes. Welcome > Next. Notices > Next. License: I Agree. Folder: keep
@@ -279,7 +279,18 @@ Registry keys (both methods):
 ----------------------------------------------------------------------
 4. FIRST USE
 ----------------------------------------------------------------------
-Cubase / Nuendo
+Cubase 16
+  1. Edit > Settings > Audio > "Audio Driver" (top right): WASAPI Driver for
+     ASIO.
+  2. The button with sliders to the right of "Audio Driver" opens the
+     Control Panel: choose output, input, mode and buffer > "Apply and
+     Close". Cubase stops playback while it opens the panel (FAQ 26).
+  3. Project > Project Setup: Sample Rate (48 kHz recommended).
+  4. Settings > Audio > Connections (Inputs / Outputs): check the output
+     buses and create input buses. Advanced: ASIO-Guard (Off, Level 0 to
+     Level 5, default Level 2). Settings is non-modal (FAQ 25).
+
+Cubase 15 and earlier / Nuendo
   1. Studio > Studio Setup > Audio System > ASIO Driver: WASAPI Driver for
      ASIO.
   2. In the list on the left, WASAPI Driver for ASIO > Control Panel: choose
@@ -300,7 +311,8 @@ REAPER
 ----------------------------------------------------------------------
 5. CONTROL PANEL
 ----------------------------------------------------------------------
-Opened from the DAW (Cubase: Studio Setup > WASAPI Driver for ASIO >
+Opened from the DAW (Cubase 16: Edit > Settings > Audio > the button to the
+right of "Audio Driver"; Cubase 15: Studio Setup > WASAPI Driver for ASIO >
 Control Panel; Live: Hardware Setup; REAPER: ASIO Configuration). A dark
 window with a dark title bar and its own taskbar and Alt+Tab entry. At the
 top: name, version and the ASIO Compatible logo. Below it, five tabs; at the
@@ -970,6 +982,22 @@ See VERSION.txt for the detailed changelog.
        Setup (no question; beta, KNOWN-ISSUES.txt KI-9); two MSVC
        portability fixes; "Stop trace.bat" saves to the signed-in user's
        Desktop; code signing policy. No engine change.
+0.9.11 Inputs: input FIFO limits include the whole capture buffer (KI-13
+       attempt), Shared late-packet margin (KI-11), Exclusive fallback
+       reason shown in the panel (KI-12), "Apply and Close", Capture
+       counters in Copy status; getDriverVersion 9110.
+0.9.12 Capture: event-driven Exclusive capture, Shared 256 and 512 clean
+       on the tested interface; 9120.
+0.9.13 Capture gate (Exclusive capture paced by a clock); 9130.
+0.9.14 Capture gate on the output clock; 9140.
+0.9.15 Start order of 0.9.13 restored; 9150. KI-13 (Exclusive input at a
+       256 buffer) remains OPEN in 0.9.11-0.9.16: record at 512 or in
+       Shared mode.
+0.9.16 Cubase 16: the driver code of 0.9.15, released for Cubase 16.0.0
+       after testing it (TEST-GUIDE block AC); Cubase 16 locations
+       (Edit > Settings > Audio), KNOWN-ISSUES KI-14 (Shared output glitch
+       counter with the Yamaha Steinberg USB Driver, inaudible), FAQ 25-26;
+       getDriverVersion 9160.
 0.9.5  Release candidate: the sample rate set by the DAW survives every
        restart caused by the driver (device and Bluetooth changes), a
        re-created driver instance and the next session.

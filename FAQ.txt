@@ -1,4 +1,4 @@
-WASAPI Driver for ASIO(R) 0.9.15 - Frequently asked questions
+WASAPI Driver for ASIO(R) 0.9.16 - Frequently asked questions
 =============================================================
 ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 See also QUICK-START.txt and README.txt (section numbers below).
@@ -256,3 +256,20 @@ See also QUICK-START.txt and README.txt (section numbers below).
     channels. Split them in the DAW: Cubase > Studio > Audio Connections >
     Inputs > Add Bus > Mono, one bus per channel. The same applies to the
     manufacturer's own ASIO driver.
+
+25. Where do I select the driver in Cubase 16? (0.9.16)
+    Cubase 16 replaced Studio Setup and Audio Connections with one window:
+    Edit > Settings > Audio. The "Audio Driver" box at the top right selects
+    "WASAPI Driver for ASIO"; the button with sliders to its right opens this
+    driver's control panel. Tabs: Connections (input and output buses, the
+    former Audio Connections), Ports, Advanced (ASIO-Guard: Off, Level 0 to
+    Level 5, default Level 2). Settings is non-modal: the project keeps
+    running while it is open. Cubase 15 and earlier: Studio > Studio Setup >
+    Audio System.
+
+26. Cubase stops playback when I open the control panel. (0.9.16)
+    Cubase stops its transport when it opens an ASIO driver's control panel
+    and does not start it again when the panel closes: press Play. The
+    driver does not stop the audio (controlPanel() only shows the window).
+    Settings marked with a dot are applied by Cubase after "Apply and Close"
+    (a driver reset, 1-2 s); the others are applied live.
