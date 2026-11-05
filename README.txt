@@ -19,6 +19,7 @@ Releases page: https://github.com/irregbex/WASAPI-Driver-for-ASIO/releases
   "Source code (zip)" / "WASAPI-Driver-for-ASIO-<version>-src.zip" contain the complete source tree.
   Versions marked "Pre-release" are betas. Download only from this page; copies elsewhere are not checked.
 Source code and problem reports: https://github.com/irregbex/WASAPI-Driver-for-ASIO
+Video introduction (2.5 minutes, English): https://youtu.be/eVblOlq8AB0
   (Issues > New issue; security problems privately as described in SECURITY.txt).
 
 WHY USE IT - COMPARED WITH STEINBERG'S GENERIC DRIVERS

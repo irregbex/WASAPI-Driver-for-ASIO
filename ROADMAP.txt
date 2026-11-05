@@ -290,13 +290,11 @@ USB microphone and a laptop's built-in microphone (the same capture path).
   on devices that deliver on time.
 0.9.16 (Cubase 16, 2026-11-04): documentation and version release with the
 0.9.15 code; Cubase 16.0.0 tested (TEST-GUIDE.txt block AC).
-Next (no date):
-- Shared output glitch test (KI-14): confirm "padding 0" with the stream's
-  position (IAudioClock) before counting a glitch and sending
-  kAsioOverload, so that device drivers that move audio in large blocks
-  do not show false glitches.
-- KI-13: automatic test on 0.9.11 (polled Exclusive capture) with the same
-  interface to decide whether the event-driven capture is the cause.
+Not planned (decided 2026-11-04): KI-13 (Exclusive with an input at a
+buffer below the capture period; workaround buffer 512 or Shared) and
+KI-14 (Shared output glitch counter with some interface drivers, inaudible,
+intermittent) are documented as WON'T / CAN'T FIX in KNOWN-ISSUES.txt. The
+analysis notes stay there for contributors.
 Planned for 1.0: Exclusive mode at the device's fixed rate with the internal
 rate conversion (today Exclusive is tried only at the project's rate and
 falls back to Shared when the device is fixed at another rate, KI-12);

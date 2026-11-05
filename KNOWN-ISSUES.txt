@@ -8,7 +8,8 @@ USB audio interface). Each entry lists the symptom, what the logs showed,
 the cause (confirmed or suspected), the workaround and the status.
 
 Status values: FIXED (version), CONFIRMED (cause known, not a driver bug),
-UNDER INVESTIGATION, OPEN (driver bug, fix pending).
+UNDER INVESTIGATION, OPEN (driver bug, fix pending), WON'T / CAN'T FIX
+(documented with a workaround; fix attempts failed or no fix planned).
 
 
 KI-1  Opening DaVinci Resolve cuts all Windows audio (YouTube, recordings)
@@ -431,7 +432,10 @@ What to do
 
 KI-13 Input drops in Exclusive mode at a 256 buffer (0.9.10)
 ------------------------------------------------------------
-STATUS (2026-10-26, final): OPEN, NOT FIXED in any version.
+STATUS (2026-11-04): WON'T / CAN'T FIX. Documented with its workaround; no
+further fix attempts are planned (five versions, 0.9.11 to 0.9.15, tried
+and did not fix it on the tested interface). Previous status (2026-10-26): OPEN,
+NOT FIXED in any version.
 Exclusive mode with an input selected and an ASIO buffer smaller than the
 capture period (here 256 at 44.1 kHz, capture period 441) fails on the tested
 interface (Steinberg UR22mkII with the Yamaha Steinberg USB Driver): the
@@ -445,7 +449,7 @@ of 0.9.12; that test was never run on 0.9.11 / 0.9.12 with this setup).
 Workaround: buffer 512 or larger when recording in Exclusive mode (passes), or
 Shared mode (clean at 256 and 512 since 0.9.12). Output-only use (no input
 selected) is not affected in any mode.
-Next step if this is picked up again: run the automatic test on 0.9.11
+If a contributor picks this up: run the automatic test on 0.9.11
 (polled Exclusive capture) with the same setup; if it passes, the cause is the
 event-driven Exclusive capture of 0.9.12.
 The notes below are the history of the attempts.
@@ -582,8 +586,10 @@ mode.
 
 KI-14 Output glitch counter grows in Shared mode with some interface drivers (0.9.16)
 -------------------------------------------------------------------------------------
-Status: CONFIRMED - counter and overload message only, no audible effect
-measured; depends on the device driver, not on the host.
+Status: WON'T / CAN'T FIX (2026-11-04) - counter and overload message only, no
+audible effect measured; depends on the device driver, not on the host;
+intermittent: with the same setup and the same code the automatic test
+gave T2 overload 23 in one run and 0 in the next (0.9.16, v9160).
 Symptom
   - Shared mode, Steinberg UR22mkII with the Yamaha Steinberg USB Driver
     (44.1 kHz on both sides, IAudioClient3 period 441 frames, no
@@ -610,9 +616,9 @@ Cause (suspected)
 Workaround
   - None needed for playback or recording with that device: ignore the
     counter. Report it if clicks are heard.
-Planned
-  - Confirm a Shared glitch with the stream's position (IAudioClock)
-    before counting it (ROADMAP.txt).
+Not planned
+  - A possible change (confirm a Shared glitch with the stream's position,
+    IAudioClock, before counting it) is left to contributors.
 
 Observations recorded with 0.9.12 (not issues yet; see ROADMAP.txt)
 --------------------------------------------------------------------
